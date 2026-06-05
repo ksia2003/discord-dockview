@@ -33,6 +33,7 @@ jobs:
               run: pnpm install --frozen-lockfile
 
             - name: Prepare bundled Vencord (+ DockView plugin)
+              continue-on-error: true
               run: node scripts/prepare-vencord.mjs
 
             - name: Build
