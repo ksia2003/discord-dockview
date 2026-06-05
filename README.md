@@ -2,6 +2,8 @@
 
 Open PDFs, images, code, and interactive files in a side panel — right inside Discord.
 
+![DockView side panel](docs/hero.png)
+
 ## What is this
 
 DockView is a Discord desktop app for Windows and Linux. Click any attachment in
@@ -22,6 +24,10 @@ Download it, install it, sign in. That's the whole setup.
 - **The panel itself** — sits where the thread/member sidebar goes, resizes by dragging its edge, and each channel remembers the file you had open.
 
 Nothing loads until you click an attachment, and the normal download button still works exactly as before.
+
+![PDF with page navigation and zoom](docs/pdf.png)
+![Image with zoom and pan](docs/image.png)
+![Code with syntax highlighting and line numbers](docs/code.png)
 
 ## Why
 
