@@ -253,10 +253,22 @@
     padding: 8px 0;
     box-sizing: border-box;
     width: 100%;
+    /* pdf.js's setLayerDimensions sizes page/text boxes with
+       `round(down, var(--total-scale-factor) * Npx, var(--scale-round-x))`.
+       Define the rounding step (1px) here so those calc()s resolve cleanly to a
+       whole-pixel box that matches our wrapper. --scale-factor is set inline from
+       JS (the live document scale); it is the single knob that drives the whole
+       column's size + the canvas stretch + the text layer. */
+    --scale-factor: 1;
+    --scale-round-x: 1px;
+    --scale-round-y: 1px;
 }
-/* The page wrapper is the positioning context for the absolute text layer; its
-   width/height are set inline (= canvas CSS size) so scroll geometry is stable
-   even before the canvas paints. */
+/* The page wrapper is the positioning context for the absolute text layer. Its
+   width/height are sized in CSS from the container's --scale-factor
+   (`round(down, var(--scale-factor) * <pdf unit>px, 1px)`, set inline from JS),
+   so the whole page column reflows as ONE connected unit when --scale-factor
+   changes during a live resize — gaps stay constant, pages never overlap or
+   detach. This is the canonical pdf.js setLayerDimensions recipe. */
 .dockview-pdf-page-wrap {
     position: relative;
     display: block;
@@ -268,6 +280,11 @@
     display: block;
     position: absolute;
     inset: 0;
+    /* Fill the wrapper box so the (fixed-resolution) bitmap STRETCHES with the
+       box when --scale-factor changes — instant, GPU-composited live-resize
+       preview, then a crisp re-raster on drag end (pdf.js "CSS zoom, redraw"). */
+    width: 100%;
+    height: 100%;
     /* The canvas is pure raster — it must NEVER swallow pointer events, or a
        drag that starts over it is stolen from the text layer above and no
        selection is made. Pointer events belong to the .textLayer (z-index:2,
@@ -296,6 +313,14 @@
        here (the canonical pdf.js viewer recipe) so PDF text can be copied. */
     -webkit-user-select: text;
     user-select: text;
+    /* pdf.js scale chain: spans size their font from --text-scale-factor, which
+       folds the live --total-scale-factor (= our --scale-factor). Because the
+       span left/top are PERCENTAGES of the box and the font-size tracks the
+       variable, the whole text layer scales in lockstep with the canvas during a
+       live resize — no re-render needed to keep text glued over the page. */
+    --min-font-size: 1;
+    --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+    --min-font-size-inv: calc(1 / var(--min-font-size));
 }
 .dockview-pdf-page-wrap .textLayer span,
 .dockview-pdf-page-wrap .textLayer br {
@@ -303,9 +328,24 @@
     position: absolute;
     white-space: pre;
     cursor: text;
-    transform-origin: 0 0;
+    transform-origin: 0% 0%;
     -webkit-user-select: text;
     user-select: text;
+}
+/* The canonical pdf.js span sizing + transform: font-size driven by the scale
+   variable × the per-span --font-height (set inline by pdf.js's TextLayer), and
+   a per-span horizontal stretch (--scale-x) so glyph runs match the canvas. */
+.dockview-pdf-page-wrap .textLayer > :not(.markedContent),
+.dockview-pdf-page-wrap .textLayer .markedContent span:not(.markedContent) {
+    z-index: 1;
+    --font-height: 0;
+    font-size: calc(var(--text-scale-factor) * var(--font-height));
+    --scale-x: 1;
+    --rotate: 0deg;
+    transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.dockview-pdf-page-wrap .textLayer .markedContent {
+    display: contents;
 }
 .dockview-pdf-page-wrap .textLayer span.markedContent {
     top: 0;

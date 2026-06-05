@@ -1063,6 +1063,41 @@ function findExclusiveSidebar(row: HTMLElement): HTMLElement | null {
     return el && el !== host ? el : aside;
 }
 
+/**
+ * The NATIVE THREAD CONVERSATION SIDEBAR. Discord opens it as a `chatLayerWrapper`
+ * that is a direct child of the PAGE INNER div — the SAME layout slot our dock
+ * occupies (we are built to be pixel-identical to it). When a thread is open and
+ * we ALSO open, the page-inner flex row ends up with two ~500px sidebars side by
+ * side and the chat is crushed (the reported "overlap / looks weird"). Discord's
+ * own sidebar model is mutually exclusive — it only ever shows ONE thing in this
+ * slot — so we mirror that: while the dock is open we hide the native thread
+ * (exactly like the member list), then restore it on close. Returns every
+ * thread-owned sibling to hide: the `chatLayerWrapper` card plus the empty
+ * placeholder `<div>` Discord parks next to it during the thread transition.
+ */
+function findNativeThreadSidebars(inner: HTMLElement): HTMLElement[] {
+    const host = document.getElementById(HOST_ID);
+    const out: HTMLElement[] = [];
+    for (const child of Array.from(inner.children)) {
+        const el = child as HTMLElement;
+        if (el === host) continue; // never touch our own host
+        // The thread card: a chatLayerWrapper sibling that isn't ours.
+        const isThreadCard =
+            /chatLayerWrapper/.test(el.className) ||
+            !!el.querySelector(':scope > [class*="chatLayerWrapper"]');
+        if (isThreadCard) {
+            out.push(el);
+            // Discord parks an empty placeholder div immediately before the card
+            // while the thread is mounting; hide it too so chat fully reflows.
+            const prev = el.previousElementSibling as HTMLElement | null;
+            if (prev && prev !== host && !prev.className && prev.children.length === 0) {
+                out.push(prev);
+            }
+        }
+    }
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // Body renderers (content-type router targets)
 // ---------------------------------------------------------------------------
@@ -1095,6 +1130,11 @@ function PdfBody() {
         baseW: number; // unscaled page width (pdf units @ scale 1)
         baseH: number;
     }>);
+    // The UNIFORM document scale the pages are CURRENTLY rastered at. The page
+    // boxes are sized via the container's `--scale-factor`; live resize just
+    // re-points that variable (renderScale × dragRatio) so the whole column
+    // reflows + visually scales in one shot, then drag-end re-rasters crisp.
+    const renderScaleRef = useRef(1);
     // flat list of match locations: {pageIdx, spanEls}
     const matchesRef = useRef([] as Array<{ page: number; els: HTMLElement[] }>);
 
@@ -1132,12 +1172,31 @@ function PdfBody() {
             const availH = Math.max(1, (sc?.clientHeight || 600) - PDF_SIDE_INSET);
             lastWidthRef.current = host.clientWidth;
 
-            /** Fit-base scale (before user zoom): in "width" mode EVERY page is
-             *  scaled to the SAME availW; in "page" mode it's bounded by height. */
-            const fitScale = (baseW: number, baseH: number): number =>
-                pdfView.fit === "page"
-                    ? Math.min(availW / baseW, availH / baseH)
-                    : availW / baseW;
+            // Canonical pdf.js continuous-column model: a SINGLE uniform document
+            // scale drives every page. We pick it from the WIDEST page so a
+            // fit-width column never overflows, and pages keep their relative
+            // sizes (no per-page stretch). That single scale also lets a live
+            // resize be one container `--scale-factor` update (no per-page math),
+            // which is what keeps the column perfectly connected while dragging.
+            let refW = 0;
+            let refH = 0; // height of the widest page, for "page" fit
+            for (let n = 1; n <= doc.numPages; n++) {
+                if (myPass !== passRef.current || docToken !== content.pdf.renderToken) return;
+                let p: any;
+                try { p = await doc.getPage(n); } catch { return; }
+                const vp = p.getViewport({ scale: 1 });
+                if (vp.width > refW) { refW = vp.width; refH = vp.height; }
+            }
+            if (!refW) return;
+            const fitScale = pdfView.fit === "page"
+                ? Math.min(availW / refW, availH / refH)
+                : availW / refW;
+            const docScale = fitScale * pdfView.zoom;
+            renderScaleRef.current = docScale;
+            // Drive the page-box + canvas + text-layer geometry off ONE variable
+            // on the container (exactly how pdf.js sizes its pages). Clearing any
+            // leftover live-resize value here resets the column to crisp 1:1.
+            host.style.setProperty("--scale-factor", String(docScale));
 
             // dropping the find results — spans get rebuilt below
             matchesRef.current = [];
@@ -1155,32 +1214,41 @@ function PdfBody() {
                 if (myPass !== passRef.current || docToken !== content.pdf.renderToken) return;
 
                 const base = page.getViewport({ scale: 1 });
-                const scale = fitScale(base.width, base.height) * pdfView.zoom;
-                const viewport = page.getViewport({ scale });
+                const viewport = page.getViewport({ scale: docScale });
 
+                // Page box sized in CSS off the container's --scale-factor (the
+                // canonical pdf.js setLayerDimensions recipe): width/height are
+                // `--scale-factor × <pdf unit>px`. Because the box tracks the
+                // variable, a live-resize that re-points --scale-factor reflows
+                // EVERY page in the column at once (gaps stay 8px, pages never
+                // overlap or detach). `round(down, …, 1px)` snaps to whole pixels
+                // like pdf.js so seams between canvas + box don't shimmer.
                 const wrap = document.createElement("div");
                 wrap.className = "dockview-pdf-page-wrap";
-                wrap.style.width = Math.floor(viewport.width) + "px";
-                wrap.style.height = Math.floor(viewport.height) + "px";
+                wrap.style.width = `round(down, var(--scale-factor) * ${base.width}px, 1px)`;
+                wrap.style.height = `round(down, var(--scale-factor) * ${base.height}px, 1px)`;
                 wrap.setAttribute("data-page", String(n));
 
+                // Canvas: backing store rastered at docScale×dpr (crisp), but its
+                // CSS box fills the wrapper (100%/100%) so it STRETCHES with the
+                // variable during a live resize — instant GPU-cheap visual scale,
+                // exactly like pdf.js's CSS-zoom-then-redraw.
                 const canvas = document.createElement("canvas");
                 canvas.className = "dockview-pdf-page";
-                canvas.style.width = Math.floor(viewport.width) + "px";
-                canvas.style.height = Math.floor(viewport.height) + "px";
                 canvas.width = Math.floor(viewport.width * dpr);
                 canvas.height = Math.floor(viewport.height * dpr);
                 const ctx = canvas.getContext("2d");
                 if (!ctx) continue;
                 wrap.appendChild(canvas);
 
-                // Text layer overlay: pdf.js positions divs as % of the
-                // container sized by --total-scale-factor; setting it to our CSS
-                // scale aligns the (transparent) text exactly over the canvas.
+                // Text layer overlay: pdf.js positions its (transparent) span
+                // divs in % of the box using --total-scale-factor. It inherits
+                // --scale-factor from the container; mirror it to
+                // --total-scale-factor so the text tracks the same live variable
+                // and stays glued over the canvas through resize/zoom.
                 const textDiv = document.createElement("div");
                 textDiv.className = "textLayer";
-                textDiv.style.setProperty("--scale-factor", String(scale));
-                textDiv.style.setProperty("--total-scale-factor", String(scale));
+                textDiv.style.setProperty("--total-scale-factor", "var(--scale-factor)");
                 wrap.appendChild(textDiv);
 
                 frag.appendChild(wrap);
@@ -1311,24 +1379,25 @@ function PdfBody() {
             setFindQuery: (qq: string) => { pdfView.findQuery = qq; runFind(qq, true); },
             findNext: () => { if (!pdfView.findMatches) return; focusMatch(pdfView.findActive % pdfView.findMatches); },
             findPrev: () => { if (!pdfView.findMatches) return; focusMatch((pdfView.findActive - 2 + pdfView.findMatches) % pdfView.findMatches); },
-            // Live resize: in "width" fit the render scale is proportional to the
-            // available width, so a uniform CSS scale faithfully previews the new
-            // raster (no axis distortion). transform-origin top center keeps the
-            // page column centred + stacked while it grows/shrinks. In "page" fit
-            // the height is also constrained, so a width-only ratio over-scales —
-            // we skip the live preview there (drag-end re-raster still corrects).
+            // Live resize (the pdf.js "CSS zoom first, redraw after" pattern):
+            // re-point the container's --scale-factor to renderScale × ratio. The
+            // page boxes (sized in that variable) reflow as a connected column and
+            // every canvas bitmap stretches with its box — instant, GPU-composited,
+            // gaps stay 8px, pages never detach. In "width" fit the render scale is
+            // proportional to width so this faithfully previews the new raster; in
+            // "page" fit the height also bounds the scale, so a width ratio would
+            // over-scale — we hold scale there (drag-end re-raster corrects).
             liveScale: (ratio: number) => {
                 if (!Number.isFinite(ratio) || ratio <= 0) return;
+                const host = containerRef.current;
+                if (!host) return;
                 const r = pdfView.fit === "page" ? 1 : ratio;
-                for (const pg of pagesRef.current) {
-                    pg.wrap.style.transformOrigin = "top center";
-                    pg.wrap.style.transform = r === 1 ? "" : `scale(${r})`;
-                }
+                host.style.setProperty("--scale-factor", String(renderScaleRef.current * r));
             },
             endLiveScale: () => {
-                // Re-raster immediately at the true pixel size. renderAll rebuilds
-                // the page DOM (no transform), so the crisp pages replace the
-                // scaled ones with no snap-back gap. Clear any pending RO debounce.
+                // Re-raster crisply at the final width. renderAll resets
+                // --scale-factor to the new true docScale, so the live-stretched
+                // bitmaps are replaced by sharp ones with no snap-back gap.
                 if (content.pdf.doc) renderAll();
             }
         };
@@ -2173,6 +2242,10 @@ function applyOpenState() {
     const host = document.getElementById(HOST_ID);
     const row = findChatRow();
     const sidebar = row ? findExclusiveSidebar(row) : null;
+    // The native thread sidebar lives one level up (page-inner sibling of chat_),
+    // not in the chat row, so it's found separately.
+    const inner = findPageInner();
+    const threadSidebars = inner ? findNativeThreadSidebars(inner) : [];
 
     if (state.open) {
         if (host) {
@@ -2184,14 +2257,16 @@ function applyOpenState() {
             host.style.flex = `0 0 ${state.width}px`;
             host.style.width = `${state.width}px`;
         }
-        if (sidebar && sidebar !== host) {
-            // Hide via a class (display:none !important) for the same reason the
-            // host uses one — Discord re-sets inline display on its own nodes,
-            // beating a plain inline style; the !important class rule holds.
-            // Covers BOTH the server member list and the DM profile aside.
-            sidebar.setAttribute(HIDDEN_ATTR, "1");
-            sidebar.classList.add("dockview-members-hidden");
-            sidebar.style.removeProperty("display");
+        // Hide the exclusive right slot (member list / DM profile / native
+        // thread) so our dock is the single occupant — no overlap, chat reflows
+        // exactly as if that surface were closed. Same class+attr mechanism for
+        // all of them (a !important class beats Discord's inline display resets).
+        const toHide = sidebar && sidebar !== host ? [sidebar, ...threadSidebars] : threadSidebars;
+        for (const el of toHide) {
+            if (el === host) continue;
+            el.setAttribute(HIDDEN_ATTR, "1");
+            el.classList.add("dockview-members-hidden");
+            el.style.removeProperty("display");
         }
     } else {
         if (host) host.classList.remove("dockview-open");
