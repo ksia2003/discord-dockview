@@ -4,10 +4,10 @@
     "private": true,
     "description": "DockView is a Discord desktop app (Vesktop fork) with the DockView Vencord plugin built in",
     "keywords": [],
-    "homepage": "https://github.com/ksia2003/DockView",
+    "homepage": "https://github.com/ksia2003/discord-dockview",
     "repository": {
         "type": "git",
-        "url": "https://github.com/ksia2003/DockView.git"
+        "url": "https://github.com/ksia2003/discord-dockview.git"
     },
     "license": "GPL-3.0-or-later",
     "author": "Vendicated <vendicated@riseup.net>",

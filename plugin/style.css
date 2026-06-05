@@ -1,0 +1,637 @@
+/*
+ * DockView Dock Panel — companion CSS for the PAGE-LEVEL native thread
+ * sidebar clone.
+ *
+ * The visible FRAME (card bg, rounded-left corners, header tint, hairline
+ * border-bottom, overflow clipping) is supplied entirely by Discord's OWN
+ * CSS-module classes that we apply in dockPanel.ts:
+ *     .chatLayerWrapper__*   (card wrapper)
+ *     .resizeHandle__*       (left-edge resize bar)
+ *     .container__*          (the card: bg + border-radius 8px 0 0 8px + overflow)
+ *     .container__* .themed__*  (header bar: bg + 48px + padding + border-bottom)
+ *     .upperContainer__* / .children__* / .toolbar__* / .title__*  (header)
+ * That dressing is theme-aware. This file only fills gaps Discord can't know
+ * about (our spacer host, absolute-card overlay, resize affordance, body
+ * placeholder) — it must NOT re-declare the frame.
+ *
+ * MOUNT MODEL (mirrors a real thread sidebar):
+ *   host #dockview-root is an IN-FLOW SPACER: a block child of the page inner
+ *   div, sibling of chat_, given `flex: 0 0 <width>` from JS. It takes real
+ *   layout width so the flex chat shrinks/reflows exactly like native. The
+ *   visible card (.dockview-wrapper = chatLayerWrapper) is ABSOLUTE inside the
+ *   host (top:0 right:0 bottom:0 left:0), so its header aligns with the channel
+ *   header (y~33) and it spans the full page height (~1035) — native-identical.
+ */
+
+/* Host = in-flow spacer column in the page inner flex-row. Width/flex are set
+   inline from JS state. It is the positioning context for the absolute card.
+   Discord's own layout code intermittently resets our injected sibling's inline
+   `display` to none, so the OPEN/CLOSED state is driven by a CLASS with
+   !important (not inline display) — Discord's inline reset can't win against
+   the class rule. The class is toggled from applyOpenState(); width/flex stay
+   inline (Discord never touches those). */
+#dockview-root {
+    position: relative;
+    align-self: stretch;
+    height: 100%;
+    box-sizing: border-box;
+    display: none !important;
+}
+#dockview-root.dockview-open {
+    display: block !important;
+}
+
+/* Member-list mutual exclusion: hide the member-list wrapper we tagged while the
+   panel is open. A class with !important (not inline display) so Discord's own
+   inline display reset can't un-hide it. Cleared on close / plugin stop. */
+.dockview-members-hidden {
+    display: none !important;
+}
+
+/* The native card wrapper is ABSOLUTE, filling the host spacer. Discord's
+   .chatLayerWrapper__* is already position:absolute; here we pin it to the host
+   (top:0 -> header aligns with channel header; bottom:0 -> full page height). */
+#dockview-root > .dockview-wrapper {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    flex-direction: row;
+    box-sizing: border-box;
+}
+
+/* The native card fills the remaining width beside the resize handle and lays
+   its header + body out as a column. bg / radius / overflow come from Discord's
+   .container__* class. */
+.dockview-card {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    box-sizing: border-box;
+}
+
+/* Resize handle: Discord's 8px ew-resize bar on the panel's left edge.
+   Native `resizeHandle__*` gives the 8px footprint + ew-resize cursor + base
+   tint, but its hit zone is only the visible 8px and its hover bg token
+   (--background-modifier-accent) resolves to TRANSPARENT in this theme, so it
+   read as "hard to grab, no hover feedback". We fix BOTH:
+     - WIDEN the grab zone with an invisible ::before that extends ~6px past
+       each edge (visible bar 8px -> ~20px easy-grab hit area), so you don't
+       have to land the cursor on a thin line.
+     - Show a VISIBLE hover/drag tint (--background-base-low, one step brighter
+       than the near-black card) + a centred 2px x 24px "grabber pill" via
+       ::after (Discord's own resizeHandle_f37d97 affordance), tinted with
+       --text-muted, fading in only on hover/drag.
+   The whole thing is position:relative so the pseudo-elements anchor to it. */
+.dockview-resize {
+    position: relative;
+    cursor: ew-resize;
+    flex: 0 0 auto;
+    z-index: 20;
+    transition: background-color 0.15s ease;
+}
+/* Invisible WIDE hit zone: extends the grabbable area well past the 8px bar so
+   the handle is easy to catch (matches the "easy to grab" native feel). */
+.dockview-resize::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -6px;
+    right: -6px;
+    z-index: 1;
+    /* purely a hit target; no paint */
+}
+/* Centred grabber pill — hidden until hover/drag, then fades in (native look). */
+.dockview-resize::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 2px;
+    height: 24px;
+    border-radius: 1px;
+    background: var(--text-muted, #949ba4);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    pointer-events: none;
+}
+.dockview-resize:hover,
+.dockview-resize.dockview-resizing {
+    background: var(--background-base-low, var(--background-modifier-accent, rgba(255, 255, 255, 0.08)));
+}
+.dockview-resize:hover::after,
+.dockview-resize.dockview-resizing::after {
+    opacity: 1;
+}
+
+/* While dragging, a full-page transparent overlay (added from JS) sits above
+   everything (esp. the artifact iframe) so the iframe can't swallow the
+   mousemove events — the classic "resize stalls when the cursor crosses the
+   iframe" bug. It also forces the ew-resize cursor everywhere during the drag. */
+.dockview-drag-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    cursor: ew-resize;
+}
+
+/* Header: native classes give the 48px bar, padding, tint and border-bottom.
+   We only ensure title (left) and toolbar (right) lay apart. */
+.dockview-header {
+    flex: 0 0 auto;
+}
+.dockview-header .dockview-header-children {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+}
+.dockview-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: default;
+    /* Match the real thread-header title's brighter "strong" text colour. */
+    color: var(--text-strong);
+}
+
+/* Header pop-out / close buttons: Discord's .iconWrapper/.clickable give the
+   32px hover target + hover bg + muted-icon colour; we centre the SVG (see the
+   .dockview-popout / .dockview-close rules below the body block). */
+
+/* Body: our content region under the header. The card frame itself uses the
+   near-black --background-base-lowest (oklab ~0.18), which read as "black,
+   unlike Discord". A REAL thread's MESSAGE/CONTENT area is one step brighter:
+   .chatContent_* paints var(--background-gradient-chat, var(--background-base-lower))
+   (oklab ~0.22). We give the body that SAME chat-content background so the
+   empty placeholder and the area behind a (transparent) artifact read as the
+   Discord chat colour, not black. Theme-aware: follows --background-base-lower
+   (and any chat gradient) just like the native content area. */
+/* Wrapper around the scrolling body: the flex child + positioning context for
+   overlays (e.g. the PDF find bar) that must stay pinned while the body scrolls. */
+.dockview-body-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+.dockview-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    position: relative;
+    background: var(--background-gradient-chat, var(--background-base-lower));
+    /* Always reserve the scrollbar gutter so clientWidth is CONSTANT whether or
+       not a scrollbar is showing. The PDF renderer reads this width to fit every
+       page; without a stable gutter the scrollbar appearing mid-render shifted
+       the available width and pages rasterised at inconsistent widths. */
+    scrollbar-gutter: stable;
+}
+
+.dockview-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 16px;
+    box-sizing: border-box;
+    text-align: center;
+    color: var(--text-muted, #949ba4);
+    font-size: 14px;
+}
+
+/* Loading / error states share the placeholder's centered layout. */
+.dockview-status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 16px;
+    box-sizing: border-box;
+    text-align: center;
+    color: var(--text-muted, #949ba4);
+    font-size: 14px;
+}
+.dockview-error {
+    color: var(--text-danger, #f23f43);
+}
+
+/* The INTERACTIVE artifact iframe: fills the whole scrollable body. Unlike the
+   inline thumbnail it receives pointer events and scrolls its own content. When
+   the artifact's own <body> is transparent, the iframe's backdrop shows
+   through — we paint it with the SAME Discord chat-content colour as the body
+   so a transparent artifact reads as "on a thread", not on a white sheet or a
+   black card. (Opaque artifacts paint over this and are unaffected.) */
+.dockview-frame {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: var(--background-gradient-chat, var(--background-base-lower));
+}
+
+/* PDF renderer (content type "pdf"): a vertically scrolling column of page
+   WRAPPERS, each holding a <canvas> + an overlaid transparent text layer (for
+   selection/copy/find). The body itself (.dockview-body) already scrolls; this
+   container just centres pages and spaces them. The canvas is sized to the
+   current fit×zoom scale in CSS px (backing store *dpr for crispness, set inline
+   from JS); the text layer is sized via pdf.js --total-scale-factor to match. */
+.dockview-pdf-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    box-sizing: border-box;
+    width: 100%;
+}
+/* The page wrapper is the positioning context for the absolute text layer; its
+   width/height are set inline (= canvas CSS size) so scroll geometry is stable
+   even before the canvas paints. */
+.dockview-pdf-page-wrap {
+    position: relative;
+    display: block;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    background: #fff;
+    flex: 0 0 auto;
+}
+.dockview-pdf-page {
+    display: block;
+    position: absolute;
+    inset: 0;
+    /* The canvas is pure raster — it must NEVER swallow pointer events, or a
+       drag that starts over it is stolen from the text layer above and no
+       selection is made. Pointer events belong to the .textLayer (z-index:2,
+       pointer-events:auto). This is the canonical pdf.js viewer split. */
+    pointer-events: none;
+}
+
+/* Text layer (pdf.js standard): transparent, absolutely-positioned text divs
+   overlaid on the canvas so the user can SELECT and COPY real PDF text. Colour
+   transparent + selection tint = the canonical pdf.js viewer recipe. */
+.dockview-pdf-page-wrap .textLayer {
+    position: absolute;
+    inset: 0;
+    overflow: clip;
+    opacity: 1;
+    line-height: 1;
+    text-size-adjust: none;
+    forced-color-adjust: none;
+    transform-origin: 0 0;
+    caret-color: CanvasText;
+    z-index: 2;
+    /* Sit above the (pointer-events:none) canvas and own all pointer events so
+       a drag here makes a real text selection. */
+    pointer-events: auto;
+    /* Discord sets user-select:none on app containers; re-enable text selection
+       here (the canonical pdf.js viewer recipe) so PDF text can be copied. */
+    -webkit-user-select: text;
+    user-select: text;
+}
+.dockview-pdf-page-wrap .textLayer span,
+.dockview-pdf-page-wrap .textLayer br {
+    color: transparent;
+    position: absolute;
+    white-space: pre;
+    cursor: text;
+    transform-origin: 0 0;
+    -webkit-user-select: text;
+    user-select: text;
+}
+.dockview-pdf-page-wrap .textLayer span.markedContent {
+    top: 0;
+    height: 0;
+}
+.dockview-pdf-page-wrap .textLayer ::selection {
+    background: rgba(88, 101, 242, 0.45);
+}
+/* find highlight: tint the matching span box; the active match is stronger. */
+.dockview-pdf-page-wrap .textLayer span.dockview-pdf-match {
+    background: rgba(255, 213, 0, 0.4);
+    border-radius: 2px;
+}
+.dockview-pdf-page-wrap .textLayer span.dockview-pdf-match-active {
+    background: rgba(255, 145, 0, 0.65);
+}
+
+/* PDF find overlay: a small floating bar pinned to the top-right of the PDF
+   body (Discord may intercept the global Ctrl+F, so this is our own UI). */
+.dockview-pdf-find {
+    position: absolute;
+    top: 8px;
+    right: 14px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 4px 4px 8px;
+    border-radius: 6px;
+    background: var(--background-floating, #111214);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
+}
+.dockview-pdf-find-input {
+    width: 150px;
+    height: 26px;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--text-default, #dbdee1);
+    font-family: inherit;
+    font-size: 13px;
+}
+.dockview-pdf-find-input::placeholder { color: var(--text-muted, #87898c); }
+.dockview-pdf-find-count {
+    min-width: 38px;
+    text-align: center;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted, #949ba4);
+    user-select: none;
+}
+
+/* IMAGE renderer (content type "image"): a centered, fit(contain) image with
+   zoom + pan, like Discord's lightbox / a browser image viewer (replaces the
+   old fit-width + vertical-scroll model). The wrap fills the body and centers
+   the <img>; the <img> is fit via max-width/height:100% + object-fit:contain at
+   scale 1, then a JS transform applies zoom (scale) + pan (translate). A CSS
+   checkerboard shows through transparent PNGs. The body must NOT scroll here —
+   panning is done with the transform — so the wrap clips overflow. */
+.dockview-img-wrap {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    box-sizing: border-box;
+    outline: none;
+    /* Discord chat-content backdrop (same token as the body) so the viewer
+       reads as "on a thread", not a checkerboard light-table. Transparent PNGs
+       therefore sit on the Discord background like any other attachment. */
+    background: var(--background-gradient-chat, var(--background-base-lower));
+    cursor: default;
+}
+.dockview-img-wrap.dockview-img-zoomed { cursor: grab; }
+.dockview-img-wrap.dockview-img-zoomed:active { cursor: grabbing; }
+.dockview-img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    transform-origin: center center;
+    /* a subtle edge so opaque images read as a "card" over the checkerboard */
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+    -webkit-user-select: none;
+    user-select: none;
+    will-change: transform;
+}
+
+/* Header pop-out / close buttons centre their SVG inside the native 32px
+   iconWrapper hover target. */
+.dockview-popout,
+.dockview-more,
+.dockview-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+.dockview-popout svg,
+.dockview-more svg,
+.dockview-close svg {
+    display: block;
+}
+
+/* CODE / TEXT renderer (content type "code"): a GitHub/VS-Code-style viewer —
+   a non-selectable line-number gutter beside a scrollable, selectable
+   <pre><code>. Rendered DIRECTLY in the panel (not an iframe) so the user gets
+   native text selection, Ctrl-F and scroll. Layout: a flex row [gutter | code];
+   the row scrolls (the body owns vertical scroll, the code <pre> owns horizontal
+   scroll). The gutter is user-select:none so copying the selection yields code
+   ONLY (no line numbers). Highlight colours come from the .hljs-* token classes
+   below (the hljs spans the highlighter emits). */
+.dockview-code-scroll {
+    display: flex;
+    align-items: stretch;
+    min-height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--background-base-lowest, #1e1f22);
+    font-family: Consolas, "Andale Mono WT", "Andale Mono", "Lucida Console", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    tab-size: 4;
+}
+/* Non-selectable, right-aligned line-number gutter. Same line-height/padding as
+   the code so rows align. Sticky-left so it stays visible during h-scroll. */
+.dockview-code-gutter {
+    margin: 0;
+    padding: 14px 8px 14px 12px;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    text-align: right;
+    color: var(--text-muted, #6b7280);
+    background: var(--background-base-lowest, #1e1f22);
+    border-right: 1px solid var(--background-modifier-accent, #2b2d31);
+    font: inherit;
+    white-space: pre;
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    -webkit-user-select: none;
+    user-select: none;
+    -moz-user-select: none;
+    pointer-events: none;
+}
+.dockview-code-pre {
+    margin: 0;
+    padding: 14px 16px;
+    box-sizing: border-box;
+    flex: 1 1 auto;
+    min-width: 0;
+    background: var(--background-base-lowest, #1e1f22);
+    color: #dbdee1;
+    font: inherit;
+    overflow-x: auto;
+    /* preserve whitespace; allow selection */
+    white-space: pre;
+    -webkit-user-select: text;
+    user-select: text;
+}
+.dockview-code-pre code.dockview-code {
+    display: block;
+    background: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    white-space: pre;
+}
+/* Word-wrap toggle: wrap long lines (and let the row stop h-scrolling). */
+.dockview-code-scroll.dockview-code-wrap .dockview-code-pre,
+.dockview-code-scroll.dockview-code-wrap .dockview-code-pre code.dockview-code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+.dockview-code-scroll.dockview-code-wrap .dockview-code-pre {
+    overflow-x: hidden;
+}
+
+/* Dark hljs token theme for the in-panel code view (github-dark-dimmed-ish),
+   matching the markdown iframe theme so both renderers look consistent. These
+   apply to the <span class="hljs-*"> the highlighter emits. */
+.dockview-code .hljs-comment,
+.dockview-code .hljs-quote { color: #768390; font-style: italic; }
+.dockview-code .hljs-keyword,
+.dockview-code .hljs-selector-tag,
+.dockview-code .hljs-doctag,
+.dockview-code .hljs-formula { color: #f47067; }
+.dockview-code .hljs-string,
+.dockview-code .hljs-meta .hljs-string,
+.dockview-code .hljs-regexp,
+.dockview-code .hljs-addition { color: #96d0ff; }
+.dockview-code .hljs-number,
+.dockview-code .hljs-literal,
+.dockview-code .hljs-variable,
+.dockview-code .hljs-template-variable { color: #6cb6ff; }
+.dockview-code .hljs-title,
+.dockview-code .hljs-section,
+.dockview-code .hljs-title.class_,
+.dockview-code .hljs-title.function_ { color: #dcbdfb; }
+.dockview-code .hljs-built_in,
+.dockview-code .hljs-class .hljs-title,
+.dockview-code .hljs-type { color: #f69d50; }
+.dockview-code .hljs-attribute,
+.dockview-code .hljs-attr,
+.dockview-code .hljs-name,
+.dockview-code .hljs-tag .hljs-attr { color: #6cb6ff; }
+.dockview-code .hljs-symbol,
+.dockview-code .hljs-bullet,
+.dockview-code .hljs-link { color: #f69d50; }
+.dockview-code .hljs-meta,
+.dockview-code .hljs-selector-id,
+.dockview-code .hljs-selector-class { color: #6cb6ff; }
+.dockview-code .hljs-emphasis { font-style: italic; }
+.dockview-code .hljs-strong { font-weight: 700; }
+.dockview-code .hljs-deletion { color: #ff938a; }
+
+/* CONTENT-TYPE TOOLBAR — a thin control strip under the header, holding only
+   the controls relevant to the current content type (image zoom +/-/% / reset,
+   code language label + word-wrap + copy). Extensible: PDF page-nav lands here
+   in pass 2. Discord-toned: muted icons, hover bg, brand-active state. */
+.dockview-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    height: 36px;
+    padding: 0 8px;
+    box-sizing: border-box;
+    background: var(--background-base-low, var(--background-secondary, #2b2d31));
+    border-bottom: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+}
+.dockview-tool-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+.dockview-tool-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 28px;
+    min-width: 28px;
+    padding: 0 6px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--interactive-normal, #b5bac1);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+.dockview-tool-btn:hover {
+    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.08));
+    color: var(--interactive-hover, #dbdee1);
+}
+.dockview-tool-btn:active {
+    background: var(--background-modifier-active, rgba(255, 255, 255, 0.12));
+}
+.dockview-tool-btn-active {
+    color: var(--text-brand, #5865f2);
+    background: var(--background-modifier-selected, rgba(88, 101, 242, 0.16));
+}
+.dockview-tool-btn svg { display: block; }
+/* Zoom percentage readout between -/+ */
+.dockview-tool-pct {
+    min-width: 44px;
+    text-align: center;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted, #949ba4);
+    user-select: none;
+}
+/* PDF page indicator: an inline editable "N / total". The input shows the
+   current page as a placeholder and accepts a number to jump to. */
+.dockview-tool-pageind {
+    display: inline-flex;
+    align-items: center;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted, #949ba4);
+    user-select: none;
+    padding: 0 2px;
+}
+.dockview-tool-pageinput {
+    width: 30px;
+    height: 22px;
+    text-align: right;
+    border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.1));
+    border-radius: 4px;
+    background: var(--input-background, rgba(0, 0, 0, 0.2));
+    color: var(--text-default, #dbdee1);
+    font-family: inherit;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    outline: none;
+    padding: 0 4px;
+}
+.dockview-tool-pageinput:focus {
+    border-color: var(--text-brand, #5865f2);
+}
+.dockview-tool-pagetotal { white-space: pre; }
+
+/* Detected-language label (left side, code toolbar). */
+.dockview-tool-lang {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--text-muted, #949ba4);
+    padding: 0 4px;
+    user-select: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* Copy button shows a label that flips to "Copied" with a brand tint. */
+.dockview-tool-copy .dockview-tool-copy-label { font-size: 12px; }
+.dockview-tool-copy.dockview-tool-copied {
+    color: var(--text-positive, #23a559);
+}

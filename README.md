@@ -1,75 +1,65 @@
 # DockView
 
-DockView is a Discord desktop app for Windows and Linux. It is a **fork of
-[Vesktop](https://github.com/Vencord/Vesktop)** that ships with
-[Vencord](https://github.com/Vendicated/Vencord) **and the DockView Vencord
-plugin built in**, so non-technical users only have to download and install —
-no plugin setup, no GitHub downloads at runtime.
+Open PDFs, images, code, and interactive files in a side panel — right inside Discord.
 
-**Main features**:
-- Vencord + the [DockView plugin](https://github.com/ksia2003/vencord-dockview) preinstalled (bundled, loaded locally — no network fetch)
-- Much more lightweight and faster than the official Discord app
-- Linux Screenshare with sound & wayland
-- Much better privacy, since Discord has no access to your system
+![DockView open with a file in the side panel](docs/hero.png)
 
-## Credits & License
+## What is this
 
-DockView is licensed under the **GPL-3.0-or-later**, the same license as its
-upstream projects. All original Vesktop and Vencord copyright notices, SPDX
-headers and `LICENSE` are preserved unchanged; DockView only adds its own
-modifications on top.
+DockView is a Discord desktop app for Windows and Linux. Click any attachment in
+chat and it opens in a panel docked to the side of the window, so you can read a
+PDF or look at a screenshot without leaving the conversation. It looks and feels
+like Discord because it's built on the same foundation — it just adds the side
+panel on top.
 
-- Upstream desktop app: **Vesktop** by Vendicated & Vesktop contributors — https://github.com/Vencord/Vesktop
-- Discord client mod: **Vencord** by Vendicated & Vencord contributors — https://github.com/Vendicated/Vencord
-- Bundled plugin: **DockView** — https://github.com/ksia2003/vencord-dockview
+Download it, install it, sign in. That's the whole setup.
 
-## Installing
+## Features
 
-Download the latest installer for your OS (Windows `.exe` or Linux
-`AppImage`/`deb`/`rpm`/`tar.gz`) from the
-[Releases page](https://github.com/ksia2003/DockView/releases).
+- **PDFs** — read inline with page navigation, zoom, selectable text, and find-in-document.
+- **Images** — open in the panel with zoom and pan; double-click to fit or go 1:1.
+- **Code & text** — syntax highlighting, line numbers, word-wrap toggle, one-click copy.
+- **Markdown** — rendered properly, with highlighted code blocks.
+- **Interactive HTML** — sandboxed `.artifact` files run right in the panel.
+- **The panel itself** — sits where the thread/member sidebar goes, resizes by dragging its edge, and each channel remembers the file you had open.
 
-## Building from Source
+Nothing loads until you click an attachment, and the normal download button still works exactly as before.
 
-You need to have the following dependencies installed:
-- [Git](https://git-scm.com/downloads)
-- [Node.js](https://nodejs.org/en/download)
-- pnpm: `npm install --global pnpm`
+![A PDF open in the side panel](docs/pdf.png)
 
-Packaging will create builds in the dist/ folder
+![An image open in the side panel with zoom controls](docs/image.png)
 
-```sh
-git clone https://github.com/ksia2003/DockView
-cd DockView
+![A source file with syntax highlighting in the side panel](docs/code.png)
 
-# Install Dependencies
-pnpm i
+## Why
 
-# Build the bundled Vencord (+ DockView plugin) into static/vencordDist.
-# This clones & builds Vencord with the DockView userplugin injected.
-node scripts/prepare-vencord.mjs
+If you spend time in Discord sharing lecture notes, documents, screenshots, or
+code snippets, you know the routine: download the file, alt-tab to another app,
+read it, come back. DockView keeps all of that in one window. Keep chatting on
+the left, read the file on the right.
 
-# Either run it without packaging
-pnpm start
+## Install
 
-# Or package (will build packages for your OS)
-pnpm package
+**[Download the latest release](https://github.com/ksia2003/discord-dockview/releases/latest)** and run the installer for your system:
 
-# Or package to a directory only
-pnpm package:dir
-```
+- **Windows** — `DockView-Setup-*.exe`
+- **Linux** — `.AppImage`, `.deb`, `.rpm`, or `.tar.gz`
 
-The four bundled Vencord desktop files live in `static/vencordDist/` and are
-copied into the app's data directory at first launch by
-`src/main/utils/vencordLoader.ts` (no download from GitHub).
+Install, launch, log in to Discord. There's nothing else to set up — the side panel is built in.
 
-## Building LibVesktop from Source
+<sub>Already using **Vencord**? You can run just the side-panel piece as a userplugin. The source lives in [`plugin/`](plugin/) — drop it into Vencord's `src/userplugins/`, add `pdfjs-dist marked highlight.js`, then build and enable "DockView" in Settings ▸ Plugins.</sub>
 
-This is a small C++ helper library Vesktop uses on Linux to emit D-Bus events. By default, prebuilt binaries for x64 and arm64 are used.
+## Notes
 
-If you want to build it from source:
-1. Install build dependencies:
-    - Debian/Ubuntu: `apt install build-essential python3 curl pkg-config libglib2.0-dev`
-    - Fedora: `dnf install @c-development @development-tools python3 curl pkgconf-pkg-config glib2-devel`
-2. Run `pnpm buildLibVesktop`
-3. From now on, building Vesktop will use your own build
+- Desktop only. There's no mobile or web version.
+- macOS isn't supported right now.
+
+## Built on / License
+
+DockView is a fork of [Vesktop](https://github.com/Vencord/Vesktop) and bundles
+[Vencord](https://github.com/Vendicated/Vencord). All credit for the underlying
+Discord desktop app and client mod goes to Vendicated and the Vesktop / Vencord
+contributors.
+
+Licensed under **GPL-3.0-or-later**, the same as its upstream projects. All
+original copyright notices and license headers are kept intact.

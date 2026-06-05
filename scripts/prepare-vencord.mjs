@@ -7,13 +7,14 @@
  * copies the four desktop dist files into static/vencordDist/ so they ship
  * inside the DockView app package (see src/main/utils/vencordLoader.ts).
  *
+ * The DockView userplugin source lives in this repo under plugin/ and is copied
+ * straight into Vencord's src/userplugins/ — no separate clone.
+ *
  * Usage:
  *   node scripts/prepare-vencord.mjs
  *
  * Env overrides:
  *   VENCORD_REF        git ref/tag of Vencord to build      (default: v1.14.13)
- *   DOCKVIEW_REPO      DockView userplugin git repo URL
- *   DOCKVIEW_REF       git ref of the DockView plugin       (default: main)
  *   SKIP_VENCORD_BUILD if set, skip cloning/building and just verify output
  */
 
@@ -28,8 +29,9 @@ const ROOT = join(__dirname, "..");
 
 const VENCORD_REPO = "https://github.com/Vendicated/Vencord";
 const VENCORD_REF = process.env.VENCORD_REF || "v1.14.13";
-const DOCKVIEW_REPO = process.env.DOCKVIEW_REPO || "https://github.com/ksia2003/vencord-dockview";
-const DOCKVIEW_REF = process.env.DOCKVIEW_REF || "main";
+
+// DockView userplugin source, shipped in this repo.
+const PLUGIN_SRC = join(ROOT, "plugin");
 
 // Extra deps DockView needs that aren't in stock Vencord.
 const DOCKVIEW_DEPS = ["pdfjs-dist", "marked", "highlight.js"];
@@ -75,15 +77,11 @@ try {
     // 1. Clone Vencord at the pinned ref.
     run("git", ["clone", "--depth", "1", "--branch", VENCORD_REF, VENCORD_REPO, vencordDir], work);
 
-    // 2. Inject the DockView userplugin.
-    const dockviewClone = join(work, "vencord-dockview");
-    run("git", ["clone", "--depth", "1", "--branch", DOCKVIEW_REF, DOCKVIEW_REPO, dockviewClone], work);
-
+    // 2. Inject the DockView userplugin from this repo's plugin/ folder.
+    if (!existsSync(PLUGIN_SRC)) throw new Error(`Plugin source not found: ${PLUGIN_SRC}`);
     const pluginDest = join(vencordDir, "src", "userplugins", "dockView");
     mkdirSync(dirname(pluginDest), { recursive: true });
-    cpSync(dockviewClone, pluginDest, { recursive: true });
-    // Drop the plugin's own .git so it doesn't confuse Vencord's build/lint.
-    rmSync(join(pluginDest, ".git"), { recursive: true, force: true });
+    cpSync(PLUGIN_SRC, pluginDest, { recursive: true });
 
     // 3. Add DockView runtime deps to Vencord.
     run("pnpm", ["add", ...DOCKVIEW_DEPS], vencordDir);
@@ -97,7 +95,15 @@ try {
     for (const f of FILES) {
         cpSync(join(vencordDir, "dist", f), join(OUT_DIR, f));
     }
-    writeFileSync(join(OUT_DIR, "version.txt"), `${VENCORD_REF}+dockview-${DOCKVIEW_REF}\n`);
+    let pluginRev = "local";
+    try {
+        pluginRev = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT })
+            .toString()
+            .trim();
+    } catch {
+        /* not a git checkout (e.g. source tarball) — fall back to "local" */
+    }
+    writeFileSync(join(OUT_DIR, "version.txt"), `${VENCORD_REF}+dockview-${pluginRev}\n`);
 
     // 6. Verify DockView made it in.
     verifyOutput();
