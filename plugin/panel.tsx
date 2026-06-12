@@ -2546,10 +2546,21 @@ function renderUnsupportedBody() {
 /** Body dispatcher: shared loading / error / placeholder, then route. */
 function renderBody() {
     if (content.name == null) {
+        // Native empty-state pattern: a centred muted glyph + one restrained line
+        // of guidance (no illustration, no long copy). Reuses the unsupported-card
+        // layout for the same centred icon/title rhythm.
         return React.createElement(
             "div",
-            { className: "dockview-placeholder" },
-            "Empty dock panel"
+            { className: "dockview-empty" },
+            React.createElement(
+                "svg",
+                { className: "dockview-empty-icon", width: 48, height: 48, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+                React.createElement("path", {
+                    fill: "currentColor",
+                    d: "M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-7-7Zm0 2.5L17.5 9H14a1 1 0 0 1-1-1V4.5ZM8 13h8v1.5H8V13Zm0 3.5h8V18H8v-1.5Z"
+                })
+            ),
+            React.createElement("div", { className: "dockview-empty-text" }, "여기에 파일을 열면 미리 볼 수 있어요")
         );
     }
     if (content.error != null) {
@@ -2779,6 +2790,23 @@ function fallbackCopy(text: string, done: () => void) {
     }
 }
 
+// A leading icon for a native Menu.MenuItem. Discord's MenuItem renders the
+// `icon` prop in its left slot — supplying one matches the density of every
+// native context menu (each row carries a 16-18px glyph), instead of an
+// icon-less text list. Returns a component (MenuItem calls it).
+const menuIcon = (d: string) => () =>
+    React.createElement(
+        "svg",
+        { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true, className: "dockview-menu-icon" },
+        React.createElement("path", { fill: "currentColor", d })
+    );
+const MENU_ICON = {
+    popout: menuIcon("M10 5a1 1 0 0 0 0 2h5.59l-8.3 8.3a1 1 0 1 0 1.42 1.4l8.29-8.29V14a1 1 0 1 0 2 0V6a1 1 0 0 0-1-1h-8Z M5 8a3 3 0 0 1 3-3h2a1 1 0 1 1 0 2H8a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2a1 1 0 1 1 2 0v2a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8Z"),
+    download: menuIcon("M12 3a1 1 0 0 1 1 1v9.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42l2.3 2.3V4a1 1 0 0 1 1-1ZM5 18a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Z"),
+    copyImage: menuIcon("M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V5Zm3-1a1 1 0 0 0-1 1v9.59l2.3-2.3a1 1 0 0 1 1.4 0l2.3 2.3 3.3-3.3a1 1 0 0 1 1.4 0L18 14.6V5a1 1 0 0 0-1-1H7Zm2.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"),
+    copyLink: menuIcon("M9.88 13.41a1 1 0 0 1 0-1.41l2.12-2.12a1 1 0 0 1 1.42 1.41L11.3 13.4a1 1 0 0 1-1.42 0Zm-2.3 4.6a3 3 0 0 1 0-4.24l2.12-2.12a1 1 0 0 1 1.42 1.41l-2.12 2.12a1 1 0 0 0 1.41 1.42l2.12-2.13a1 1 0 0 1 1.42 1.42l-2.13 2.12a3 3 0 0 1-4.24 0Zm9.9-9.9a3 3 0 0 1 0 4.25l-2.13 2.12a1 1 0 0 1-1.41-1.41l2.12-2.13a1 1 0 0 0-1.41-1.41l-2.12 2.12a1 1 0 1 1-1.42-1.42l2.13-2.12a3 3 0 0 1 4.24 0Z")
+};
+
 // ---------------------------------------------------------------------------
 // Header "⋯ more" context menu — Discord-native Menu (ContextMenuApi). Holds
 // only SECONDARY actions; the per-type toolbar already exposes zoom/page/etc.
@@ -2797,6 +2825,7 @@ function DockMoreMenu() {
     items.push(React.createElement(Menu.MenuItem, {
         id: "dockview-more-popout",
         label: "새 창으로 열기",
+        icon: MENU_ICON.popout,
         action: () => {
             if (isHtml && content.html != null) popoutArtifact();
             else if (url) window.open(absUrl(url), "_blank", "noopener,noreferrer");
@@ -2807,6 +2836,7 @@ function DockMoreMenu() {
         items.push(React.createElement(Menu.MenuItem, {
             id: "dockview-more-download",
             label: "다운로드",
+            icon: MENU_ICON.download,
             action: () => downloadUrl(url, name)
         }));
     }
@@ -2815,6 +2845,7 @@ function DockMoreMenu() {
         items.push(React.createElement(Menu.MenuItem, {
             id: "dockview-more-copy-image",
             label: "이미지 복사",
+            icon: MENU_ICON.copyImage,
             action: () => { copyImage(url); }
         }));
     }
@@ -2826,6 +2857,7 @@ function DockMoreMenu() {
                 React.createElement(Menu.MenuItem, {
                     id: "dockview-more-copy-link",
                     label: "링크 복사",
+                    icon: MENU_ICON.copyLink,
                     action: () => copyText(absUrl(url))
                 })
             )
