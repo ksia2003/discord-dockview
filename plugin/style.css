@@ -104,8 +104,16 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
 }
 
 /* The native card fills the remaining width beside the resize handle and lays
-   its header + body out as a column. bg / radius / overflow come from Discord's
-   .container__* class. */
+   its header + body out as a column. radius / overflow come from Discord's
+   .container__* class. The card's OWN background, however, is Discord's
+   --background-base-lowest (oklab ~0.18 = srgb 18,18,20) — the near-black
+   "lowest" surface. A real thread's content + header bars all sit on the one-
+   step-brighter chat surface --background-base-lower (oklab ~0.22 = srgb
+   26,26,30), so the lowest leaks through everywhere our body is transparent
+   (scrollbar gutter, the surround behind a fit-to-width PDF page, padding) and
+   reads as "30% darker than Discord". We repaint the card with the SAME chat
+   surface token the message area uses so every transparent gap matches native.
+   Theme-aware: follows --background-base-lower like the native content area. */
 .dockview-card {
     display: flex;
     flex-direction: column;
@@ -114,6 +122,12 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     min-height: 0;
     height: 100%;
     box-sizing: border-box;
+    background: var(--background-base-lower, #1a1a1e);
+    /* Native thread sidebars are FLUSH (square, full-bleed) against the channel
+       header — Discord's .container__* gives us a rounded floating card
+       (border-radius 8px 0 0 8px) that reads as "detached". Square it off so the
+       header sits flush under the app bar exactly like a real thread panel. */
+    border-radius: 0;
 }
 
 /* Resize handle: Discord's 8px ew-resize bar on the panel's left edge.
@@ -612,7 +626,10 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     min-height: 100%;
     width: 100%;
     box-sizing: border-box;
-    background: var(--background-base-lowest, #1e1f22);
+    /* Match the native chat surface (--background-base-lower = srgb 26,26,30),
+       not the darker --background-base-lowest, so the code view reads at the
+       same tone as the rest of the panel and a real thread. */
+    background: var(--background-base-lower, #1a1a1e);
     font-family: Consolas, "Andale Mono WT", "Andale Mono", "Lucida Console", monospace;
     font-size: 13px;
     line-height: 1.5;
@@ -627,7 +644,7 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     flex: 0 0 auto;
     text-align: right;
     color: var(--text-muted, #6b7280);
-    background: var(--background-base-lowest, #1e1f22);
+    background: var(--background-base-lower, #1a1a1e);
     border-right: 1px solid var(--background-modifier-accent, #2b2d31);
     font: inherit;
     white-space: pre;
@@ -645,7 +662,7 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     box-sizing: border-box;
     flex: 1 1 auto;
     min-width: 0;
-    background: var(--background-base-lowest, #1e1f22);
+    background: var(--background-base-lower, #1a1a1e);
     color: #dbdee1;
     font: inherit;
     overflow-x: auto;
