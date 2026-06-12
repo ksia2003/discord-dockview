@@ -266,6 +266,66 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     color: var(--text-danger, #f23f43);
 }
 
+/* Unsupported-format fallback: a centered card for a binary file we can't
+   preview (unknown extension that sniffed as binary), with download / open
+   actions. Mirrors the placeholder's centered layout but stacks an icon,
+   title, subtitle and a button row. */
+.dockview-unsupported {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    height: 100%;
+    padding: 24px 20px;
+    box-sizing: border-box;
+    text-align: center;
+}
+.dockview-unsupported-icon {
+    color: var(--text-muted, #949ba4);
+    opacity: 0.7;
+    margin-bottom: 2px;
+}
+.dockview-unsupported-title {
+    color: var(--header-primary, #f2f3f5);
+    font-size: 16px;
+    font-weight: 600;
+}
+.dockview-unsupported-sub {
+    color: var(--text-muted, #949ba4);
+    font-size: 13px;
+    max-width: 280px;
+    line-height: 1.4;
+    word-break: keep-all;
+}
+.dockview-unsupported-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+.dockview-unsupported-btn {
+    appearance: none;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--text-default, #dbdee1);
+    background: var(--button-secondary-background, #4e5058);
+    transition: background-color 0.15s ease;
+}
+.dockview-unsupported-btn:hover {
+    background: var(--button-secondary-background-hover, #6d6f78);
+}
+.dockview-unsupported-btn-primary {
+    color: var(--white-500, #ffffff);
+    background: var(--button-filled-brand-background, var(--brand-500, #5865f2));
+}
+.dockview-unsupported-btn-primary:hover {
+    background: var(--button-filled-brand-background-hover, var(--brand-560, #4752c4));
+}
+
 /* The INTERACTIVE artifact iframe: fills the whole scrollable body. Unlike the
    inline thumbnail it receives pointer events and scrolls its own content. When
    the artifact's own <body> is transparent, the iframe's backdrop shows

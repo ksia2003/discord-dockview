@@ -191,7 +191,12 @@ const state = {
 };
 
 // --- panel content state ----------------------------------------------------
-type ContentType = "html" | "pdf" | "code" | "markdown" | "image";
+// "unknown" = a file whose extension we don't recognise. We DON'T guess "html"
+// for it anymore (that dumped raw bytes — often binary garbage — into an iframe).
+// Instead loadUnknown() fetches it and sniffs text-vs-binary: a text file is
+// retyped to "code" (plaintext viewer), a binary one stays "unknown" and renders
+// the unsupported-format fallback screen (download / open-in-new-window).
+type ContentType = "html" | "pdf" | "code" | "markdown" | "image" | "unknown";
 
 interface PdfState {
     doc: any | null; // pdfjs PDFDocumentProxy
@@ -210,6 +215,8 @@ interface PanelContent {
     url: string | null;
     loading: boolean;
     error: string | null;
+    // true once an "unknown" file is sniffed as binary -> renderUnsupportedBody.
+    binary: boolean;
     seq: number;
 }
 const content: PanelContent = {
@@ -223,6 +230,7 @@ const content: PanelContent = {
     url: null,
     loading: false,
     error: null,
+    binary: false,
     seq: 0
 };
 
@@ -271,6 +279,7 @@ interface CacheEntry {
     codeLang?: string;
     pdfDoc?: any | null; // pdfjs PDFDocumentProxy (kept alive while cached)
     pdfPages?: number;
+    binary?: boolean; // sniffed-binary unknown file -> unsupported fallback
     error?: string | null;
     loading: boolean; // true while the initial fetch is still in flight
     view: CachedView;
@@ -413,6 +422,7 @@ function mountFromCache(e: CacheEntry): boolean {
     content.frameHtml = e.frameHtml ?? null;
     content.code = e.code ?? null;
     content.codeLang = e.codeLang ?? "plaintext";
+    content.binary = e.binary ?? false;
     codeRenderCache = null; // re-highlight against the restored seq
     // pdf: re-point the live doc to the cached one (no destroy, no re-fetch).
     content.pdf = {
@@ -630,9 +640,12 @@ function detectType(opts: { type?: ContentType; url?: string | null; name?: stri
     if (ext === "pdf") return "pdf";
     if (ext && IMG_EXT.has(ext)) return "image";
     if (ext && MD_EXT.has(ext)) return "markdown";
+    // ONLY genuine HTML-intent extensions take the iframe path. Everything else
+    // unrecognised is "unknown" (sniffed text/binary at load) — NOT "html", so a
+    // .xyz / binary file is never dumped raw into a sandbox iframe.
     if (ext === "artifact" || ext === "html" || ext === "htm") return "html";
     if (ext && ext in CODE_LANG) return "code";
-    return "html";
+    return "unknown";
 }
 
 /** Resolve the hljs language id for an ext (default plaintext). */
@@ -1046,6 +1059,89 @@ function loadCode(opts: { name: string; url?: string | null }, token: number, en
         });
 }
 
+/** Heuristic: does this byte buffer look like TEXT (vs binary)?
+ *  - A UTF-8/16 BOM, or a complete absence of NUL bytes plus a low ratio of
+ *    other C0 control chars, reads as text. A NUL byte (the single strongest
+ *    binary tell) or a high control-char ratio reads as binary. We sample the
+ *    leading bytes only — enough to classify without scanning huge files. */
+function looksLikeText(buf: ArrayBuffer): boolean {
+    const bytes = new Uint8Array(buf);
+    const n = Math.min(bytes.length, 4096);
+    if (n === 0) return true; // empty file: harmless to show as (empty) text
+    // BOMs => definitely text.
+    if (bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) return true; // UTF-8
+    if ((bytes[0] === 0xFF && bytes[1] === 0xFE) || (bytes[0] === 0xFE && bytes[1] === 0xFF)) return true; // UTF-16
+    let control = 0;
+    for (let i = 0; i < n; i++) {
+        const b = bytes[i];
+        if (b === 0) return false; // NUL: the definitive binary marker
+        // C0 controls except the common text whitespace (TAB 9, LF 10, CR 13,
+        // FF 12) and ESC 27 (ANSI logs). Everything >=0x20 is printable/UTF-8.
+        if (b < 0x20 && b !== 9 && b !== 10 && b !== 13 && b !== 12 && b !== 27) control++;
+    }
+    return control / n < 0.1; // <10% odd control bytes => treat as text
+}
+
+/** UNKNOWN-extension loader. We don't know the type from the name, so fetch the
+ *  bytes and sniff: text -> retype to a plaintext code viewer; binary -> mark
+ *  `content.binary` and render the unsupported-format fallback (download / open
+ *  in new window). Either way nothing raw is ever injected into an iframe. */
+function loadUnknown(opts: { name: string; url?: string | null }, token: number, entry: CacheEntry | null) {
+    resetHtml();
+    resetPdf();
+    resetCode();
+    if (!opts.url) {
+        content.loading = false;
+        content.error = "No source";
+        return;
+    }
+    content.loading = true;
+    const reqUrl = opts.url;
+    fetch(reqUrl)
+        .then(r => {
+            if (!r.ok) throw new Error(r.status + " " + r.statusText);
+            return r.arrayBuffer();
+        })
+        .then(buf => {
+            const isText = looksLikeText(buf);
+            if (isText) {
+                const text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
+                // Retype to a plaintext code view (cache entry too, so a re-open /
+                // channel return restores it as code, not as an unknown re-fetch).
+                if (entry) {
+                    entry.type = "code";
+                    entry.code = text;
+                    entry.codeLang = "plaintext";
+                    entry.binary = false;
+                    entry.loading = false;
+                    entry.error = null;
+                }
+                if (token !== loadSeq) return;
+                content.type = "code";
+                content.code = text;
+                content.codeLang = "plaintext";
+                content.binary = false;
+                content.loading = false;
+                content.error = null;
+                forceRender?.();
+            } else {
+                if (entry) { entry.binary = true; entry.loading = false; entry.error = null; }
+                if (token !== loadSeq) return;
+                content.binary = true;
+                content.loading = false;
+                content.error = null;
+                forceRender?.();
+            }
+        })
+        .catch(e => {
+            if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
+            if (token !== loadSeq) return;
+            content.loading = false;
+            content.error = String(e?.message || e);
+            forceRender?.();
+        });
+}
+
 /** MARKDOWN loader: fetch -> marked -> dark doc -> nonce sandbox iframe path. */
 function loadMarkdown(opts: { name: string; url?: string | null }, token: number, entry: CacheEntry | null) {
     resetPdf();
@@ -1196,6 +1292,7 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
     content.name = name;
     content.url = url;
     content.error = null;
+    content.binary = false;
     content.seq += 1;
     content.type = type;
 
@@ -1221,6 +1318,7 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
     else if (type === "image") loadImage(opts, token, entry);
     else if (type === "code") loadCode(opts, token, entry);
     else if (type === "markdown") loadMarkdown(opts, token, entry);
+    else if (type === "unknown") loadUnknown(opts, token, entry);
     else loadHtml(opts, token, entry);
 
     // Inline-html artifacts (no url) can't be re-loaded by descriptor, so they
@@ -2149,6 +2247,55 @@ function renderCodeBody() {
     );
 }
 
+/** Unsupported-format fallback: a clean centered card for a binary file we can't
+ *  preview, with Download + Open-in-new-window actions (no raw-byte iframe dump).
+ *  Reached for an "unknown"-extension file that sniffed as binary. */
+function renderUnsupportedBody() {
+    const url = content.url;
+    const name = content.name || "file";
+    const ext = extOf(name) || extOf(url);
+    return React.createElement(
+        "div",
+        { className: "dockview-unsupported", key: content.seq },
+        React.createElement(
+            "svg",
+            { className: "dockview-unsupported-icon", width: 48, height: 48, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+            React.createElement("path", {
+                fill: "currentColor",
+                d: "M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-7-7Zm0 2.5L17.5 9H14a1 1 0 0 1-1-1V4.5ZM8 13h8v1.5H8V13Zm0 3.5h8V18H8v-1.5Z"
+            })
+        ),
+        React.createElement("div", { className: "dockview-unsupported-title" }, "미리보기를 지원하지 않는 형식"),
+        React.createElement(
+            "div",
+            { className: "dockview-unsupported-sub" },
+            ext ? `.${ext} 파일은 패널에서 미리 볼 수 없습니다.` : "이 파일은 패널에서 미리 볼 수 없습니다."
+        ),
+        React.createElement(
+            "div",
+            { className: "dockview-unsupported-actions" },
+            React.createElement(
+                "button",
+                {
+                    type: "button",
+                    className: "dockview-unsupported-btn dockview-unsupported-btn-primary",
+                    onClick: () => downloadUrl(url, name)
+                },
+                "다운로드"
+            ),
+            React.createElement(
+                "button",
+                {
+                    type: "button",
+                    className: "dockview-unsupported-btn",
+                    onClick: () => { if (url) window.open(absUrl(url), "_blank", "noopener,noreferrer"); }
+                },
+                "새 창에서 열기"
+            )
+        )
+    );
+}
+
 /** Body dispatcher: shared loading / error / placeholder, then route. */
 function renderBody() {
     if (content.name == null) {
@@ -2179,6 +2326,14 @@ function renderBody() {
             return React.createElement("div", { className: "dockview-status" }, "Loading…");
         }
         return renderCodeBody();
+    }
+    if (content.type === "unknown") {
+        // Still sniffing (a text file gets retyped to "code" on resolve, so the
+        // only "unknown" left after load is a sniffed-binary file).
+        if (content.loading) {
+            return React.createElement("div", { className: "dockview-status" }, "Loading…");
+        }
+        return renderUnsupportedBody();
     }
     // markdown shares the html (frameHtml iframe) path; fall through.
     if (content.loading || content.frameHtml == null) {
