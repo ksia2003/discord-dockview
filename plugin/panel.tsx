@@ -178,6 +178,17 @@ const content: PanelContent = {
     seq: 0
 };
 
+// Memoized highlight + gutter for the code body, keyed on content.seq. A given
+// seq uniquely identifies one loaded file (code + language are fixed for it), so
+// the hljs pass + the gutter string are computed ONCE per file and reused across
+// every subsequent DockPanel re-render. Without it, renderCodeBody re-ran hljs
+// over the WHOLE file each render (measured ~30 full passes / drag on a 300 KB
+// file, several seconds of main-thread blocking). The resize drag no longer
+// re-renders DockPanel at all, but this keeps any stray re-render (toolbar,
+// word-wrap toggle, scroll-driven page indicator…) cheap as defence-in-depth.
+// Cleared by resetCode() so a new load can't read a stale highlight.
+let codeRenderCache: { seq: number; html: string; gutter: string } | null = null;
+
 // --- image viewer view-state (zoom / pan), shared with the toolbar ----------
 // scale === 1 means "fit" (contain). Bumping scale zooms; tx/ty pan when zoomed
 // past fit. We keep this at module scope so the header TOOLBAR controls and the
@@ -637,6 +648,7 @@ function resetPdf() {
 function resetCode() {
     content.code = null;
     content.codeLang = "plaintext";
+    codeRenderCache = null; // drop the (possibly large) memoized highlight HTML
 }
 
 /** HTML / artifact loader. */
@@ -1613,12 +1625,20 @@ function ImageBody() {
  *  toggle. Highlight HTML is unchanged; we render a parallel gutter column. */
 function renderCodeBody() {
     const code = content.code || "";
-    const html = highlightCode(code, content.codeLang);
-    // line count (don't count a single trailing newline as an extra blank line)
-    const body = code.endsWith("\n") ? code.slice(0, -1) : code;
-    const lineCount = body.length ? body.split("\n").length : 1;
-    let gutter = "";
-    for (let i = 1; i <= lineCount; i++) gutter += i + "\n";
+    let html: string;
+    let gutter: string;
+    if (codeRenderCache && codeRenderCache.seq === content.seq) {
+        html = codeRenderCache.html;
+        gutter = codeRenderCache.gutter;
+    } else {
+        html = highlightCode(code, content.codeLang);
+        // line count (don't count a single trailing newline as an extra blank line)
+        const bodyText = code.endsWith("\n") ? code.slice(0, -1) : code;
+        const lineCount = bodyText.length ? bodyText.split("\n").length : 1;
+        gutter = "";
+        for (let i = 1; i <= lineCount; i++) gutter += i + "\n";
+        codeRenderCache = { seq: content.seq, html, gutter };
+    }
 
     return React.createElement(
         "div",
@@ -1968,7 +1988,7 @@ function DockPanel() {
         resizing.current = true;
         resizeDragging = true;
         const startX = e.clientX;
-        const startWidth = width;
+        const startWidth = state.width;
         // Width the rendered content currently assumes; the live PDF preview
         // scales by (newWidth / this). Use the clamped start width as the base.
         const baseWidth = clampWidth(startWidth);
@@ -1981,25 +2001,54 @@ function DockPanel() {
         overlay.className = "dockview-drag-overlay";
         document.body.appendChild(overlay);
 
-        const onMove = (ev: MouseEvent) => {
+        // The drag is a PURE DOM operation, fully decoupled from React: every
+        // pointermove records the latest pixel and a single rAF coalesces them
+        // into one host-width write per frame. We deliberately do NOT touch React
+        // state (no setWidth / forceRender) DURING the drag — a re-render would
+        // re-run renderBody() and, for the code viewer, re-highlight the whole
+        // file every frame (measured: ~30 full hljs passes / drag, multi-second
+        // main-thread block). The content reflows purely from the host's CSS width
+        // (iframe/code/image fill it; the PDF column reflows off --scale-factor),
+        // so no render is needed to make the body follow the drag. We commit to
+        // React ONCE on drag end (setWidth -> the [width] effect persists it).
+        let pendingX = startX;
+        let rafId = 0;
+        const flush = () => {
+            rafId = 0;
             if (!resizing.current) return;
-            const delta = startX - ev.clientX; // drag left edge: leftward = wider
+            const delta = startX - pendingX; // drag left edge: leftward = wider
             const next = clampWidth(startWidth + delta);
-            setWidth(next);
+            if (next !== state.width) {
+                state.width = next;
+                applyHostWidth(); // direct inline-style write, no React
+            }
             // Instant feedback for the (debounced-re-raster) PDF view: scale the
             // already-painted pages so they track the drag with no blank/jump.
             // No-op for non-PDF content (pdfControls is null then).
             if (pdfControls) { pdfControls.liveScale(next / baseWidth); liveScaled = true; }
         };
+        const onMove = (ev: MouseEvent) => {
+            if (!resizing.current) return;
+            pendingX = ev.clientX;
+            if (!rafId) rafId = requestAnimationFrame(flush);
+        };
         const onUp = () => {
             resizing.current = false;
             resizeDragging = false;
+            if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
             document.removeEventListener("mousemove", onMove);
             document.removeEventListener("mouseup", onUp);
             document.body.style.cursor = "";
             document.body.style.userSelect = "";
             handle?.classList.remove("dockview-resizing");
             overlay.remove();
+            // Make sure the host reflects the final pointer position, then sync
+            // React's width state ONCE (its [width] effect persists to LS).
+            const delta = startX - pendingX;
+            const final = clampWidth(startWidth + delta);
+            state.width = final;
+            applyHostWidth();
+            setWidth(final);
             // Drag ended: re-raster the PDF crisply at the final width (replaces
             // the CSS-scaled preview with no snap-back gap).
             if (liveScaled && pdfControls) pdfControls.endLiveScale();
@@ -2008,7 +2057,7 @@ function DockPanel() {
         document.body.style.userSelect = "none";
         document.addEventListener("mousemove", onMove);
         document.addEventListener("mouseup", onUp);
-    }, [width]);
+    }, []);
 
     const close = useCallback(() => {
         state.open = false;
@@ -2211,6 +2260,16 @@ function applyOpenState() {
         if (host) host.classList.remove("dockview-open");
         document.documentElement.classList.remove("dockview-open");
     }
+}
+
+/** Write ONLY the host's width/flex from state.width, nothing else. Used in the
+ *  resize drag's rAF loop so a width change is a single cheap inline-style write
+ *  (no React render, no document-class / page-inner work like applyOpenState). */
+function applyHostWidth() {
+    const host = document.getElementById(HOST_ID);
+    if (!host) return;
+    host.style.flex = `0 0 ${state.width}px`;
+    host.style.width = `${state.width}px`;
 }
 
 /** Drop the document state class (restoring any preemptively-hidden sidebar) and
