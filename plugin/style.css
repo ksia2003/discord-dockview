@@ -198,15 +198,61 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
 }
 
 /* Header: native classes give the 48px bar, padding, tint and border-bottom.
-   We only ensure title (left) and toolbar (right) lay apart. */
+   The header is now a SINGLE row holding everything: [glyph][filename] +
+   [per-viewer core controls] + [⋯ popout close]. Discord's .upperContainer__*
+   is the flex row; we make the three regions lay out with the filename region
+   flexing/ellipsising and the controls + actions shrink-protected to the right.
+
+   COLLAPSE PRIORITY at narrow width (spec §2.1 "결정 필요 5" = collapse controls,
+   keep filename): the filename region (.dockview-header-children) keeps flex:1
+   and min-width:0 so it is the FIRST to give up space (its text ellipsises) only
+   AFTER the controls have nowhere left to go — but the controls region itself is
+   allowed to shrink (min-width:0 + overflow hidden) so it sheds its lowest-
+   priority items first, while the action buttons (⋯/close) never shrink. */
 .dockview-header {
     flex: 0 0 auto;
+}
+.dockview-header-upper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    /* The query container for narrow-width control collapse (see the bottom of
+       this file). Its inline size tracks the PANEL width (header padding aside),
+       a stable measure independent of the controls' own content width. */
+    container-type: inline-size;
+    container-name: dockview-header;
 }
 .dockview-header .dockview-header-children {
     flex: 1 1 auto;
     min-width: 0;
     display: flex;
     align-items: center;
+    /* lowest shrink priority for the filename: it ellipsises, never disappears */
+}
+/* Per-viewer core controls, inline in the header. Shrink-protected vs the
+   filename (so the controls win space first), but ALLOWED to clip its own
+   lowest-priority items at extreme narrow width before the filename gives up its
+   last sliver. The action buttons to its right never shrink. */
+.dockview-header-controls {
+    flex: 0 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow: hidden;
+}
+.dockview-header-controls:empty { display: none; }
+.dockview-header-actions {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+}
+/* In the single header row the tool buttons share the action buttons' 32px
+   rhythm. They keep the 18px glyph but match the header height visually. */
+.dockview-header-controls .dockview-tool-btn {
+    height: 30px;
+    min-width: 30px;
 }
 /* Leading file-type glyph: a real thread header is [glyph] + title; we mirror it
    with one muted, document-framed icon ahead of the filename. Tinted with the
@@ -247,6 +293,12 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     position: relative;
     display: flex;
     flex-direction: column;
+}
+/* When the find dropdown is open it occupies a 38px row pinned to the top of the
+   body-wrap; inset the scrolling body by that height so no content hides under
+   the bar (the first PDF page stays fully visible). */
+.dockview-body-wrap.dockview-find-open .dockview-body {
+    margin-top: 38px;
 }
 .dockview-body {
     flex: 1 1 auto;
@@ -536,25 +588,32 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     color: transparent;
 }
 
-/* PDF find overlay: a small floating bar pinned to the top-right of the PDF
-   body (Discord may intercept the global Ctrl+F, so this is our own UI). */
-.dockview-pdf-find {
+/* FIND BAR (reusable: PDF today, code next). A one-row dropdown surface pinned
+   to the top of the body, just under the header — a secondary "find" surface
+   that appears only when find is toggled on (spec §2.1: "찾기는 활성화 시에만 한
+   줄 드롭다운"). Spans the body width with a hairline under the header so it
+   reads as an extension of the header bar rather than a floating island.
+   Discord may intercept the global Ctrl+F, so this is our own UI. */
+.dockview-find {
     position: absolute;
-    top: 8px;
-    right: 14px;
+    top: 0;
+    left: 0;
+    right: 0;
     z-index: 10;
     display: flex;
     align-items: center;
     gap: 2px;
-    padding: 4px 4px 4px 8px;
-    border-radius: 6px;
-    background: var(--background-floating, #111214);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-    border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
+    height: 38px;
+    padding: 0 6px 0 12px;
+    box-sizing: border-box;
+    background: var(--background-base-low, var(--background-secondary, #2b2d31));
+    border-bottom: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
-.dockview-pdf-find-input {
-    width: 150px;
-    height: 26px;
+.dockview-find-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 28px;
     border: none;
     outline: none;
     background: transparent;
@@ -562,8 +621,9 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     font-family: inherit;
     font-size: 13px;
 }
-.dockview-pdf-find-input::placeholder { color: var(--text-muted, #87898c); }
-.dockview-pdf-find-count {
+.dockview-find-input::placeholder { color: var(--text-muted, #87898c); }
+.dockview-find-count {
+    flex: 0 0 auto;
     min-width: 38px;
     text-align: center;
     font-size: 12px;
@@ -571,13 +631,14 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     color: var(--text-muted, #949ba4);
     user-select: none;
 }
-/* The "Aa" case-sensitivity toggle: a compact text button matching the input
-   height. Reuses .dockview-tool-btn for hover/active; this just tightens it. */
-.dockview-pdf-find .dockview-tool-btn {
-    height: 26px;
-    min-width: 26px;
+/* The "Aa" case-sensitivity toggle: a compact text button. Reuses
+   .dockview-tool-btn for hover/active; this just tightens it. */
+.dockview-find .dockview-tool-btn {
+    flex: 0 0 auto;
+    height: 28px;
+    min-width: 28px;
 }
-.dockview-pdf-find-case {
+.dockview-find-case {
     font-size: 12px;
     font-weight: 600;
 }
@@ -765,22 +826,12 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
 .dockview-code .hljs-strong { font-weight: 700; }
 .dockview-code .hljs-deletion { color: #ff938a; }
 
-/* CONTENT-TYPE TOOLBAR — a thin control strip under the header, holding only
-   the controls relevant to the current content type (image zoom +/-/% / reset,
-   code language label + word-wrap + copy). Extensible: PDF page-nav lands here
-   in pass 2. Discord-toned: muted icons, hover bg, brand-active state. */
-.dockview-toolbar {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    height: 36px;
-    padding: 0 8px;
-    box-sizing: border-box;
-    background: var(--background-base-low, var(--background-secondary, #2b2d31));
-    border-bottom: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
-}
+/* HEADER CONTROL BUTTONS — the per-viewer core controls now live inline in the
+   single header row (the old `dockview-toolbar` strip is gone). Discord-toned:
+   ghost buttons (muted icon, hover bg), and ONE low-chroma active language for
+   every toggle (find / wrap / Aa) — a subtle neutral fill + brightened icon, NOT
+   the old blurple. The spec (§2.2) wanted active toggles to stop "competing"
+   with the native header tone; a single quiet emphasis does that. */
 .dockview-tool-group {
     display: flex;
     align-items: center;
@@ -811,9 +862,12 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
 .dockview-tool-btn:active {
     background: var(--background-modifier-active, rgba(255, 255, 255, 0.12));
 }
-.dockview-tool-btn-active {
-    color: var(--text-brand, #5865f2);
-    background: var(--background-modifier-selected, rgba(88, 101, 242, 0.16));
+/* Active toggle: a quiet neutral fill + brightened icon (the single shared
+   active language). No brand/blurple — it must not fight the native header. */
+.dockview-tool-btn-active,
+.dockview-tool-btn-active:hover {
+    color: var(--interactive-active, #f2f3f5);
+    background: var(--background-modifier-selected, rgba(255, 255, 255, 0.12));
 }
 .dockview-tool-btn svg { display: block; }
 /* Zoom percentage readout between -/+ */
@@ -868,8 +922,43 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-/* Copy button shows a label that flips to "Copied" with a brand tint. */
+/* In the header the language label is capped so a long lang id can't crowd out
+   the controls; it ellipsises within its cap. */
+.dockview-header-controls .dockview-tool-lang { max-width: 96px; }
+/* Copy button shows a label that flips to "Copied" with a positive tint. */
 .dockview-tool-copy .dockview-tool-copy-label { font-size: 12px; }
 .dockview-tool-copy.dockview-tool-copied {
     color: var(--text-positive, #23a559);
+}
+
+/* The shared zoom group [− % +] (PDF + image, identical). A tight cluster with
+   the percent readout centred between the buttons — one consistent component,
+   spacing and order across both viewers (spec §2.2). */
+.dockview-zoom-group {
+    gap: 0;
+}
+.dockview-zoom-group .dockview-tool-pct {
+    min-width: 40px;
+}
+
+/* ----------------------------------------------------------------------------
+   NARROW-WIDTH COLLAPSE (spec §2.1 "결정 필요 5": collapse controls, never the
+   filename). The header row (.dockview-header-upper) is a CSS CONTAINER keyed on
+   the PANEL width; as the panel narrows (min 360px) the lowest-priority control
+   affordances drop out FIRST, purely in CSS so it reflows live during a resize
+   drag with no React re-render. Order of collapse:
+     1) `.dockview-collapse-low`  — page arrows, code language label
+     2) `.dockview-collapse-mid`  — find toggle, copy's text label
+   The CORE controls (zoom group, page readout/jump, wrap, copy icon) and the
+   filename always survive; find/page-nav stay reachable via keyboard (Ctrl+F,
+   ←/→) so nothing is lost, only the affordance is hidden. Thresholds are the
+   header inline width (≈ panel width − ~16px padding); the dense PDF cluster is
+   what sets them, so they're tuned to keep a readable filename beside it.
+   ------------------------------------------------------------------------- */
+@container dockview-header (max-width: 400px) {
+    .dockview-collapse-low { display: none; }
+}
+@container dockview-header (max-width: 344px) {
+    .dockview-collapse-mid { display: none; }
+    .dockview-tool-copy-label { display: none; }
 }

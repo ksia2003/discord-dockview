@@ -2130,59 +2130,94 @@ function PdfBody() {
     });
 }
 
-/** The PDF FIND bar: a small floating overlay (top-right of the PDF body) with a
- *  query input, a match counter and prev/next. Discord may intercept the global
- *  Ctrl+F, so this is our own UI (toggled from the toolbar's find button or the
- *  keyboard's Ctrl+F when the panel is the active surface). Best-effort match:
- *  highlights whole text-layer spans that contain the query. */
-function PdfFindBar() {
+// The FIND bar is a small one-row dropdown surface (input + counter + Aa +
+// prev/next + close). Discord may intercept the global Ctrl+F, so this is our
+// own UI. It is a GENERIC, reusable component (PERF-4 / CODE-2 prep): the PDF
+// viewer drives it today, the code viewer will reuse it verbatim. All behaviour
+// (query, counter, case, next/prev, close) is supplied through a `FindBarModel`
+// so the bar itself knows nothing about pdf.js vs code — only how to lay the
+// row out. No behaviour change from the old PdfFindBar: same fields, same keys,
+// same handlers, just parameterised.
+interface FindBarModel {
+    query: string;
+    matches: number;
+    active: number; // 1-based index of the active match (0 = none)
+    caseSensitive: boolean;
+    placeholder: string;
+    setQuery: (q: string) => void;
+    next: () => void;
+    prev: () => void;
+    toggleCase: () => void;
+    close: () => void;
+}
+
+/** Reusable find bar. `model` wires it to whichever viewer is active. */
+function FindBar({ model }: { model: FindBarModel }) {
     const { useRef, useEffect } = React;
     const inputRef = useRef(null as HTMLInputElement | null);
     // focus the input when the bar opens
     useEffect(() => { inputRef.current?.focus(); }, []);
-    const counter = pdfView.findMatches > 0
-        ? `${pdfView.findActive}/${pdfView.findMatches}`
-        : (pdfView.findQuery ? "0/0" : "");
+    const counter = model.matches > 0
+        ? `${model.active}/${model.matches}`
+        : (model.query ? "0/0" : "");
     return React.createElement(
         "div",
-        { className: "dockview-pdf-find" },
+        { className: "dockview-find" },
         React.createElement("input", {
             ref: inputRef,
-            className: "dockview-pdf-find-input",
+            className: "dockview-find-input",
             type: "text",
-            placeholder: "Find in document",
-            "aria-label": "Find in document",
-            value: pdfView.findQuery,
-            onChange: (e: any) => pdfControls?.setFindQuery(e.target.value),
+            placeholder: model.placeholder,
+            "aria-label": model.placeholder,
+            value: model.query,
+            onChange: (e: any) => model.setQuery(e.target.value),
             onKeyDown: (e: any) => {
                 e.stopPropagation();
-                if (e.key === "Enter") { e.preventDefault(); if (e.shiftKey) pdfControls?.findPrev(); else pdfControls?.findNext(); }
-                else if (e.key === "Escape") { e.preventDefault(); pdfControls?.toggleFind(); }
+                if (e.key === "Enter") { e.preventDefault(); if (e.shiftKey) model.prev(); else model.next(); }
+                else if (e.key === "Escape") { e.preventDefault(); model.close(); }
             }
         }),
-        React.createElement("span", { className: "dockview-pdf-find-count" }, counter),
+        React.createElement("span", { className: "dockview-find-count" }, counter),
         // Case-sensitivity toggle (default off). Text "Aa" rather than an icon —
         // the universal find-bar convention (browsers, VS Code, Acrobat).
         React.createElement("button", {
             key: "find-case",
             type: "button",
-            className: "dockview-tool-btn dockview-pdf-find-case" + (pdfView.findCase ? " dockview-tool-btn-active" : ""),
+            className: "dockview-tool-btn dockview-find-case" + (model.caseSensitive ? " dockview-tool-btn-active" : ""),
             "aria-label": "Match case",
-            "aria-pressed": pdfView.findCase,
+            "aria-pressed": model.caseSensitive,
             title: "Match case",
             onMouseDown: (e: any) => e.preventDefault(), // keep focus in the input
-            onClick: () => pdfControls?.toggleFindCase()
+            onClick: () => model.toggleCase()
         }, "Aa"),
         toolBtn("find-prev", "Previous match (Shift+Enter)",
             "M15.3 5.3a1 1 0 0 1 0 1.4L10 12l5.3 5.3a1 1 0 0 1-1.42 1.4l-6-6a1 1 0 0 1 0-1.4l6-6a1 1 0 0 1 1.42 0Z",
-            () => pdfControls?.findPrev()),
+            () => model.prev()),
         toolBtn("find-next", "Next match (Enter)",
             "M8.7 5.3a1 1 0 0 0 0 1.4L14 12l-5.3 5.3a1 1 0 0 0 1.42 1.4l6-6a1 1 0 0 0 0-1.4l-6-6a1 1 0 0 0-1.42 0Z",
-            () => pdfControls?.findNext()),
+            () => model.next()),
         toolBtn("find-close", "Close find (Esc)",
             "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z",
-            () => pdfControls?.toggleFind())
+            () => model.close())
     );
+}
+
+/** The PDF find bar = the generic FindBar wired to the PDF view-state. */
+function PdfFindBar() {
+    return React.createElement(FindBar, {
+        model: {
+            query: pdfView.findQuery,
+            matches: pdfView.findMatches,
+            active: pdfView.findActive,
+            caseSensitive: pdfView.findCase,
+            placeholder: "Find in document",
+            setQuery: (q: string) => pdfControls?.setFindQuery(q),
+            next: () => pdfControls?.findNext(),
+            prev: () => pdfControls?.findPrev(),
+            toggleCase: () => pdfControls?.toggleFindCase(),
+            close: () => pdfControls?.toggleFind()
+        }
+    });
 }
 
 /** The IMAGE body: a centered, fit(contain) <img> with zoom + pan, modelled on
@@ -2597,10 +2632,17 @@ function renderBody() {
 }
 
 // ---------------------------------------------------------------------------
-// Content-type toolbar — a thin control strip under the header. Shows only the
-// controls relevant to the current content type (image = zoom +/-/reset + %;
-// code = language label, word-wrap toggle, copy). Built to be extended (PDF
-// page nav lands here in pass 2). Uses small native-ish buttons.
+// Header control groups — the per-viewer CORE controls now live INLINE in the
+// single header row (right of the filename, left of ⋯/popout/close), so every
+// viewer is one bar tall like a native thread header. The old second
+// `dockview-toolbar` strip is gone; secondary controls (PDF fit-width) moved to
+// the ⋯ menu. What stays in the header per the spec's priority table:
+//   PDF   = page indicator + prev/next, zoom group, find toggle
+//   image = zoom group + reset
+//   code  = language label, wrap toggle, copy
+// All buttons share `toolBtn`; PDF + image share one `zoomGroup`. Active toggles
+// use ONE low-chroma visual language (see .dockview-tool-btn-active in CSS) — no
+// competing blurple. Controls collapse priority-low first at narrow width (CSS).
 // ---------------------------------------------------------------------------
 
 /** A small SVG toolbar button (square, hover bg) — shared by all tool types. */
@@ -2613,6 +2655,7 @@ function toolBtn(key: string, label: string, path: string, onClick: () => void, 
             className: "dockview-tool-btn" + (active ? " dockview-tool-btn-active" : ""),
             "aria-label": label,
             title: label,
+            "aria-pressed": active || undefined,
             onClick
         },
         React.createElement(
@@ -2623,153 +2666,175 @@ function toolBtn(key: string, label: string, path: string, onClick: () => void, 
     );
 }
 
-function DockToolbar() {
-    const { useState } = React;
-    const [copied, setCopied] = useState(false);
-    const [pageInput, setPageInput] = useState("");
+const ZOOM_OUT_PATH = "M19 11a1 1 0 0 1 0 2H5a1 1 0 1 1 0-2h14Z";
+const ZOOM_IN_PATH = "M13 5a1 1 0 1 0-2 0v6H5a1 1 0 1 0 0 2h6v6a1 1 0 1 0 2 0v-6h6a1 1 0 1 0 0-2h-6V5Z";
 
-    if (content.type === "pdf") {
-        if (content.loading || content.error || content.pdf.doc == null) return null;
-        const pct = Math.round(pdfView.zoom * 100);
-        const commitPage = () => {
-            const n = parseInt(pageInput, 10);
-            if (!isNaN(n)) pdfControls?.goToPage(n);
-            setPageInput("");
-        };
-        return React.createElement(
+/** The shared zoom group: [− %readout +]. Identical layout / icons / spacing for
+ *  PDF + image (IMG-1 / spec §2.2 "zoom group unified"). `keyPrefix` keys the two
+ *  buttons; `pct` is the integer percent shown between them. */
+function zoomGroup(keyPrefix: string, pct: number, onOut: () => void, onIn: () => void) {
+    return React.createElement(
+        "div",
+        { className: "dockview-tool-group dockview-zoom-group" },
+        toolBtn(keyPrefix + "-zoom-out", "Zoom out (-)", ZOOM_OUT_PATH, onOut),
+        React.createElement("span", { className: "dockview-tool-pct", title: "Zoom level" }, pct + "%"),
+        toolBtn(keyPrefix + "-zoom-in", "Zoom in (+)", ZOOM_IN_PATH, onIn)
+    );
+}
+
+/** PDF header controls: page indicator + prev/next, zoom group, find toggle.
+ *  (fit-width moved to the ⋯ menu.) Its own component so the page-jump input has
+ *  local state without re-rendering the whole header on each keystroke. */
+function PdfHeaderControls() {
+    const { useState } = React;
+    const [pageInput, setPageInput] = useState("");
+    if (content.loading || content.error || content.pdf.doc == null) return null;
+    const pct = Math.round(pdfView.zoom * 100);
+    const commitPage = () => {
+        const n = parseInt(pageInput, 10);
+        if (!isNaN(n)) pdfControls?.goToPage(n);
+        setPageInput("");
+    };
+    return React.createElement(
+        React.Fragment,
+        null,
+        // page navigation + indicator + jump input. The prev/next ARROWS are the
+        // lowest-priority items (scroll + ←/→ keys cover them) so they collapse
+        // first at narrow width; the readout/jump input is kept (it's the only way
+        // to SEE/type the page number) — see the container queries in CSS.
+        React.createElement(
             "div",
-            { className: "dockview-toolbar dockview-toolbar-pdf" },
-            // LEFT: page navigation + indicator + jump input
+            { className: "dockview-tool-group" },
             React.createElement(
-                "div",
-                { className: "dockview-tool-group" },
+                "span",
+                { className: "dockview-collapse-low" },
                 toolBtn("pdf-prev", "Previous page (←)",
                     "M15.3 5.3a1 1 0 0 1 0 1.4L10 12l5.3 5.3a1 1 0 0 1-1.42 1.4l-6-6a1 1 0 0 1 0-1.4l6-6a1 1 0 0 1 1.42 0Z",
-                    () => pdfControls?.prevPage()),
-                React.createElement(
-                    "span",
-                    { className: "dockview-tool-pageind", title: "Current page / total" },
-                    React.createElement("input", {
-                        className: "dockview-tool-pageinput",
-                        type: "text",
-                        inputMode: "numeric",
-                        "aria-label": "Go to page",
-                        title: "Type a page number, Enter to jump",
-                        value: pageInput,
-                        placeholder: String(pdfView.page),
-                        onChange: (e: any) => setPageInput(e.target.value.replace(/[^0-9]/g, "")),
-                        onKeyDown: (e: any) => {
-                            if (e.key === "Enter") { e.preventDefault(); commitPage(); }
-                            e.stopPropagation();
-                        },
-                        onBlur: () => { if (pageInput) commitPage(); }
-                    }),
-                    React.createElement("span", { className: "dockview-tool-pagetotal" }, " / " + pdfView.total)
-                ),
+                    () => pdfControls?.prevPage())
+            ),
+            React.createElement(
+                "span",
+                { className: "dockview-tool-pageind", title: "Current page / total" },
+                React.createElement("input", {
+                    className: "dockview-tool-pageinput",
+                    type: "text",
+                    inputMode: "numeric",
+                    "aria-label": "Go to page",
+                    title: "Type a page number, Enter to jump",
+                    value: pageInput,
+                    placeholder: String(pdfView.page),
+                    onChange: (e: any) => setPageInput(e.target.value.replace(/[^0-9]/g, "")),
+                    onKeyDown: (e: any) => {
+                        if (e.key === "Enter") { e.preventDefault(); commitPage(); }
+                        e.stopPropagation();
+                    },
+                    onBlur: () => { if (pageInput) commitPage(); }
+                }),
+                React.createElement("span", { className: "dockview-tool-pagetotal" }, " / " + pdfView.total)
+            ),
+            React.createElement(
+                "span",
+                { className: "dockview-collapse-low" },
                 toolBtn("pdf-next", "Next page (→)",
                     "M8.7 5.3a1 1 0 0 0 0 1.4L14 12l-5.3 5.3a1 1 0 0 0 1.42 1.4l6-6a1 1 0 0 0 0-1.4l-6-6a1 1 0 0 0-1.42 0Z",
                     () => pdfControls?.nextPage())
-            ),
-            // RIGHT: zoom -/%/+ , fit-to-width (reset zoom), find toggle
-            React.createElement(
-                "div",
-                { className: "dockview-tool-group" },
-                toolBtn("pdf-zoom-out", "Zoom out (-)",
-                    "M19 11a1 1 0 0 1 0 2H5a1 1 0 1 1 0-2h14Z",
-                    () => pdfControls?.zoomOut()),
-                React.createElement("span", { className: "dockview-tool-pct", title: "Zoom level" }, pct + "%"),
-                toolBtn("pdf-zoom-in", "Zoom in (+)",
-                    "M13 5a1 1 0 1 0-2 0v6H5a1 1 0 1 0 0 2h6v6a1 1 0 1 0 2 0v-6h6a1 1 0 1 0 0-2h-6V5Z",
-                    () => pdfControls?.zoomIn()),
-                // Reset zoom to fit the panel width (100%). Visible effect after
-                // any zoom; greyed/active when already at fit. Replaces the old
-                // fit-width + fit-page toggle pair (fit-page was identical to
-                // fit-width in this tall, narrow docked panel, so it did nothing).
-                toolBtn("pdf-fit-width", pct === 100 ? "Fit to width (100%)" : "Reset zoom — fit to width",
-                    "M4 5a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1Zm16 0a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1ZM8.7 8.3a1 1 0 0 0-1.4 1.4l.29.3H7a1 1 0 0 0 0 2h.59l-.3.3a1 1 0 1 0 1.42 1.4l2-2a1 1 0 0 0 0-1.4l-2-2Zm6.6 0a1 1 0 0 1 1.4 1.4l-.29.3H17a1 1 0 1 1 0 2h-.59l.3.3a1 1 0 0 1-1.42 1.4l-2-2a1 1 0 0 1 0-1.4l2-2Z",
-                    () => pdfControls?.fitWidth(), pct === 100),
-                toolBtn("pdf-find", "Find (Ctrl+F)",
-                    "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
-                    () => pdfControls?.toggleFind(), pdfView.findOpen)
             )
-        );
-    }
-
-    if (content.type === "image") {
-        if (content.loading || content.error || !content.url) return null;
-        const pct = Math.round(imgView.scale * 100);
-        return React.createElement(
+        ),
+        // zoom group (shared w/ image) — a CORE control, last to collapse.
+        zoomGroup("pdf", pct, () => pdfControls?.zoomOut(), () => pdfControls?.zoomIn()),
+        // find toggle (the only header toggle for PDF; fit-width is in ⋯).
+        // Mid priority: collapses before the zoom group but after the arrows.
+        React.createElement(
             "div",
-            { className: "dockview-toolbar" },
-            React.createElement(
-                "div",
-                { className: "dockview-tool-group" },
-                toolBtn("zoom-out", "Zoom out (-)",
-                    "M19 11a1 1 0 0 1 0 2H5a1 1 0 1 1 0-2h14Z",
-                    () => imgControls?.zoomOut()),
-                React.createElement("span", { className: "dockview-tool-pct", title: "Zoom level" }, pct + "%"),
-                toolBtn("zoom-in", "Zoom in (+)",
-                    "M13 5a1 1 0 1 0-2 0v6H5a1 1 0 1 0 0 2h6v6a1 1 0 1 0 2 0v-6h6a1 1 0 1 0 0-2h-6V5Z",
-                    () => imgControls?.zoomIn()),
-                toolBtn("zoom-reset", "Reset zoom (0)",
-                    "M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5 1 1 0 1 0-2 0 7 7 0 1 0 7-7Z",
-                    () => imgControls?.reset())
-            )
-        );
-    }
+            { className: "dockview-tool-group dockview-collapse-mid" },
+            toolBtn("pdf-find", "Find (Ctrl+F)",
+                "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
+                () => pdfControls?.toggleFind(), pdfView.findOpen)
+        )
+    );
+}
 
-    if (content.type === "code") {
-        if (content.loading || content.error || content.code == null) return null;
-        const copy = () => {
-            const text = content.code || "";
-            const done = () => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1200);
-            };
-            try {
-                if (navigator.clipboard?.writeText) {
-                    navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
-                } else {
-                    fallbackCopy(text, done);
-                }
-            } catch {
+/** Image header controls: the shared zoom group + a reset-to-fit. */
+function ImageHeaderControls() {
+    if (content.loading || content.error || !content.url) return null;
+    const pct = Math.round(imgView.scale * 100);
+    return React.createElement(
+        React.Fragment,
+        null,
+        zoomGroup("img", pct, () => imgControls?.zoomOut(), () => imgControls?.zoomIn()),
+        React.createElement(
+            "div",
+            { className: "dockview-tool-group" },
+            toolBtn("zoom-reset", "Reset zoom (0)",
+                "M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5 1 1 0 1 0-2 0 7 7 0 1 0 7-7Z",
+                () => imgControls?.reset())
+        )
+    );
+}
+
+/** Code header controls: language label, wrap toggle, copy. Own component for
+ *  the copy "Copied" flash state. */
+function CodeHeaderControls() {
+    const { useState } = React;
+    const [copied, setCopied] = useState(false);
+    if (content.loading || content.error || content.code == null) return null;
+    const copy = () => {
+        const text = content.code || "";
+        const done = () => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+        };
+        try {
+            if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+            } else {
                 fallbackCopy(text, done);
             }
-        };
-        return React.createElement(
+        } catch {
+            fallbackCopy(text, done);
+        }
+    };
+    return React.createElement(
+        React.Fragment,
+        null,
+        // language label = lowest priority (informational); collapses first.
+        React.createElement("span", { className: "dockview-tool-lang dockview-collapse-low", title: "Detected language" }, content.codeLang),
+        React.createElement(
             "div",
-            { className: "dockview-toolbar" },
-            React.createElement("span", { className: "dockview-tool-lang", title: "Detected language" }, content.codeLang),
+            { className: "dockview-tool-group" },
+            toolBtn("wrap", codeView.wrap ? "Disable word wrap" : "Enable word wrap",
+                "M4 6a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Zm0 5a1 1 0 0 1 1-1h12a3 3 0 1 1 0 6h-1.59l.3.3a1 1 0 1 1-1.42 1.4l-2-2a1 1 0 0 1 0-1.4l2-2a1 1 0 0 1 1.42 1.4l-.3.3H17a1 1 0 1 0 0-2H5a1 1 0 0 1-1-1Zm0 6a1 1 0 0 1 1-1h6a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z",
+                () => { codeView.wrap = !codeView.wrap; forceRender?.(); },
+                codeView.wrap),
             React.createElement(
-                "div",
-                { className: "dockview-tool-group" },
-                toolBtn("wrap", codeView.wrap ? "Disable word wrap" : "Enable word wrap",
-                    "M4 6a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Zm0 5a1 1 0 0 1 1-1h12a3 3 0 1 1 0 6h-1.59l.3.3a1 1 0 1 1-1.42 1.4l-2-2a1 1 0 0 1 0-1.4l2-2a1 1 0 0 1 1.42 1.4l-.3.3H17a1 1 0 1 0 0-2H5a1 1 0 0 1-1-1Zm0 6a1 1 0 0 1 1-1h6a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z",
-                    () => { codeView.wrap = !codeView.wrap; forceRender?.(); },
-                    codeView.wrap),
+                "button",
+                {
+                    key: "copy",
+                    type: "button",
+                    className: "dockview-tool-btn dockview-tool-copy" + (copied ? " dockview-tool-copied" : ""),
+                    "aria-label": "Copy code",
+                    title: "Copy code",
+                    onClick: copy
+                },
                 React.createElement(
-                    "button",
-                    {
-                        key: "copy",
-                        type: "button",
-                        className: "dockview-tool-btn dockview-tool-copy" + (copied ? " dockview-tool-copied" : ""),
-                        "aria-label": "Copy code",
-                        title: "Copy code",
-                        onClick: copy
-                    },
-                    React.createElement(
-                        "svg",
-                        { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
-                        copied
-                            ? React.createElement("path", { fill: "currentColor", d: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z" })
-                            : React.createElement("path", { fill: "currentColor", d: "M8 7V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2Zm2 0h5a2 2 0 0 1 2 2v5h2V5h-9v2ZM6 9v9h9V9H6Z" })
-                    ),
-                    React.createElement("span", { className: "dockview-tool-copy-label" }, copied ? "Copied" : "Copy")
-                )
+                    "svg",
+                    { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+                    copied
+                        ? React.createElement("path", { fill: "currentColor", d: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z" })
+                        : React.createElement("path", { fill: "currentColor", d: "M8 7V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2Zm2 0h5a2 2 0 0 1 2 2v5h2V5h-9v2ZM6 9v9h9V9H6Z" })
+                ),
+                React.createElement("span", { className: "dockview-tool-copy-label" }, copied ? "Copied" : "Copy")
             )
-        );
-    }
+        )
+    );
+}
 
+/** The header control cluster for the current content type (rendered inside the
+ *  header toolbar, left of ⋯/popout/close). Empty for markdown/artifact/unknown. */
+function HeaderControls() {
+    if (content.type === "pdf") return React.createElement(PdfHeaderControls, null);
+    if (content.type === "image") return React.createElement(ImageHeaderControls, null);
+    if (content.type === "code") return React.createElement(CodeHeaderControls, null);
     return null;
 }
 
@@ -2804,7 +2869,8 @@ const MENU_ICON = {
     popout: menuIcon("M10 5a1 1 0 0 0 0 2h5.59l-8.3 8.3a1 1 0 1 0 1.42 1.4l8.29-8.29V14a1 1 0 1 0 2 0V6a1 1 0 0 0-1-1h-8Z M5 8a3 3 0 0 1 3-3h2a1 1 0 1 1 0 2H8a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2a1 1 0 1 1 2 0v2a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8Z"),
     download: menuIcon("M12 3a1 1 0 0 1 1 1v9.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42l2.3 2.3V4a1 1 0 0 1 1-1ZM5 18a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Z"),
     copyImage: menuIcon("M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V5Zm3-1a1 1 0 0 0-1 1v9.59l2.3-2.3a1 1 0 0 1 1.4 0l2.3 2.3 3.3-3.3a1 1 0 0 1 1.4 0L18 14.6V5a1 1 0 0 0-1-1H7Zm2.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"),
-    copyLink: menuIcon("M9.88 13.41a1 1 0 0 1 0-1.41l2.12-2.12a1 1 0 0 1 1.42 1.41L11.3 13.4a1 1 0 0 1-1.42 0Zm-2.3 4.6a3 3 0 0 1 0-4.24l2.12-2.12a1 1 0 0 1 1.42 1.41l-2.12 2.12a1 1 0 0 0 1.41 1.42l2.12-2.13a1 1 0 0 1 1.42 1.42l-2.13 2.12a3 3 0 0 1-4.24 0Zm9.9-9.9a3 3 0 0 1 0 4.25l-2.13 2.12a1 1 0 0 1-1.41-1.41l2.12-2.13a1 1 0 0 0-1.41-1.41l-2.12 2.12a1 1 0 1 1-1.42-1.42l2.13-2.12a3 3 0 0 1 4.24 0Z")
+    copyLink: menuIcon("M9.88 13.41a1 1 0 0 1 0-1.41l2.12-2.12a1 1 0 0 1 1.42 1.41L11.3 13.4a1 1 0 0 1-1.42 0Zm-2.3 4.6a3 3 0 0 1 0-4.24l2.12-2.12a1 1 0 0 1 1.42 1.41l-2.12 2.12a1 1 0 0 0 1.41 1.42l2.12-2.13a1 1 0 0 1 1.42 1.42l-2.13 2.12a3 3 0 0 1-4.24 0Zm9.9-9.9a3 3 0 0 1 0 4.25l-2.13 2.12a1 1 0 0 1-1.41-1.41l2.12-2.13a1 1 0 0 0-1.41-1.41l-2.12 2.12a1 1 0 1 1-1.42-1.42l2.13-2.12a3 3 0 0 1 4.24 0Z"),
+    fitWidth: menuIcon("M4 5a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1Zm16 0a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1ZM8.7 8.3a1 1 0 0 0-1.4 1.4l.29.3H7a1 1 0 0 0 0 2h.59l-.3.3a1 1 0 1 0 1.42 1.4l2-2a1 1 0 0 0 0-1.4l-2-2Zm6.6 0a1 1 0 0 1 1.4 1.4l-.29.3H17a1 1 0 1 1 0 2h-.59l.3.3a1 1 0 0 1-1.42 1.4l-2-2a1 1 0 0 1 0-1.4l2-2Z")
 };
 
 // ---------------------------------------------------------------------------
@@ -2817,8 +2883,21 @@ function DockMoreMenu() {
     const type = content.type;
     const isHtml = type === "html";
     const isImage = type === "image";
+    const isPdf = type === "pdf";
 
     const items: any[] = [];
+
+    // PDF-only: "Fit to width" (reset zoom to 100%). A secondary control moved
+    // off the header (spec §2.1 PDF "fit-width → ⋯"). Shown only when zoomed away
+    // from fit, since at 100% it's a no-op. The header keeps the zoom group +/-.
+    if (isPdf && content.pdf.doc != null && Math.round(pdfView.zoom * 100) !== 100) {
+        items.push(React.createElement(Menu.MenuItem, {
+            id: "dockview-more-fit-width",
+            label: "Fit to width",
+            icon: MENU_ICON.fitWidth,
+            action: () => pdfControls?.fitWidth()
+        }));
+    }
 
     // Open in new window: reuse the artifact popout for HTML, else a plain
     // window.open of the file url (PDF/image/code/markdown).
@@ -3091,7 +3170,7 @@ function DockPanel() {
                 { className: `${CLS.headerSection} dockview-header` },
                 React.createElement(
                     "div",
-                    { className: CLS.upper },
+                    { className: `${CLS.upper} dockview-header-upper` },
                     React.createElement(
                         "div",
                         { className: `${CLS.headerChildren} dockview-header-children` },
@@ -3102,29 +3181,40 @@ function DockPanel() {
                             title
                         )
                     ),
+                    // Per-viewer CORE controls now live INLINE in this one header
+                    // row (the second toolbar strip is gone). They sit between the
+                    // filename and the always-visible ⋯/popout/close actions, and
+                    // collapse priority-low first at narrow width (CSS).
                     React.createElement(
                         "div",
-                        { className: CLS.toolbar },
+                        { className: "dockview-header-controls" },
+                        React.createElement(HeaderControls, null)
+                    ),
+                    React.createElement(
+                        "div",
+                        { className: `${CLS.toolbar} dockview-header-actions` },
                         popoutBtn,
                         moreBtn,
                         closeBtn
                     )
                 )
             ),
-            React.createElement(DockToolbar, null),
-            React.createElement(
-                "div",
-                { className: "dockview-body-wrap" },
-                React.createElement(
+            (() => {
+                // The find bar is a one-row dropdown pinned to the TOP of the
+                // body-wrap; when it's open we add a modifier so the scrolling
+                // body is inset below it (no content hidden under the bar).
+                const findShown = hasContent && content.type === "pdf" && pdfView.findOpen && content.pdf.doc;
+                return React.createElement(
                     "div",
-                    { className: "dockview-body" },
-                    renderBody()
-                ),
-                // PDF find overlay pins to the non-scrolling body wrapper.
-                hasContent && content.type === "pdf" && pdfView.findOpen && content.pdf.doc
-                    ? React.createElement(PdfFindBar, null)
-                    : null
-            )
+                    { className: "dockview-body-wrap" + (findShown ? " dockview-find-open" : "") },
+                    React.createElement(
+                        "div",
+                        { className: "dockview-body" },
+                        renderBody()
+                    ),
+                    findShown ? React.createElement(PdfFindBar, null) : null
+                );
+            })()
         )
     );
 }
