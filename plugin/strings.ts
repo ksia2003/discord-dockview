@@ -83,6 +83,7 @@ export const STRINGS = {
     // --- find bar -----------------------------------------------------------
     find: {
         placeholderPdf: "Find in document",
+        placeholderCode: "Find in file",
         matchCase: "Match case",
         prevMatch: "Previous match (Shift+Enter)",
         nextMatch: "Next match (Enter)",
@@ -110,6 +111,7 @@ export const STRINGS = {
     // --- code header controls -----------------------------------------------
     code: {
         detectedLanguage: "Detected language",
+        find: "Find (Ctrl+F)",
         enableWrap: "Enable word wrap",
         disableWrap: "Disable word wrap",
         copy: "Copy",
