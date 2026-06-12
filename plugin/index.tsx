@@ -24,7 +24,7 @@ import { exposeDebug, onChannelSelect, startPanel, stopPanel, unexposeDebug } fr
 
 export default definePlugin({
     name: "DockView",
-    description: "첨부/이미지 클릭 → 우측 도킹 패널에 HTML artifact / PDF / 코드 / 마크다운 / 이미지를 렌더 (Ctrl+Alt+P 토글, 멤버목록 상호배타, 채널별 기억, PDF 리사이즈 재맞춤). Click an attachment chip or inline image to render it in a native-style docked panel.",
+    description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images (Ctrl+Alt+P to toggle; mutually exclusive with the member list; remembers per channel; PDF refits on resize).",
     authors: [{ name: "seonin", id: 0n }],
     target: "DESKTOP",
 

@@ -17,6 +17,7 @@ import { closeModal, ModalCloseButton, ModalContent, ModalHeader, ModalRoot, Mod
 import { ContextMenuApi, Menu, React } from "@webpack/common";
 
 import { load } from "./panel";
+import { STRINGS } from "./strings";
 
 const { openContextMenu, closeContextMenu } = ContextMenuApi;
 
@@ -135,10 +136,10 @@ function openArtifactModal(html: string, name: string, _url: string) {
                 background: "none", border: "none", color: "var(--interactive-normal)",
                 cursor: "pointer", fontSize: "13px", padding: "4px 8px", borderRadius: "4px"
             },
-            title: "Open in new window",
+            title: STRINGS.header.openInNewWindow,
             onMouseEnter: (e: any) => e.target.style.color = "var(--interactive-hover)",
             onMouseLeave: (e: any) => e.target.style.color = "var(--interactive-normal)"
-        }, "Pop out"),
+        }, STRINGS.header.popOut),
         React.createElement(ModalCloseButton, { onClick: props.onClose })
         )
         ),
@@ -166,12 +167,12 @@ function ArtifactContextMenu({ url, name }: { url: string; name: string; }) {
     React.createElement(Menu.MenuGroup, null,
         React.createElement(Menu.MenuItem, {
             id: "artifact-open",
-            label: "Open in panel",
+            label: STRINGS.menu.openInPanel,
             action: () => openInPanel(url, name)
         }),
         React.createElement(Menu.MenuItem, {
             id: "artifact-popout",
-            label: "Open in new window",
+            label: STRINGS.menu.openInNewWindow,
             action: () => {
                 if (isHtml) {
                     fetch(url).then(r => r.text()).then(h => openPopout(h, name)).catch(() => { });
@@ -185,7 +186,7 @@ function ArtifactContextMenu({ url, name }: { url: string; name: string; }) {
     React.createElement(Menu.MenuGroup, null,
         React.createElement(Menu.MenuItem, {
             id: "artifact-copy-link",
-            label: "Copy link",
+            label: STRINGS.menu.copyLink,
             action: () => navigator.clipboard.writeText(url)
         })
     )
@@ -201,6 +202,8 @@ function isExplicitDownloadButton(target: EventTarget | null): boolean {
         const cls = String(el.className || "");
         if (/hoverBarButton|hoverButtonGroup|downloadButton/i.test(cls)) return true;
         if (el.tagName === "A") {
+            // Match Discord's OWN localized download aria-label (not our copy) so
+            // the native download button keeps working across UI languages.
             const label = (el.getAttribute("aria-label") || "").toLowerCase();
             if (/download|다운로드|télécharger|descargar/.test(label)) return true;
         }

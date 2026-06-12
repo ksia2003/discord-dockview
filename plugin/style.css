@@ -369,6 +369,41 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     color: var(--text-danger, #f23f43);
 }
 
+/* Loading: the MINI version of the shared state card (spinner glyph + one title
+   line, no actions). Same centred rhythm as empty / error / unsupported, just
+   lighter. Shown only after a ~150ms delay (see LoadingBody) so fast loads
+   never flash it. */
+.dockview-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    height: 100%;
+    padding: 24px 20px;
+    box-sizing: border-box;
+    text-align: center;
+}
+.dockview-loading-spinner {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 3px solid var(--background-modifier-accent, #4f545c66);
+    border-top-color: var(--text-muted, #949ba4);
+    animation: dockview-spin 0.7s linear infinite;
+}
+.dockview-loading-title {
+    color: var(--text-muted, #949ba4);
+    font-size: 14px;
+    line-height: 1.3;
+}
+@keyframes dockview-spin {
+    to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .dockview-loading-spinner { animation-duration: 1.4s; }
+}
+
 /* Unsupported-format fallback: a centered card for a binary file we can't
    preview (unknown extension that sniffed as binary), with download / open
    actions. Mirrors the placeholder's centered layout but stacks an icon,

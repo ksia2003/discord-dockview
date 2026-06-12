@@ -32,6 +32,9 @@ import { marked } from "marked";
 // OWN bundled hljs (resolved at runtime via Webpack) and only fall back here.
 import hljs from "highlight.js";
 
+// Single catalogue of every user-facing string (one English voice).
+import { STRINGS } from "./strings";
+
 // --- runtime polyfill: Map/WeakMap upsert helpers ---------------------------
 // pdf.js v6 uses the TC39 "Upsert" methods Map/WeakMap.prototype.getOrInsert &
 // getOrInsertComputed internally. They are NOT yet shipped in this
@@ -1402,7 +1405,7 @@ export function load(opts: { name: string; html?: string | null; url?: string | 
 }
 
 /** Re-fetch the file currently shown, bypassing both the in-memory content cache
- *  and the HTTP cache. Invoked by the error card's "다시 시도" button — the active
+ *  and the HTTP cache. Invoked by the error card's "Try again" button — the active
  *  descriptor (name/url/type) is re-loaded fresh so a transient/expired-link
  *  failure can recover without the user re-clicking the original chip. */
 export function retryActiveLoad() {
@@ -2184,19 +2187,19 @@ function FindBar({ model }: { model: FindBarModel }) {
             key: "find-case",
             type: "button",
             className: "dockview-tool-btn dockview-find-case" + (model.caseSensitive ? " dockview-tool-btn-active" : ""),
-            "aria-label": "Match case",
+            "aria-label": STRINGS.find.matchCase,
             "aria-pressed": model.caseSensitive,
-            title: "Match case",
+            title: STRINGS.find.matchCase,
             onMouseDown: (e: any) => e.preventDefault(), // keep focus in the input
             onClick: () => model.toggleCase()
         }, "Aa"),
-        toolBtn("find-prev", "Previous match (Shift+Enter)",
+        toolBtn("find-prev", STRINGS.find.prevMatch,
             "M15.3 5.3a1 1 0 0 1 0 1.4L10 12l5.3 5.3a1 1 0 0 1-1.42 1.4l-6-6a1 1 0 0 1 0-1.4l6-6a1 1 0 0 1 1.42 0Z",
             () => model.prev()),
-        toolBtn("find-next", "Next match (Enter)",
+        toolBtn("find-next", STRINGS.find.nextMatch,
             "M8.7 5.3a1 1 0 0 0 0 1.4L14 12l-5.3 5.3a1 1 0 0 0 1.42 1.4l6-6a1 1 0 0 0 0-1.4l-6-6a1 1 0 0 0-1.42 0Z",
             () => model.next()),
-        toolBtn("find-close", "Close find (Esc)",
+        toolBtn("find-close", STRINGS.find.close,
             "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z",
             () => model.close())
     );
@@ -2210,7 +2213,7 @@ function PdfFindBar() {
             matches: pdfView.findMatches,
             active: pdfView.findActive,
             caseSensitive: pdfView.findCase,
-            placeholder: "Find in document",
+            placeholder: STRINGS.find.placeholderPdf,
             setQuery: (q: string) => pdfControls?.setFindQuery(q),
             next: () => pdfControls?.findNext(),
             prev: () => pdfControls?.findPrev(),
@@ -2437,34 +2440,22 @@ function renderCodeBody() {
 }
 
 /** Turn a raw loader error (e.g. "404 ", "TypeError: Failed to fetch", "No
- *  source") into a calm, human title + subtitle. Kept deliberately plain — a
- *  later design pass owns the tone/voice; this is just the neutral baseline. */
+ *  source") into a calm, human title + subtitle. Copy lives in STRINGS.error —
+ *  error voice leads with information, never wit. */
 function humanizeError(raw: string): { title: string; sub: string } {
+    const E = STRINGS.error;
     const status = /^(\d{3})\b/.exec(raw);
     if (status) {
         const code = status[1];
-        if (code === "404" || code === "403" || code === "410") {
-            return {
-                title: "파일을 가져올 수 없습니다",
-                sub: "링크가 만료됐거나 더 이상 사용할 수 없을 수 있습니다."
-            };
-        }
-        if (code === "401") {
-            return { title: "파일에 접근할 수 없습니다", sub: "이 파일을 볼 권한이 없습니다." };
-        }
-        if (code.startsWith("5")) {
-            return { title: "서버에서 파일을 보내지 못했습니다", sub: "잠시 후 다시 시도해 보세요." };
-        }
-        return { title: "파일을 불러오지 못했습니다", sub: `서버 응답: ${code}` };
+        if (code === "404" || code === "403" || code === "410") return E.gone;
+        if (code === "401") return E.forbidden;
+        if (code.startsWith("5")) return E.server;
+        return { title: E.http.title, sub: E.http.sub(code) };
     }
     // fetch() rejects (offline / DNS / CORS) surface as a TypeError.
-    if (/failed to fetch|networkerror|load failed/i.test(raw)) {
-        return { title: "연결할 수 없습니다", sub: "네트워크 연결을 확인한 뒤 다시 시도해 보세요." };
-    }
-    if (/^no\b.*source/i.test(raw)) {
-        return { title: "표시할 파일이 없습니다", sub: "불러올 원본을 찾지 못했습니다." };
-    }
-    return { title: "파일을 불러오지 못했습니다", sub: raw };
+    if (/failed to fetch|networkerror|load failed/i.test(raw)) return E.offline;
+    if (/^no\b.*source/i.test(raw)) return E.noSource;
+    return { title: E.generic.title, sub: E.generic.sub(raw) };
 }
 
 /** Error fallback: a centered card mirroring the unsupported-format layout, with
@@ -2487,7 +2478,7 @@ function renderErrorBody(raw: string) {
                 className: "dockview-unsupported-btn dockview-unsupported-btn-primary",
                 onClick: () => retryActiveLoad()
             },
-            "다시 시도"
+            STRINGS.actions.retry
         ));
         actions.push(React.createElement(
             "button",
@@ -2497,7 +2488,7 @@ function renderErrorBody(raw: string) {
                 className: "dockview-unsupported-btn",
                 onClick: () => { window.open(absUrl(url), "_blank", "noopener,noreferrer"); }
             },
-            "새 창에서 열기"
+            STRINGS.actions.openInNewWindow
         ));
         actions.push(React.createElement(
             "button",
@@ -2507,7 +2498,7 @@ function renderErrorBody(raw: string) {
                 className: "dockview-unsupported-btn",
                 onClick: () => downloadUrl(url, name)
             },
-            "다운로드"
+            STRINGS.actions.download
         ));
     }
     return React.createElement(
@@ -2547,11 +2538,11 @@ function renderUnsupportedBody() {
                 d: "M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-7-7Zm0 2.5L17.5 9H14a1 1 0 0 1-1-1V4.5ZM8 13h8v1.5H8V13Zm0 3.5h8V18H8v-1.5Z"
             })
         ),
-        React.createElement("div", { className: "dockview-unsupported-title" }, "미리보기를 지원하지 않는 형식"),
+        React.createElement("div", { className: "dockview-unsupported-title" }, STRINGS.unsupported.title),
         React.createElement(
             "div",
             { className: "dockview-unsupported-sub" },
-            ext ? `.${ext} 파일은 패널에서 미리 볼 수 없습니다.` : "이 파일은 패널에서 미리 볼 수 없습니다."
+            STRINGS.unsupported.sub(ext)
         ),
         React.createElement(
             "div",
@@ -2563,7 +2554,7 @@ function renderUnsupportedBody() {
                     className: "dockview-unsupported-btn dockview-unsupported-btn-primary",
                     onClick: () => downloadUrl(url, name)
                 },
-                "다운로드"
+                STRINGS.actions.download
             ),
             React.createElement(
                 "button",
@@ -2572,8 +2563,38 @@ function renderUnsupportedBody() {
                     className: "dockview-unsupported-btn",
                     onClick: () => { if (url) window.open(absUrl(url), "_blank", "noopener,noreferrer"); }
                 },
-                "새 창에서 열기"
+                STRINGS.actions.openInNewWindow
             )
+        )
+    );
+}
+
+/** Loading state — the mini version of the shared state card (spinner glyph +
+ *  one title line, no actions). Visibility is DELAYED ~150ms so a fast cache
+ *  hit or quick fetch never flashes a spinner; only a genuinely slow load shows
+ *  it. The card keeps the same centred rhythm as empty / error / unsupported. */
+function LoadingBody() {
+    const { useState, useEffect } = React;
+    const [show, setShow] = useState(false);
+    useEffect(() => {
+        const t = setTimeout(() => setShow(true), 150);
+        return () => clearTimeout(t);
+    }, []);
+    if (!show) {
+        // Hold an empty body for the first ~150ms (no flicker on fast loads).
+        return React.createElement("div", { className: "dockview-status" });
+    }
+    return React.createElement(
+        "div",
+        { className: "dockview-loading" },
+        React.createElement("div", {
+            className: "dockview-loading-spinner",
+            "aria-hidden": true
+        }),
+        React.createElement(
+            "div",
+            { className: "dockview-loading-title", role: "status", "aria-live": "polite" },
+            STRINGS.loading.title
         )
     );
 }
@@ -2595,7 +2616,7 @@ function renderBody() {
                     d: "M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-7-7Zm0 2.5L17.5 9H14a1 1 0 0 1-1-1V4.5ZM8 13h8v1.5H8V13Zm0 3.5h8V18H8v-1.5Z"
                 })
             ),
-            React.createElement("div", { className: "dockview-empty-text" }, "여기에 파일을 열면 미리 볼 수 있어요")
+            React.createElement("div", { className: "dockview-empty-text" }, STRINGS.empty.text)
         );
     }
     if (content.error != null) {
@@ -2603,7 +2624,7 @@ function renderBody() {
     }
     if (content.type === "pdf") {
         if (content.loading || content.pdf.doc == null) {
-            return React.createElement("div", { className: "dockview-status" }, "Loading…");
+            return React.createElement(LoadingBody, null);
         }
         return React.createElement(PdfBody, null);
     }
@@ -2612,7 +2633,7 @@ function renderBody() {
     }
     if (content.type === "code") {
         if (content.loading || content.code == null) {
-            return React.createElement("div", { className: "dockview-status" }, "Loading…");
+            return React.createElement(LoadingBody, null);
         }
         return renderCodeBody();
     }
@@ -2620,13 +2641,13 @@ function renderBody() {
         // Still sniffing (a text file gets retyped to "code" on resolve, so the
         // only "unknown" left after load is a sniffed-binary file).
         if (content.loading) {
-            return React.createElement("div", { className: "dockview-status" }, "Loading…");
+            return React.createElement(LoadingBody, null);
         }
         return renderUnsupportedBody();
     }
     // markdown shares the html (frameHtml iframe) path; fall through.
     if (content.loading || content.frameHtml == null) {
-        return React.createElement("div", { className: "dockview-status" }, "Loading…");
+        return React.createElement(LoadingBody, null);
     }
     return renderHtmlBody();
 }
@@ -2676,9 +2697,9 @@ function zoomGroup(keyPrefix: string, pct: number, onOut: () => void, onIn: () =
     return React.createElement(
         "div",
         { className: "dockview-tool-group dockview-zoom-group" },
-        toolBtn(keyPrefix + "-zoom-out", "Zoom out (-)", ZOOM_OUT_PATH, onOut),
-        React.createElement("span", { className: "dockview-tool-pct", title: "Zoom level" }, pct + "%"),
-        toolBtn(keyPrefix + "-zoom-in", "Zoom in (+)", ZOOM_IN_PATH, onIn)
+        toolBtn(keyPrefix + "-zoom-out", STRINGS.zoom.out, ZOOM_OUT_PATH, onOut),
+        React.createElement("span", { className: "dockview-tool-pct", title: STRINGS.zoom.level }, pct + "%"),
+        toolBtn(keyPrefix + "-zoom-in", STRINGS.zoom.in, ZOOM_IN_PATH, onIn)
     );
 }
 
@@ -2708,19 +2729,19 @@ function PdfHeaderControls() {
             React.createElement(
                 "span",
                 { className: "dockview-collapse-low" },
-                toolBtn("pdf-prev", "Previous page (←)",
+                toolBtn("pdf-prev", STRINGS.pdf.prevPage,
                     "M15.3 5.3a1 1 0 0 1 0 1.4L10 12l5.3 5.3a1 1 0 0 1-1.42 1.4l-6-6a1 1 0 0 1 0-1.4l6-6a1 1 0 0 1 1.42 0Z",
                     () => pdfControls?.prevPage())
             ),
             React.createElement(
                 "span",
-                { className: "dockview-tool-pageind", title: "Current page / total" },
+                { className: "dockview-tool-pageind", title: STRINGS.pdf.pageIndicator },
                 React.createElement("input", {
                     className: "dockview-tool-pageinput",
                     type: "text",
                     inputMode: "numeric",
-                    "aria-label": "Go to page",
-                    title: "Type a page number, Enter to jump",
+                    "aria-label": STRINGS.pdf.goToPage,
+                    title: STRINGS.pdf.goToPageHint,
                     value: pageInput,
                     placeholder: String(pdfView.page),
                     onChange: (e: any) => setPageInput(e.target.value.replace(/[^0-9]/g, "")),
@@ -2735,7 +2756,7 @@ function PdfHeaderControls() {
             React.createElement(
                 "span",
                 { className: "dockview-collapse-low" },
-                toolBtn("pdf-next", "Next page (→)",
+                toolBtn("pdf-next", STRINGS.pdf.nextPage,
                     "M8.7 5.3a1 1 0 0 0 0 1.4L14 12l-5.3 5.3a1 1 0 0 0 1.42 1.4l6-6a1 1 0 0 0 0-1.4l-6-6a1 1 0 0 0-1.42 0Z",
                     () => pdfControls?.nextPage())
             )
@@ -2747,7 +2768,7 @@ function PdfHeaderControls() {
         React.createElement(
             "div",
             { className: "dockview-tool-group dockview-collapse-mid" },
-            toolBtn("pdf-find", "Find (Ctrl+F)",
+            toolBtn("pdf-find", STRINGS.pdf.find,
                 "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
                 () => pdfControls?.toggleFind(), pdfView.findOpen)
         )
@@ -2765,7 +2786,7 @@ function ImageHeaderControls() {
         React.createElement(
             "div",
             { className: "dockview-tool-group" },
-            toolBtn("zoom-reset", "Reset zoom (0)",
+            toolBtn("zoom-reset", STRINGS.zoom.reset,
                 "M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5 1 1 0 1 0-2 0 7 7 0 1 0 7-7Z",
                 () => imgControls?.reset())
         )
@@ -2798,11 +2819,11 @@ function CodeHeaderControls() {
         React.Fragment,
         null,
         // language label = lowest priority (informational); collapses first.
-        React.createElement("span", { className: "dockview-tool-lang dockview-collapse-low", title: "Detected language" }, content.codeLang),
+        React.createElement("span", { className: "dockview-tool-lang dockview-collapse-low", title: STRINGS.code.detectedLanguage }, content.codeLang),
         React.createElement(
             "div",
             { className: "dockview-tool-group" },
-            toolBtn("wrap", codeView.wrap ? "Disable word wrap" : "Enable word wrap",
+            toolBtn("wrap", codeView.wrap ? STRINGS.code.disableWrap : STRINGS.code.enableWrap,
                 "M4 6a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Zm0 5a1 1 0 0 1 1-1h12a3 3 0 1 1 0 6h-1.59l.3.3a1 1 0 1 1-1.42 1.4l-2-2a1 1 0 0 1 0-1.4l2-2a1 1 0 0 1 1.42 1.4l-.3.3H17a1 1 0 1 0 0-2H5a1 1 0 0 1-1-1Zm0 6a1 1 0 0 1 1-1h6a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z",
                 () => { codeView.wrap = !codeView.wrap; forceRender?.(); },
                 codeView.wrap),
@@ -2812,8 +2833,8 @@ function CodeHeaderControls() {
                     key: "copy",
                     type: "button",
                     className: "dockview-tool-btn dockview-tool-copy" + (copied ? " dockview-tool-copied" : ""),
-                    "aria-label": "Copy code",
-                    title: "Copy code",
+                    "aria-label": STRINGS.code.copyCode,
+                    title: STRINGS.code.copyCode,
                     onClick: copy
                 },
                 React.createElement(
@@ -2823,7 +2844,7 @@ function CodeHeaderControls() {
                         ? React.createElement("path", { fill: "currentColor", d: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z" })
                         : React.createElement("path", { fill: "currentColor", d: "M8 7V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2Zm2 0h5a2 2 0 0 1 2 2v5h2V5h-9v2ZM6 9v9h9V9H6Z" })
                 ),
-                React.createElement("span", { className: "dockview-tool-copy-label" }, copied ? "Copied" : "Copy")
+                React.createElement("span", { className: "dockview-tool-copy-label" }, copied ? STRINGS.code.copied : STRINGS.code.copy)
             )
         )
     );
@@ -2893,7 +2914,7 @@ function DockMoreMenu() {
     if (isPdf && content.pdf.doc != null && Math.round(pdfView.zoom * 100) !== 100) {
         items.push(React.createElement(Menu.MenuItem, {
             id: "dockview-more-fit-width",
-            label: "Fit to width",
+            label: STRINGS.menu.fitToWidth,
             icon: MENU_ICON.fitWidth,
             action: () => pdfControls?.fitWidth()
         }));
@@ -2903,7 +2924,7 @@ function DockMoreMenu() {
     // window.open of the file url (PDF/image/code/markdown).
     items.push(React.createElement(Menu.MenuItem, {
         id: "dockview-more-popout",
-        label: "새 창으로 열기",
+        label: STRINGS.menu.openInNewWindow,
         icon: MENU_ICON.popout,
         action: () => {
             if (isHtml && content.html != null) popoutArtifact();
@@ -2914,7 +2935,7 @@ function DockMoreMenu() {
     if (url) {
         items.push(React.createElement(Menu.MenuItem, {
             id: "dockview-more-download",
-            label: "다운로드",
+            label: STRINGS.menu.download,
             icon: MENU_ICON.download,
             action: () => downloadUrl(url, name)
         }));
@@ -2923,7 +2944,7 @@ function DockMoreMenu() {
     if (isImage && url) {
         items.push(React.createElement(Menu.MenuItem, {
             id: "dockview-more-copy-image",
-            label: "이미지 복사",
+            label: STRINGS.menu.copyImage,
             icon: MENU_ICON.copyImage,
             action: () => { copyImage(url); }
         }));
@@ -2935,7 +2956,7 @@ function DockMoreMenu() {
             React.createElement(Menu.MenuGroup, { key: "link" },
                 React.createElement(Menu.MenuItem, {
                     id: "dockview-more-copy-link",
-                    label: "링크 복사",
+                    label: STRINGS.menu.copyLink,
                     icon: MENU_ICON.copyLink,
                     action: () => copyText(absUrl(url))
                 })
@@ -3123,8 +3144,8 @@ function DockPanel() {
     const popoutBtn = hasContent && content.type === "html" && content.html != null
         ? headerBtn(
             "popout",
-            "Open in new window",
-            "Open in new window",
+            STRINGS.header.openInNewWindow,
+            STRINGS.header.openInNewWindow,
             "M10 5a1 1 0 0 0 0 2h5.59l-8.3 8.3a1 1 0 1 0 1.42 1.4l8.29-8.29V14a1 1 0 1 0 2 0V6a1 1 0 0 0-1-1h-8Z M5 8a3 3 0 0 1 3-3h2a1 1 0 1 1 0 2H8a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2a1 1 0 1 1 2 0v2a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8Z",
             () => popoutArtifact(),
             "dockview-popout"
@@ -3136,8 +3157,8 @@ function DockPanel() {
     const moreBtn = hasContent
         ? headerBtn(
             "more",
-            "More",
-            "더 보기",
+            STRINGS.header.more,
+            STRINGS.header.more,
             "M7 12.001C7 13.105 6.105 14 5 14C3.895 14 3 13.105 3 12.001C3 10.896 3.895 10.001 5 10.001C6.105 10.001 7 10.896 7 12.001ZM14 12.001C14 13.105 13.105 14 12 14C10.895 14 10 13.105 10 12.001C10 10.896 10.895 10.001 12 10.001C13.105 10.001 14 10.896 14 12.001ZM19 14C20.105 14 21 13.105 21 12.001C21 10.896 20.105 10.001 19 10.001C17.895 10.001 17 10.896 17 12.001C17 13.105 17.895 14 19 14Z",
             (e: any) => ContextMenuApi.openContextMenu(e, () => React.createElement(DockMoreMenu)),
             "dockview-more"
@@ -3146,8 +3167,8 @@ function DockPanel() {
 
     const closeBtn = headerBtn(
         "close",
-        "Close",
-        "Close (Ctrl+Alt+P)",
+        STRINGS.header.close,
+        STRINGS.header.closeHint,
         "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z",
         close,
         "dockview-close"
