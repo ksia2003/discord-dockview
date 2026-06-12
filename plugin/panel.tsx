@@ -1586,6 +1586,39 @@ function renderHtmlBody() {
     });
 }
 
+/** pdf.js's own pixel-quantization helpers (ported verbatim from the viewer's
+ *  PDFPageView). The official viewer never lets the canvas backing store and the
+ *  CSS page box drift out of an EXACT ratio: it picks a small rational
+ *  approximation [num/den] of the output scale (= devicePixelRatio), then sizes
+ *  the canvas to a multiple of `num` and the page box to a multiple of `den`, so
+ *  canvasW / boxW === num/den === dpr to the pixel. Skipping this (sizing the
+ *  canvas with a bare floor() and the box with a 1px round) leaves the bitmap
+ *  scaled by, e.g., 1.2491 while the text layer's percentage positions assume an
+ *  exact dpr — a sub-pixel horizontal drift that accumulates across the page
+ *  width and shows up as ragged selection/glyph edges. Reproducing the recipe
+ *  pins the text layer to the raster. */
+function approximateFraction(x: number): [number, number] {
+    if (Math.floor(x) === x) return [x, 1];
+    const xinv = 1 / x;
+    const limit = 8;
+    if (xinv > limit) return [1, limit];
+    if (Math.floor(xinv) === xinv) return [1, xinv];
+    const x_ = x > 1 ? xinv : x;
+    let a = 0, b = 1, c = 1, d = 1;
+    for (;;) {
+        const p = a + c, q = b + d;
+        if (q > limit) break;
+        if (x_ <= p / q) { c = p; d = q; } else { a = p; b = q; }
+    }
+    let result: [number, number];
+    if (x_ - a / b < c / d - x_) result = x_ === x ? [a, b] : [b, a];
+    else result = x_ === x ? [c, d] : [d, c];
+    return result;
+}
+function floorToDivide(x: number, div: number): number {
+    return x - (x % div);
+}
+
 /** The PDF body: a scrollable column of page wrappers (canvas + selectable text
  *  layer) rendered by pdf.js, with page navigation, fit-to-width zoom and
  *  an in-panel find. The body element (.dockview-body) owns the scroll; this
@@ -1637,6 +1670,26 @@ function PdfBody() {
 
         const PDF_SIDE_INSET = 16;
         const dpr = window.devicePixelRatio || 1;
+        // The output scale's rational approximation [num/den]: the canvas is sized
+        // to a multiple of `num`, the CSS page box to a multiple of `den`, so the
+        // bitmap stretches over the box by exactly dpr (see approximateFraction).
+        const [dprNum, dprDen] = approximateFraction(dpr);
+        // Pin the box rounding step to `den` so `round(down, --scale-factor * Npx,
+        // var(--scale-round-x))` lands the page/text box on the same grid the
+        // canvas quantizes to.
+        const applyScaleRound = () => {
+            host.style.setProperty("--scale-round-x", `${dprDen}px`);
+            host.style.setProperty("--scale-round-y", `${dprDen}px`);
+        };
+        // Size a page canvas's backing store to a whole multiple of `num`. The CSS
+        // page box is rounded (in `round(down, ..., var(--scale-round-x))`) to a
+        // whole multiple of `den`, so canvasW / boxW === num/den === dpr exactly and
+        // the stretched bitmap lands 1:1 on the text-layer grid. pdf.js PDFPageView
+        // recipe — the missing piece that pins the text layer to the raster.
+        const sizeCanvas = (canvas: HTMLCanvasElement, vpW: number, vpH: number): void => {
+            canvas.width = floorToDivide(Math.round(vpW * dpr), dprNum);
+            canvas.height = floorToDivide(Math.round(vpH * dpr), dprNum);
+        };
         const availWidth = (): number => {
             const sc = scroller();
             return Math.max(1, (sc?.clientWidth || host.clientWidth || state.width) - PDF_SIDE_INSET);
@@ -1662,10 +1715,12 @@ function PdfBody() {
                     if (docToken !== content.pdf.renderToken) return;
                 }
                 const viewport = p.page.getViewport({ scale: docScale });
-                // canvas raster (crisp at docScale × dpr)
+                // canvas raster (crisp at docScale × dpr). Quantize the backing
+                // store to a multiple of `num` so canvasW / boxW === dpr exactly
+                // (the box is rounded to a multiple of `den` in CSS) — otherwise a
+                // bare floor() drifts the bitmap off the text-layer grid.
                 if (p.rasterScale !== docScale) {
-                    p.canvas.width = Math.floor(viewport.width * dpr);
-                    p.canvas.height = Math.floor(viewport.height * dpr);
+                    sizeCanvas(p.canvas, viewport.width, viewport.height);
                     const ctx = p.canvas.getContext("2d");
                     if (!ctx) return;
                     try {
@@ -1743,6 +1798,7 @@ function PdfBody() {
                 : availW / refW;
             const docScale = fitScale * pdfView.zoom;
             renderScaleRef.current = docScale;
+            applyScaleRound();
             host.style.setProperty("--scale-factor", String(docScale));
 
             matchesRef.current = [];
@@ -1758,8 +1814,8 @@ function PdfBody() {
 
                 const wrap = document.createElement("div");
                 wrap.className = "dockview-pdf-page-wrap";
-                wrap.style.width = `round(down, var(--scale-factor) * ${base.width}px, 1px)`;
-                wrap.style.height = `round(down, var(--scale-factor) * ${base.height}px, 1px)`;
+                wrap.style.width = `round(down, var(--scale-factor) * ${base.width}px, var(--scale-round-x, 1px))`;
+                wrap.style.height = `round(down, var(--scale-factor) * ${base.height}px, var(--scale-round-y, 1px))`;
                 wrap.setAttribute("data-page", String(n));
 
                 const canvas = document.createElement("canvas");
@@ -1838,6 +1894,7 @@ function PdfBody() {
             const delta = scrollBefore - beforeTop; // px into the anchor page
 
             renderScaleRef.current = docScale;
+            applyScaleRound();
             host.style.setProperty("--scale-factor", String(docScale));
             lastWidthRef.current = host.clientWidth;
             // invalidate rasters (boxes already resized via the variable).
