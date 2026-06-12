@@ -673,9 +673,18 @@ let forceRender: (() => void) | null = null; // set when React panel mounts
 // this to AVOID re-rastering mid-drag (which would clobber the live CSS-scale
 // preview and cause a jump); the final crisp raster is driven by endLiveScale().
 let resizeDragging = false;
-// True while the pointer is over the dock panel — gates the image zoom keys so
-// they only fire when the panel (not chat) is the surface the user is acting on.
-let hostHovered = false;
+/** Is `el` a text-entry surface (chat box, search, modal field, …)? Single-key
+ *  viewer shortcuts must never fire while one of these holds focus — covers
+ *  <input>/<textarea>, contenteditable (Discord's Slate chat box) and ARIA
+ *  textboxes. Modifier combos (e.g. Ctrl+Alt+P) are exempt by their callers. */
+function isEditableTarget(el: Element | null): boolean {
+    if (!el) return false;
+    const tag = el.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+    if ((el as HTMLElement).isContentEditable) return true;
+    if (el.getAttribute("role") === "textbox") return true;
+    return false;
+}
 
 /** The per-load CSP nonce the host document's own scripts carry. */
 function pageNonce(): string | null {
@@ -1826,7 +1835,10 @@ function PdfBody() {
     return React.createElement("div", {
         key: content.seq,
         ref: containerRef,
-        className: "dockview-pdf-container"
+        className: "dockview-pdf-container",
+        // Focusable so a click into the PDF body gives the panel keyboard focus;
+        // page-nav / zoom keys are gated on that focus (never on hover).
+        tabIndex: 0
     });
 }
 
@@ -2565,9 +2577,7 @@ function DockPanel() {
     return React.createElement(
         "div",
         {
-            className: `${CLS.wrapper} dockview-wrapper`,
-            onMouseEnter: () => { hostHovered = true; },
-            onMouseLeave: () => { hostHovered = false; }
+            className: `${CLS.wrapper} dockview-wrapper`
         },
         React.createElement("div", {
             className: `${CLS.resizeHandle} dockview-resize`,
@@ -2780,9 +2790,10 @@ export function startPanel() {
         if (ensureHost()) attachObserver();
     }, 800);
 
-    // toggle hotkey: Ctrl+Alt+P; image zoom (+/-/0) and PDF page-nav/zoom/find
-    // when the panel is the focus (hovered or contains the focused element) so we
-    // never steal Discord keys.
+    // toggle hotkey: Ctrl+Alt+P (works anywhere, even while typing — it's a
+    // modifier combo). Single-key viewer shortcuts (image zoom +/-/0, PDF
+    // page-nav/zoom/find) ONLY fire when the panel actually holds keyboard focus
+    // and that focus isn't a text field, so we never steal keys from chat.
     onKeyDown = (e: KeyboardEvent) => {
         if (e.ctrlKey && e.altKey && (e.key === "p" || e.key === "P" || e.code === "KeyP")) {
             e.preventDefault();
@@ -2792,10 +2803,17 @@ export function startPanel() {
         if (!state.open) return;
         const host = document.getElementById(HOST_ID);
         if (!host) return;
-        // The dock panel must be the ACTIVE surface (hovered or holds keyboard
-        // focus); otherwise ignore so typing in chat is never hijacked.
-        const focused = host.contains(document.activeElement);
-        if (!(focused || hostHovered)) return;
+        // The dock panel must hold keyboard focus (the user clicked/tabbed into
+        // it). Hovering is NOT enough — otherwise a mouse merely resting over the
+        // docked panel would let the viewer swallow keys typed into chat. The PDF
+        // body and image wrap are tabIndex=0, so a click focuses them.
+        const ae = document.activeElement as HTMLElement | null;
+        const focused = host.contains(ae);
+        if (!focused) return;
+        // Belt-and-braces: if focus is on a text field (the panel's own find /
+        // page-jump inputs, or anything editable), single-key shortcuts must not
+        // fire. The panel inputs also stopPropagation, this is the backstop.
+        if (isEditableTarget(ae)) return;
 
         // PDF branch: Ctrl+F (our find, since Discord may eat the global one),
         // and — with NO modifier — ←/→ or PageUp/PageDown for page nav, +/- zoom.
@@ -2807,9 +2825,6 @@ export function startPanel() {
                 return;
             }
             if (e.ctrlKey || e.altKey || e.metaKey) return;
-            // don't hijack typing in the find input / page-jump input
-            const ae = document.activeElement as HTMLElement | null;
-            if (ae && ae.tagName === "INPUT") return;
             if (e.key === "ArrowRight" || e.key === "PageDown") {
                 e.preventDefault(); pdfControls.nextPage();
             } else if (e.key === "ArrowLeft" || e.key === "PageUp") {

@@ -303,6 +303,8 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     --scale-factor: 1;
     --scale-round-x: 1px;
     --scale-round-y: 1px;
+    /* tabIndex=0 (click-to-focus for keyboard nav) — suppress the focus ring. */
+    outline: none;
 }
 /* The page wrapper is the positioning context for the absolute text layer. Its
    width/height are sized in CSS from the container's --scale-factor
