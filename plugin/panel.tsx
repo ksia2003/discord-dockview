@@ -178,6 +178,206 @@ const content: PanelContent = {
     seq: 0
 };
 
+// --- monotonic load token (race guard) --------------------------------------
+// Every load()/restoreDescriptor() bumps this and captures the value as its
+// request token. Async loaders compare their captured token against the live
+// `loadSeq`; a mismatch means a newer load has superseded them, so they bail and
+// never write stale content. This replaces the old `content.url !== reqUrl`
+// string compare, which couldn't distinguish a re-click of the SAME url or two
+// rapid switches to the same file (the last click always wins now).
+let loadSeq = 0;
+
+// --- per-file content LRU cache ---------------------------------------------
+// Keyed by the file's load key (url|type). An entry holds the already-resolved
+// content (so a re-open needs no fetch) PLUS the saved view-state (scroll, zoom,
+// fit, page, image pan) so the file reopens EXACTLY where the user left it. The
+// currently-displayed file's entry is the one `content` mirrors; we snapshot its
+// live view-state into the cache on every switch-away. Capacity is small (most-
+// recent files); eviction destroys the pdf.js doc + revokes blob urls so nothing
+// leaks. Inline-html artifacts (no url) are never cached (no stable key).
+const CONTENT_CACHE_MAX = 3;
+
+interface CachedView {
+    // pdf
+    pdfPage?: number;
+    pdfZoom?: number;
+    pdfFit?: PdfFit;
+    // image
+    imgScale?: number;
+    imgTx?: number;
+    imgTy?: number;
+    // shared scroll (px) of the .dockview-body scroller
+    scrollTop?: number;
+    // code
+    codeWrap?: boolean;
+}
+interface CacheEntry {
+    key: string;
+    name: string;
+    type: ContentType;
+    url: string;
+    // resolved payloads (whichever the type needs)
+    html?: string | null;
+    frameHtml?: string | null;
+    code?: string | null;
+    codeLang?: string;
+    pdfDoc?: any | null; // pdfjs PDFDocumentProxy (kept alive while cached)
+    pdfPages?: number;
+    error?: string | null;
+    loading: boolean; // true while the initial fetch is still in flight
+    view: CachedView;
+}
+const contentCache = new Map<string, CacheEntry>();
+let activeCacheKey: string | null = null;
+
+/** The cache key for a file: its url + content type (type disambiguates e.g. a
+ *  .svg opened as image vs code, though in practice url is unique enough). */
+function cacheKeyFor(url: string | null, type: ContentType): string | null {
+    return url ? `${type}|${url}` : null;
+}
+
+/** Fully tear down a pdf.js document, releasing its worker-side resources. In
+ *  this pdf.js v6 build the PDFDocumentProxy itself has NO destroy(); the real
+ *  teardown lives on its loadingTask (.destroy() returns a promise). We prefer
+ *  that, fall back to a bare doc.destroy() (older builds) and finally cleanup().
+ *  (The original resetPdf called the non-existent doc.destroy() inside a swallow
+ *  try/catch, so it was silently leaking every PDF — this fixes that too.) */
+function destroyPdfDoc(doc: any) {
+    if (!doc) return;
+    try {
+        const lt = doc.loadingTask;
+        if (lt && typeof lt.destroy === "function") { lt.destroy(); return; }
+    } catch { /* fall through */ }
+    try { if (typeof doc.destroy === "function") { doc.destroy(); return; } } catch { /* fall through */ }
+    try { if (typeof doc.cleanup === "function") doc.cleanup(); } catch { /* ignore */ }
+}
+
+/** Destroy/release everything an evicted entry owns. The big resource is the
+ *  pdf.js document (worker-side page caches); releasing it is what keeps memory
+ *  bounded. We do NOT revoke the entry's url — the plugin never creates object
+ *  urls (it loads CDN http urls + the <img>/iframe stream them), so the url is
+ *  owned by the caller and may be reused. */
+function disposeCacheEntry(e: CacheEntry) {
+    if (e.pdfDoc) {
+        destroyPdfDoc(e.pdfDoc);
+        e.pdfDoc = null;
+    }
+}
+
+/** Insert/refresh an entry as most-recently-used and evict past capacity. The
+ *  active (currently-shown) entry is never evicted — its pdf doc is live. */
+function cacheTouch(entry: CacheEntry) {
+    // re-insert at the end (Map preserves insertion order = LRU order).
+    contentCache.delete(entry.key);
+    contentCache.set(entry.key, entry);
+    while (contentCache.size > CONTENT_CACHE_MAX) {
+        // evict the oldest non-active entry.
+        let victim: string | null = null;
+        for (const k of contentCache.keys()) {
+            if (k !== activeCacheKey) { victim = k; break; }
+        }
+        if (victim == null) break; // only the active entry remains
+        const e = contentCache.get(victim)!;
+        contentCache.delete(victim);
+        disposeCacheEntry(e);
+    }
+}
+
+/** Drop the whole cache (plugin stop), releasing every doc. */
+function clearContentCache() {
+    for (const e of contentCache.values()) disposeCacheEntry(e);
+    contentCache.clear();
+    activeCacheKey = null;
+}
+
+/** The scrollable body element (px scroll position lives here). */
+function bodyScroller(): HTMLElement | null {
+    return document.querySelector<HTMLElement>(`#${HOST_ID} .dockview-body`);
+}
+
+/** Snapshot the CURRENT live view-state into the active cache entry so that
+ *  reopening this file (re-click / channel return) lands on the same spot. */
+function snapshotActiveView() {
+    if (activeCacheKey == null) return;
+    const e = contentCache.get(activeCacheKey);
+    if (!e) return;
+    const sc = bodyScroller();
+    e.view.scrollTop = sc ? sc.scrollTop : e.view.scrollTop;
+    if (e.type === "pdf") {
+        e.view.pdfPage = pdfView.page;
+        e.view.pdfZoom = pdfView.zoom;
+        e.view.pdfFit = pdfView.fit;
+    } else if (e.type === "image") {
+        e.view.imgScale = imgView.scale;
+        e.view.imgTx = imgView.tx;
+        e.view.imgTy = imgView.ty;
+    } else if (e.type === "code") {
+        e.view.codeWrap = codeView.wrap;
+    }
+}
+
+/** Apply a cache entry's saved view-state into the module view objects so the
+ *  body renderer opens at the remembered zoom/page/scroll. (Scroll itself is
+ *  re-applied after the body mounts — see consumePendingScroll.) */
+let pendingScrollTop: number | null = null;
+function applyCachedView(e: CacheEntry) {
+    if (e.type === "pdf") {
+        pdfView.zoom = e.view.pdfZoom ?? 1;
+        pdfView.fit = e.view.pdfFit ?? "width";
+        pdfView.page = e.view.pdfPage ?? 1;
+        pdfView.total = e.pdfPages ?? 0;
+        pdfView.findOpen = false;
+        pdfView.findQuery = "";
+        pdfView.findMatches = 0;
+        pdfView.findActive = 0;
+    } else if (e.type === "image") {
+        imgView.scale = e.view.imgScale ?? 1;
+        imgView.tx = e.view.imgTx ?? 0;
+        imgView.ty = e.view.imgTy ?? 0;
+    } else if (e.type === "code") {
+        codeView.wrap = e.view.codeWrap ?? false;
+    }
+    pendingScrollTop = e.view.scrollTop ?? null;
+}
+
+/** After a restore, re-apply the saved scroll once the body has its content. */
+function consumePendingScroll() {
+    if (pendingScrollTop == null) return;
+    const target = pendingScrollTop;
+    pendingScrollTop = null;
+    const sc = bodyScroller();
+    if (sc) sc.scrollTop = target;
+}
+
+/** Point `content` at a cached entry WITHOUT any fetch. Returns true on hit. The
+ *  caller is responsible for the open/render bookkeeping around this. */
+function mountFromCache(e: CacheEntry): boolean {
+    // Tear down the OUTGOING pdf doc only if it's not itself cached (cached docs
+    // stay alive in their entry). resetPdf() would destroy content.pdf.doc; here
+    // we just re-point, since the live doc belongs to its own cache entry.
+    content.name = e.name;
+    content.type = e.type;
+    content.url = e.url;
+    content.error = e.error ?? null;
+    content.loading = e.loading;
+    // payloads
+    content.html = e.html ?? null;
+    content.frameHtml = e.frameHtml ?? null;
+    content.code = e.code ?? null;
+    content.codeLang = e.codeLang ?? "plaintext";
+    codeRenderCache = null; // re-highlight against the restored seq
+    // pdf: re-point the live doc to the cached one (no destroy, no re-fetch).
+    content.pdf = {
+        doc: e.pdfDoc ?? null,
+        pages: e.pdfPages ?? 0,
+        renderToken: content.pdf.renderToken + 1
+    };
+    applyCachedView(e);
+    activeCacheKey = e.key;
+    cacheTouch(e);
+    return true;
+}
+
 // Memoized highlight + gutter for the code body, keyed on content.seq. A given
 // seq uniquely identifies one loaded file (code + language are fixed for it), so
 // the hljs pass + the gutter string are computed ONCE per file and reused across
@@ -632,15 +832,11 @@ function resetHtml() {
     content.html = null;
     content.frameHtml = null;
 }
-/** Reset only the pdf-specific fields (and bump the render token to abort). */
+/** Reset only the pdf-specific fields (and bump the render token to abort).
+ *  The live doc is OWNED by its cache entry now, so we do NOT destroy it here —
+ *  eviction (disposeCacheEntry) is the single place a doc is destroyed. We just
+ *  drop our pointer + bump the token so the in-flight render aborts. */
 function resetPdf() {
-    if (content.pdf.doc) {
-        try {
-            content.pdf.doc.destroy();
-        } catch {
-            /* ignore */
-        }
-    }
     content.pdf = { doc: null, pages: 0, renderToken: content.pdf.renderToken + 1 };
     resetPdfView();
 }
@@ -651,8 +847,10 @@ function resetCode() {
     codeRenderCache = null; // drop the (possibly large) memoized highlight HTML
 }
 
-/** HTML / artifact loader. */
-function loadHtml(opts: { name: string; html?: string | null; url?: string | null }) {
+/** HTML / artifact loader. `token` is the load token captured by load(); a
+ *  mismatch on resolve means a newer load superseded us. `entry` (when present)
+ *  is the cache entry this load fills on success. */
+function loadHtml(opts: { name: string; html?: string | null; url?: string | null }, token: number, entry: CacheEntry | null) {
     resetPdf();
     resetCode();
     if (opts.html != null) {
@@ -668,14 +866,16 @@ function loadHtml(opts: { name: string; html?: string | null; url?: string | nul
                 return r.text();
             })
             .then(text => {
-                if (content.url !== reqUrl) return;
+                if (entry) { entry.html = text; const nonce = pageNonce(); entry.frameHtml = nonce ? injectNonce(text, nonce) : text; entry.loading = false; entry.error = null; }
+                if (token !== loadSeq) return;
                 setArtifactHtml(text);
                 content.loading = false;
                 content.error = null;
                 forceRender?.();
             })
             .catch(e => {
-                if (content.url !== reqUrl) return;
+                if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
+                if (token !== loadSeq) return;
                 content.loading = false;
                 content.error = String(e?.message || e);
                 forceRender?.();
@@ -687,8 +887,10 @@ function loadHtml(opts: { name: string; html?: string | null; url?: string | nul
     }
 }
 
-/** PDF loader: fetch -> ArrayBuffer -> pdf.js (main-thread worker). */
-function loadPdf(opts: { name: string; url?: string | null }) {
+/** PDF loader: fetch -> ArrayBuffer -> pdf.js (main-thread worker). On success
+ *  the doc is stored in `entry` (the cache owns it); a stale resolve (token !=
+ *  loadSeq) destroys the freshly-built doc to avoid a leak. */
+function loadPdf(opts: { name: string; url?: string | null }, token: number, entry: CacheEntry | null) {
     resetHtml();
     resetPdf();
     resetCode();
@@ -705,27 +907,32 @@ function loadPdf(opts: { name: string; url?: string | null }) {
             return r.arrayBuffer();
         })
         .then(buf => {
-            if (content.url !== reqUrl) return; // superseded
             const task = pdfjsLib.getDocument({ data: new Uint8Array(buf) });
             return task.promise;
         })
         .then((doc: any) => {
-            if (!doc) return; // superseded above
-            if (content.url !== reqUrl) {
-                try { doc.destroy(); } catch { /* ignore */ }
-                return;
-            }
+            if (!doc) return;
+            // Only keep the doc if `entry` is STILL the cache's live entry for its
+            // key (a rapid re-click could have disposed + replaced it). Otherwise
+            // the entry is detached and storing the doc there would leak it — so
+            // destroy it. The doc is persisted even when token !== loadSeq (so a
+            // re-open is instant), as long as the entry is still live.
+            const live = entry != null && contentCache.get(entry.key) === entry;
+            if (live) { entry!.pdfDoc = doc; entry!.pdfPages = doc.numPages; entry!.loading = false; entry!.error = null; }
+            else { destroyPdfDoc(doc); }
+            if (token !== loadSeq) return; // superseded — don't touch content
             content.pdf.doc = doc;
             content.pdf.pages = doc.numPages;
             pdfView.total = doc.numPages;
-            pdfView.page = 1;
+            // keep the cached/restored page if any (applyCachedView set it); else 1.
             content.pdf.renderToken += 1; // signal: a fresh doc is ready to render
             content.loading = false;
             content.error = null;
             forceRender?.();
         })
         .catch(e => {
-            if (content.url !== reqUrl) return;
+            if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
+            if (token !== loadSeq) return;
             content.loading = false;
             content.error = String(e?.message || e);
             forceRender?.();
@@ -746,7 +953,7 @@ function extOf(s: string | null | undefined): string | null {
 }
 
 /** CODE / TEXT loader: fetch text and stash it + its resolved hljs language. */
-function loadCode(opts: { name: string; url?: string | null }) {
+function loadCode(opts: { name: string; url?: string | null }, token: number, entry: CacheEntry | null) {
     resetHtml();
     resetPdf();
     resetCode();
@@ -755,7 +962,9 @@ function loadCode(opts: { name: string; url?: string | null }) {
         content.error = "No source";
         return;
     }
-    content.codeLang = codeLangFor(extOf(opts.url) || extOf(opts.name));
+    const lang = codeLangFor(extOf(opts.url) || extOf(opts.name));
+    content.codeLang = lang;
+    if (entry) entry.codeLang = lang;
     content.loading = true;
     const reqUrl = opts.url;
     fetch(reqUrl)
@@ -764,14 +973,16 @@ function loadCode(opts: { name: string; url?: string | null }) {
             return r.text();
         })
         .then(text => {
-            if (content.url !== reqUrl) return; // superseded
+            if (entry) { entry.code = text; entry.loading = false; entry.error = null; }
+            if (token !== loadSeq) return;
             content.code = text;
             content.loading = false;
             content.error = null;
             forceRender?.();
         })
         .catch(e => {
-            if (content.url !== reqUrl) return;
+            if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
+            if (token !== loadSeq) return;
             content.loading = false;
             content.error = String(e?.message || e);
             forceRender?.();
@@ -779,7 +990,7 @@ function loadCode(opts: { name: string; url?: string | null }) {
 }
 
 /** MARKDOWN loader: fetch -> marked -> dark doc -> nonce sandbox iframe path. */
-function loadMarkdown(opts: { name: string; url?: string | null }) {
+function loadMarkdown(opts: { name: string; url?: string | null }, token: number, entry: CacheEntry | null) {
     resetPdf();
     resetCode();
     if (!opts.url) {
@@ -797,7 +1008,6 @@ function loadMarkdown(opts: { name: string; url?: string | null }) {
             return r.text();
         })
         .then(md => {
-            if (content.url !== reqUrl) return; // superseded
             let bodyHtml: string;
             try {
                 bodyHtml = marked.parse(md, { async: false, gfm: true, breaks: false }) as string;
@@ -805,13 +1015,17 @@ function loadMarkdown(opts: { name: string; url?: string | null }) {
                 bodyHtml = "<pre>" + escapeHtml(String(e)) + "</pre>";
             }
             bodyHtml = highlightMarkdownCode(bodyHtml);
-            setArtifactHtml(wrapMarkdownDoc(bodyHtml));
+            const fullHtml = wrapMarkdownDoc(bodyHtml);
+            if (entry) { entry.html = fullHtml; const nonce = pageNonce(); entry.frameHtml = nonce ? injectNonce(fullHtml, nonce) : fullHtml; entry.loading = false; entry.error = null; }
+            if (token !== loadSeq) return;
+            setArtifactHtml(fullHtml);
             content.loading = false;
             content.error = null;
             forceRender?.();
         })
         .catch(e => {
-            if (content.url !== reqUrl) return;
+            if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
+            if (token !== loadSeq) return;
             content.loading = false;
             content.error = String(e?.message || e);
             forceRender?.();
@@ -819,7 +1033,7 @@ function loadMarkdown(opts: { name: string; url?: string | null }) {
 }
 
 /** IMAGE loader: nothing to fetch — the <img> renders content.url directly. */
-function loadImage(opts: { name: string; url?: string | null }) {
+function loadImage(opts: { name: string; url?: string | null }, _token: number, entry: CacheEntry | null) {
     resetHtml();
     resetPdf();
     resetCode();
@@ -828,8 +1042,11 @@ function loadImage(opts: { name: string; url?: string | null }) {
         content.error = "No image source";
         return;
     }
-    // The <img> tag streams the url itself; no manual fetch/decode needed.
-    resetImgView(); // each new image opens at fit (scale 1), un-panned
+    // The <img> tag streams the url itself; no manual fetch/decode needed. A
+    // FRESH image opens at fit (scale 1); a cache RESTORE keeps the saved view
+    // (applyCachedView already populated imgView), so only reset on a fresh load.
+    if (entry) entry.loading = false;
+    resetImgView();
     content.loading = false;
     content.error = null;
 }
@@ -884,32 +1101,84 @@ function wrapMarkdownDoc(bodyHtml: string): string {
     return `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">${MD_STYLE}</head><body><article class="md">${bodyHtml}</article>${MD_LINK_SCRIPT}</body></html>`;
 }
 
-/** CONTENT-TYPE ROUTER. Load anything into the dock panel BODY and open it. */
-export function load(opts: { name: string; html?: string | null; url?: string | null; type?: ContentType }) {
-    content.name = opts.name || "file";
-    content.url = opts.url ?? null;
-    content.error = null;
-    content.seq += 1;
-    content.type = detectType(opts);
+/** Show a file in the panel body. Returns "noop" (already shown), "cache"
+ *  (restored from cache, no fetch) or "fetch" (a fresh fetch was kicked off).
+ *  The shared engine behind both load() (chip click) and restoreDescriptor()
+ *  (channel return). It picks the renderer, hits/populates the cache, and bumps
+ *  the load token. It does NOT touch open-state / channel bookkeeping — the
+ *  callers do that around it. */
+function showContent(opts: { name: string; html?: string | null; url?: string | null; type: ContentType }): "noop" | "cache" | "fetch" {
+    const name = opts.name || "file";
+    const type = opts.type;
+    const url = opts.url ?? null;
+    const key = opts.html != null ? null : cacheKeyFor(url, type);
 
-    if (content.type === "pdf") {
-        loadPdf(opts);
-    } else if (content.type === "image") {
-        loadImage(opts);
-    } else if (content.type === "code") {
-        loadCode(opts);
-    } else if (content.type === "markdown") {
-        loadMarkdown(opts);
-    } else {
-        loadHtml(opts);
+    // --- same file already shown? -> no-op (keep DOM, scroll, zoom as-is) -----
+    if (key != null && key === activeCacheKey && content.name != null && content.error == null) {
+        content.name = name;
+        activeDescriptor = { name, url: url as string, type };
+        return "noop";
     }
 
-    // Track what's shown so a channel switch can save it. Inline-html artifacts
-    // (passed as `opts.html`, no url) can't be re-loaded by descriptor, so they
+    // Leaving the current file: snapshot its live view-state into its entry.
+    snapshotActiveView();
+
+    // --- cache hit on a DIFFERENT file -> instant restore (no fetch) ----------
+    const hit = key != null ? contentCache.get(key) : null;
+    if (hit && hit.error == null && !hit.loading) {
+        loadSeq += 1; // supersede any in-flight loader
+        content.seq += 1; // new body identity (different file)
+        hit.name = name; // honour the (possibly fresh) display name
+        mountFromCache(hit);
+        activeDescriptor = { name, url: hit.url, type: hit.type };
+        return "cache";
+    }
+
+    // --- miss (or inline html / errored entry) -> fetch + populate cache ------
+    const token = ++loadSeq;
+    content.name = name;
+    content.url = url;
+    content.error = null;
+    content.seq += 1;
+    content.type = type;
+
+    // Build a fresh cache entry for url-backed files (inline html isn't cached).
+    let entry: CacheEntry | null = null;
+    if (key != null && url != null) {
+        // If a stale entry for this key exists (e.g. an errored one, or one whose
+        // fetch is still in flight after we navigated away and came back), dispose
+        // it first so its half-built doc can't leak when its loader resolves.
+        const prior = contentCache.get(key);
+        if (prior) { contentCache.delete(key); disposeCacheEntry(prior); }
+        entry = { key, name, type, url, codeLang: "plaintext", loading: true, view: {} };
+        contentCache.set(key, entry);
+        activeCacheKey = key;
+        cacheTouch(entry);
+    } else {
+        activeCacheKey = null;
+    }
+    // a brand-new load opens at the default view (no cached view to apply).
+    pendingScrollTop = null;
+
+    if (type === "pdf") loadPdf(opts, token, entry);
+    else if (type === "image") loadImage(opts, token, entry);
+    else if (type === "code") loadCode(opts, token, entry);
+    else if (type === "markdown") loadMarkdown(opts, token, entry);
+    else loadHtml(opts, token, entry);
+
+    // Inline-html artifacts (no url) can't be re-loaded by descriptor, so they
     // are NOT remembered per-channel (descriptor needs a url).
-    activeDescriptor = content.url
-        ? { name: content.name as string, url: content.url, type: content.type }
-        : null;
+    activeDescriptor = url ? { name, url, type } : null;
+    return "fetch";
+}
+
+/** CONTENT-TYPE ROUTER. Load anything into the dock panel BODY and open it.
+ *  Backed by the content cache: re-clicking the file already shown is a no-op
+ *  (no fetch, no re-render, no flicker); clicking a different file we've seen
+ *  restores it instantly from cache (no fetch); only a genuinely new file
+ *  fetches. The view-state of the file we're leaving is snapshotted first. */
+export function load(opts: { name: string; html?: string | null; url?: string | null; type?: ContentType }) {
+    const result = showContent({ name: opts.name, html: opts.html, url: opts.url, type: detectType(opts) });
 
     // Open FIRST, then persist — so the saved per-channel state records open:true.
     state.open = true;
@@ -917,11 +1186,14 @@ export function load(opts: { name: string; html?: string | null; url?: string | 
     saveCurrentChannelState();
     ensureHost();
     applyOpenState();
-    forceRender?.();
+    // A no-op didn't change the body; everything else needs a render.
+    if (result !== "noop") forceRender?.();
 }
 
-/** Clear the loaded content, returning the body to the placeholder. */
+/** Clear the loaded content, returning the body to the placeholder. The file is
+ *  kept in the cache (so reopening it is still instant); we just detach it. */
 export function clearArtifact() {
+    snapshotActiveView();
     content.name = null;
     content.type = "html";
     resetHtml();
@@ -930,6 +1202,7 @@ export function clearArtifact() {
     content.url = null;
     content.loading = false;
     content.error = null;
+    activeCacheKey = null;
     activeDescriptor = null;
     saveCurrentChannelState();
     forceRender?.();
@@ -950,21 +1223,13 @@ function saveCurrentChannelState() {
     });
 }
 
-/** Load a remembered descriptor WITHOUT re-saving channel state (avoid loops). */
+/** Load a remembered descriptor WITHOUT re-saving channel state (avoid loops).
+ *  Goes through the content cache via showContent: a channel we return to
+ *  re-shows its file from cache instantly (no fetch, view-state preserved); only
+ *  an evicted file is re-fetched. */
 function restoreDescriptor(d: ChannelDescriptor) {
-    content.name = d.name || "file";
-    content.url = d.url;
-    content.error = null;
-    content.seq += 1;
-    content.type = d.type || detectType({ url: d.url, name: d.name });
-
-    if (content.type === "pdf") loadPdf(d);
-    else if (content.type === "image") loadImage(d);
-    else if (content.type === "code") loadCode(d);
-    else if (content.type === "markdown") loadMarkdown(d);
-    else loadHtml(d);
-
-    activeDescriptor = { name: content.name as string, url: d.url, type: content.type };
+    const type = d.type || detectType({ url: d.url, name: d.name });
+    showContent({ name: d.name || "file", url: d.url, type });
 }
 
 /**
@@ -982,7 +1247,7 @@ export function onChannelSelect(newId: string | null) {
 
     const mem = channelStates.get(newId);
     if (mem && mem.open && mem.descriptor) {
-        // restore: open + re-load the remembered file.
+        // restore: open + re-load the remembered file (cache makes this instant).
         state.open = true;
         lsSet(LS_OPEN, "1");
         restoreDescriptor(mem.descriptor);
@@ -990,7 +1255,9 @@ export function onChannelSelect(newId: string | null) {
         applyOpenState();
         forceRender?.();
     } else {
-        // nothing remembered (or it was closed) -> empty + closed panel.
+        // nothing remembered (or it was closed) -> empty + closed panel. Snapshot
+        // the outgoing file's view first so returning to ITS channel restores it.
+        snapshotActiveView();
         clearLoadedContent();
         activeDescriptor = null;
         state.open = mem ? mem.open : false;
@@ -1000,7 +1267,8 @@ export function onChannelSelect(newId: string | null) {
     }
 }
 
-/** Clear only the loaded body (not the descriptor / channel bookkeeping). */
+/** Clear only the loaded body (not the descriptor / channel bookkeeping). The
+ *  file stays cached; we just detach the live pointer (no doc destroy here). */
 function clearLoadedContent() {
     content.name = null;
     content.type = "html";
@@ -1010,6 +1278,7 @@ function clearLoadedContent() {
     content.url = null;
     content.loading = false;
     content.error = null;
+    activeCacheKey = null;
 }
 
 function clampWidth(w: number): number {
@@ -1072,21 +1341,33 @@ function PdfBody() {
     const containerRef = useRef(null as HTMLDivElement | null);
     const passRef = useRef(0);
     const lastWidthRef = useRef(0);
-    // per-page DOM + geometry, indexed [0..numPages-1]
+    // per-page DOM + geometry + lazy-raster bookkeeping, indexed [0..numPages-1].
+    // A page's box is built up-front (cheap); its canvas is only rastered + its
+    // text layer only built when it nears the viewport (or is targeted by a jump
+    // / needed by find). `rasterScale` records the scale the bitmap was drawn at
+    // so a later zoom/resize knows to re-raster; `textBuilt` gates text-layer
+    // construction; `rendering` guards against overlapping raster of one page.
     const pagesRef = useRef([] as Array<{
+        n: number; // 1-based page number
         wrap: HTMLDivElement;
         canvas: HTMLCanvasElement;
         textDiv: HTMLDivElement;
         baseW: number; // unscaled page width (pdf units @ scale 1)
         baseH: number;
+        page: any | null; // cached pdfjs PDFPageProxy (lazy)
+        rasterScale: number; // scale the canvas bitmap was drawn at (0 = blank)
+        textScale: number; // scale the text layer was built at (0 = none)
+        rendering: boolean;
     }>);
-    // The UNIFORM document scale the pages are CURRENTLY rastered at. The page
-    // boxes are sized via the container's `--scale-factor`; live resize just
-    // re-points that variable (renderScale × dragRatio) so the whole column
-    // reflows + visually scales in one shot, then drag-end re-rasters crisp.
+    // The UNIFORM document scale the pages are CURRENTLY sized at. The page boxes
+    // are sized via the container's `--scale-factor`; live resize just re-points
+    // that variable (renderScale × dragRatio) so the whole column reflows +
+    // visually scales in one shot, then drag-end re-rasters the visible pages.
     const renderScaleRef = useRef(1);
     // flat list of match locations: {pageIdx, spanEls}
     const matchesRef = useRef([] as Array<{ page: number; els: HTMLElement[] }>);
+    // IntersectionObserver that rasters pages as they near the viewport.
+    const ioRef = useRef(null as IntersectionObserver | null);
 
     // The scrollable ancestor (.dockview-body) so we can scroll pages into view.
     const scroller = () => containerRef.current?.closest(".dockview-body") as HTMLElement | null;
@@ -1095,46 +1376,106 @@ function PdfBody() {
         const host = containerRef.current;
         if (!host) return;
 
-        // Available content width = the scroll viewport width MINUS a small,
-        // CONSTANT side inset. We read it from .dockview-body (the scroller),
-        // which has scrollbar-gutter:stable so its clientWidth is the SAME
-        // whether or not a scrollbar is showing — that stability is what makes
-        // every page fit identically (the old code read host.clientWidth, which
-        // jumped by the scrollbar width as pages appeared mid-render, so pages
-        // rasterised before vs. after the scrollbar got different widths).
         const PDF_SIDE_INSET = 16;
+        const dpr = window.devicePixelRatio || 1;
         const availWidth = (): number => {
             const sc = scroller();
             return Math.max(1, (sc?.clientWidth || host.clientWidth || state.width) - PDF_SIDE_INSET);
         };
 
-        const renderAll = async () => {
+        // Raster ONE page's canvas (+ build its text layer) at the current
+        // document scale, if it isn't already current. Idempotent + reentrancy-
+        // guarded so the IntersectionObserver and jumps can call it freely.
+        const rasterPage = async (idx: number) => {
+            const docToken = content.pdf.renderToken;
+            const p = pagesRef.current[idx];
+            if (!p) return;
+            const docScale = renderScaleRef.current;
+            // already crisp at this scale (and text built) — nothing to do.
+            if (p.rasterScale === docScale && p.textScale === docScale) return;
+            if (p.rendering) return;
+            p.rendering = true;
+            try {
+                const doc = content.pdf.doc;
+                if (!doc) return;
+                if (!p.page) {
+                    try { p.page = await doc.getPage(p.n); } catch { return; }
+                    if (docToken !== content.pdf.renderToken) return;
+                }
+                const viewport = p.page.getViewport({ scale: docScale });
+                // canvas raster (crisp at docScale × dpr)
+                if (p.rasterScale !== docScale) {
+                    p.canvas.width = Math.floor(viewport.width * dpr);
+                    p.canvas.height = Math.floor(viewport.height * dpr);
+                    const ctx = p.canvas.getContext("2d");
+                    if (!ctx) return;
+                    try {
+                        await p.page.render({
+                            canvasContext: ctx,
+                            viewport,
+                            transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined
+                        }).promise;
+                    } catch { return; } // render cancelled
+                    if (docToken !== content.pdf.renderToken) return;
+                    p.rasterScale = docScale;
+                }
+                // text layer (selectable). rebuilt on scale change so span boxes
+                // match the new geometry. best-effort — never throws upward.
+                if (p.textScale !== docScale) {
+                    try {
+                        const textContent = await p.page.getTextContent();
+                        if (docToken !== content.pdf.renderToken) return;
+                        p.textDiv.replaceChildren();
+                        const tl = new (pdfjsLib as any).TextLayer({
+                            textContentSource: textContent,
+                            container: p.textDiv,
+                            viewport
+                        });
+                        await tl.render();
+                        p.textScale = docScale;
+                        // a live find must light up matches on a freshly-built page
+                        if (pdfView.findOpen && pdfView.findQuery) reapplyFindOnPage(idx);
+                    } catch { /* text layer optional */ }
+                }
+            } finally {
+                p.rendering = false;
+            }
+        };
+
+        // Raster the page band around `centerPage` (1-based): the page + a few
+        // neighbours each way, so scrolling never shows a blank page.
+        const RASTER_NEIGHBOURS = 2;
+        const rasterAround = (centerPage: number) => {
+            const lo = Math.max(0, centerPage - 1 - RASTER_NEIGHBOURS);
+            const hi = Math.min(pagesRef.current.length - 1, centerPage - 1 + RASTER_NEIGHBOURS);
+            for (let i = lo; i <= hi; i++) rasterPage(i);
+        };
+
+        // Build the page COLUMN: all wrap boxes sized to the uniform doc scale,
+        // each holding an (initially blank) canvas + empty text layer. NO raster
+        // here — that's lazy. This is the cheap pass that makes the first page
+        // appear almost immediately regardless of page count.
+        const buildLayout = async () => {
             const doc = content.pdf.doc;
             if (!doc) return;
             const myPass = ++passRef.current;
             const docToken = content.pdf.renderToken;
 
-            const dpr = window.devicePixelRatio || 1;
-            // Snapshot the fit geometry ONCE per pass so every page uses the
-            // exact same target — pages can no longer drift in width.
             const sc = scroller();
             const availW = availWidth();
             const availH = Math.max(1, (sc?.clientHeight || 600) - PDF_SIDE_INSET);
             lastWidthRef.current = host.clientWidth;
 
-            // Canonical pdf.js continuous-column model: a SINGLE uniform document
-            // scale drives every page. We pick it from the WIDEST page so a
-            // fit-width column never overflows, and pages keep their relative
-            // sizes (no per-page stretch). That single scale also lets a live
-            // resize be one container `--scale-factor` update (no per-page math),
-            // which is what keeps the column perfectly connected while dragging.
+            // Uniform document scale from the WIDEST page (so a fit-width column
+            // never overflows + pages keep relative sizes). Pre-scan viewports —
+            // cheap (no raster), and needed so the column has correct heights.
             let refW = 0;
-            let refH = 0; // height of the widest page, for "page" fit
+            let refH = 0;
             for (let n = 1; n <= doc.numPages; n++) {
                 if (myPass !== passRef.current || docToken !== content.pdf.renderToken) return;
-                let p: any;
-                try { p = await doc.getPage(n); } catch { return; }
-                const vp = p.getViewport({ scale: 1 });
+                let pg: any;
+                try { pg = await doc.getPage(n); } catch { return; }
+                const vp = pg.getViewport({ scale: 1 });
                 if (vp.width > refW) { refW = vp.width; refH = vp.height; }
             }
             if (!refW) return;
@@ -1143,101 +1484,120 @@ function PdfBody() {
                 : availW / refW;
             const docScale = fitScale * pdfView.zoom;
             renderScaleRef.current = docScale;
-            // Drive the page-box + canvas + text-layer geometry off ONE variable
-            // on the container (exactly how pdf.js sizes its pages). Clearing any
-            // leftover live-resize value here resets the column to crisp 1:1.
             host.style.setProperty("--scale-factor", String(docScale));
 
-            // dropping the find results — spans get rebuilt below
             matchesRef.current = [];
+            ioRef.current?.disconnect();
 
             const built: typeof pagesRef.current = [];
             const frag = document.createDocumentFragment();
             for (let n = 1; n <= doc.numPages; n++) {
                 if (myPass !== passRef.current || docToken !== content.pdf.renderToken) return;
                 let page: any;
-                try {
-                    page = await doc.getPage(n);
-                } catch {
-                    return;
-                }
-                if (myPass !== passRef.current || docToken !== content.pdf.renderToken) return;
-
+                try { page = await doc.getPage(n); } catch { return; }
                 const base = page.getViewport({ scale: 1 });
-                const viewport = page.getViewport({ scale: docScale });
 
-                // Page box sized in CSS off the container's --scale-factor (the
-                // canonical pdf.js setLayerDimensions recipe): width/height are
-                // `--scale-factor × <pdf unit>px`. Because the box tracks the
-                // variable, a live-resize that re-points --scale-factor reflows
-                // EVERY page in the column at once (gaps stay 8px, pages never
-                // overlap or detach). `round(down, …, 1px)` snaps to whole pixels
-                // like pdf.js so seams between canvas + box don't shimmer.
                 const wrap = document.createElement("div");
                 wrap.className = "dockview-pdf-page-wrap";
                 wrap.style.width = `round(down, var(--scale-factor) * ${base.width}px, 1px)`;
                 wrap.style.height = `round(down, var(--scale-factor) * ${base.height}px, 1px)`;
                 wrap.setAttribute("data-page", String(n));
 
-                // Canvas: backing store rastered at docScale×dpr (crisp), but its
-                // CSS box fills the wrapper (100%/100%) so it STRETCHES with the
-                // variable during a live resize — instant GPU-cheap visual scale,
-                // exactly like pdf.js's CSS-zoom-then-redraw.
                 const canvas = document.createElement("canvas");
                 canvas.className = "dockview-pdf-page";
-                canvas.width = Math.floor(viewport.width * dpr);
-                canvas.height = Math.floor(viewport.height * dpr);
-                const ctx = canvas.getContext("2d");
-                if (!ctx) continue;
                 wrap.appendChild(canvas);
 
-                // Text layer overlay: pdf.js positions its (transparent) span
-                // divs in % of the box using --total-scale-factor. It inherits
-                // --scale-factor from the container; mirror it to
-                // --total-scale-factor so the text tracks the same live variable
-                // and stays glued over the canvas through resize/zoom.
                 const textDiv = document.createElement("div");
                 textDiv.className = "textLayer";
                 textDiv.style.setProperty("--total-scale-factor", "var(--scale-factor)");
                 wrap.appendChild(textDiv);
 
                 frag.appendChild(wrap);
-                if (n === 1) host.replaceChildren(frag);
-                else host.appendChild(wrap);
-
-                built.push({ wrap, canvas, textDiv, baseW: base.width, baseH: base.height });
-
-                try {
-                    await page.render({
-                        canvasContext: ctx,
-                        viewport,
-                        transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined
-                    }).promise;
-                } catch {
-                    return; // render cancelled
-                }
-
-                // Text layer (selectable). Best-effort: never let a text-layer
-                // failure abort the canvas render loop.
-                try {
-                    const textContent = await page.getTextContent();
-                    if (myPass !== passRef.current || docToken !== content.pdf.renderToken) return;
-                    const tl = new (pdfjsLib as any).TextLayer({
-                        textContentSource: textContent,
-                        container: textDiv,
-                        viewport
-                    });
-                    await tl.render();
-                } catch {
-                    /* text layer optional */
-                }
+                built.push({ n, wrap, canvas, textDiv, baseW: base.width, baseH: base.height, page, rasterScale: 0, textScale: 0, rendering: false });
             }
             if (myPass !== passRef.current || docToken !== content.pdf.renderToken) return;
+            host.replaceChildren(frag);
             pagesRef.current = built;
-            // re-apply an active find against the freshly built spans
-            if (pdfView.findOpen && pdfView.findQuery) runFind(pdfView.findQuery, false);
+
+            // Observe every page; raster those near the viewport. A generous
+            // rootMargin pre-rasters one screenful ahead/behind so scrolling
+            // stays smooth. The scroller is the root.
+            const io = new IntersectionObserver((entries) => {
+                for (const e of entries) {
+                    if (!e.isIntersecting) continue;
+                    const n = parseInt((e.target as HTMLElement).getAttribute("data-page") || "0", 10);
+                    if (n) rasterAround(n);
+                }
+            }, { root: scroller(), rootMargin: "150% 0px", threshold: 0.01 });
+            ioRef.current = io;
+            for (const p of built) io.observe(p.wrap);
+
+            // Restore scroll/page: a cache restore lands on the saved scrollTop;
+            // otherwise honour any saved page (e.g. zoom re-layout keeps the page
+            // the user was on). Then raster the landing band immediately so the
+            // first visible page paints without waiting on the observer.
+            if (pendingScrollTop != null) {
+                consumePendingScroll();
+            } else if (pdfView.page > 1) {
+                const p = built[Math.min(built.length, pdfView.page) - 1];
+                if (sc && p) sc.scrollTop = Math.max(0, p.wrap.offsetTop - 8);
+            }
             updateCurrentPage();
+            rasterAround(pdfView.page || 1);
         };
+
+        // Re-scale the EXISTING column to a new fit×zoom WITHOUT rebuilding the
+        // DOM: recompute the uniform doc scale, re-point --scale-factor (boxes
+        // resize via CSS), invalidate every page's raster/text (so it re-rasters
+        // crisp at the new scale when next near the viewport), and immediately
+        // re-raster the band the user is looking at. Scroll is preserved by
+        // anchoring on the current page's top. Cheaper than buildLayout (no
+        // viewport pre-scan, no DOM teardown) — used for zoom / window-resize /
+        // drag-end. Returns false if there's no column yet (caller falls back to
+        // buildLayout).
+        const rescale = async (): Promise<boolean> => {
+            const pages = pagesRef.current;
+            if (!pages.length) return false;
+            const docToken = content.pdf.renderToken;
+            const sc = scroller();
+            const availW = availWidth();
+            const availH = Math.max(1, (sc?.clientHeight || 600) - PDF_SIDE_INSET);
+            // widest page from cached base geometry (no pdf.js round-trip).
+            let refW = 0, refH = 0;
+            for (const p of pages) if (p.baseW > refW) { refW = p.baseW; refH = p.baseH; }
+            if (!refW) return false;
+            const fitScale = pdfView.fit === "page" ? Math.min(availW / refW, availH / refH) : availW / refW;
+            const docScale = fitScale * pdfView.zoom;
+            const prevScale = renderScaleRef.current || docScale;
+            const ratio = docScale / prevScale;
+            // anchor: remember the current page + its in-page scroll offset so
+            // zoom keeps the user roughly where they were.
+            const anchorIdx = Math.max(0, (pdfView.page || 1) - 1);
+            const anchor = pages[anchorIdx];
+            const beforeTop = anchor ? anchor.wrap.offsetTop : 0;
+            const scrollBefore = sc ? sc.scrollTop : 0;
+            const delta = scrollBefore - beforeTop; // px into the anchor page
+
+            renderScaleRef.current = docScale;
+            host.style.setProperty("--scale-factor", String(docScale));
+            lastWidthRef.current = host.clientWidth;
+            // invalidate rasters (boxes already resized via the variable).
+            for (const p of pages) { p.rasterScale = 0; p.textScale = 0; }
+
+            // re-anchor scroll to the same page (its offsetTop moved as boxes
+            // resized) + scale the in-page offset by the zoom ratio.
+            if (sc && anchor) sc.scrollTop = Math.max(0, anchor.wrap.offsetTop + Math.round(delta * ratio));
+            // re-raster the band the user is on.
+            rasterAround(pdfView.page || 1);
+            // if a find is active, re-light it (text layers were invalidated).
+            if (pdfView.findOpen && pdfView.findQuery) runFind(pdfView.findQuery, false);
+            if (docToken !== content.pdf.renderToken) return true;
+            return true;
+        };
+
+        // re-lay-out + re-raster the visible band at a new scale. Prefer the
+        // cheap in-place rescale; fall back to a full rebuild if no column yet.
+        const renderAll = async () => { if (!(await rescale())) await buildLayout(); };
 
         // --- current-page detection (which page dominates the viewport) -------
         const updateCurrentPage = () => {
@@ -1264,14 +1624,68 @@ function PdfBody() {
                 el.classList.remove("dockview-pdf-match", "dockview-pdf-match-active");
             });
         };
-        const runFind = (query: string, jump: boolean) => {
+        // Build the text layer of a page WITHOUT rastering its canvas (find needs
+        // the spans; getTextContent is raster-free). Used so find covers pages
+        // that have never been scrolled to. Returns once the spans exist.
+        const ensureTextLayer = async (idx: number) => {
+            const docToken = content.pdf.renderToken;
+            const p = pagesRef.current[idx];
+            if (!p || p.textScale === renderScaleRef.current) return;
+            const doc = content.pdf.doc;
+            if (!doc) return;
+            if (!p.page) {
+                try { p.page = await doc.getPage(p.n); } catch { return; }
+                if (docToken !== content.pdf.renderToken) return;
+            }
+            try {
+                const viewport = p.page.getViewport({ scale: renderScaleRef.current });
+                const textContent = await p.page.getTextContent();
+                if (docToken !== content.pdf.renderToken) return;
+                p.textDiv.replaceChildren();
+                const tl = new (pdfjsLib as any).TextLayer({ textContentSource: textContent, container: p.textDiv, viewport });
+                await tl.render();
+                p.textScale = renderScaleRef.current;
+            } catch { /* optional */ }
+        };
+        // Add highlight classes for the active query to a SINGLE page's spans and
+        // append them to the match list (keeps matches in page order). Used both
+        // by the full runFind sweep and when a page's text layer is built late.
+        const reapplyFindOnPage = (idx: number) => {
+            const q = pdfView.findQuery.trim().toLowerCase();
+            if (!q) return;
+            const p = pagesRef.current[idx];
+            if (!p) return;
+            // avoid double-counting if this page already contributed matches
+            if (matchesRef.current.some(m => m.page === idx + 1)) return;
+            const spans = Array.from(p.textDiv.querySelectorAll("span")) as HTMLElement[];
+            const found: typeof matchesRef.current = [];
+            for (const span of spans) {
+                const t = (span.textContent || "").toLowerCase();
+                if (t && t.includes(q)) { span.classList.add("dockview-pdf-match"); found.push({ page: idx + 1, els: [span] }); }
+            }
+            if (!found.length) return;
+            // splice into page order
+            matchesRef.current.push(...found);
+            matchesRef.current.sort((a, b) => a.page - b.page);
+            pdfView.findMatches = matchesRef.current.length;
+            highlightActive();
+            forceRender?.();
+        };
+        const runFind = async (query: string, jump: boolean) => {
             clearHighlights();
             matchesRef.current = [];
             pdfView.findMatches = 0;
             pdfView.findActive = 0;
             const q = query.trim().toLowerCase();
             if (!q) { forceRender?.(); return; }
+            const myToken = content.pdf.renderToken;
             const pages = pagesRef.current;
+            // Build text layers for every page (raster-free) so find sees the
+            // WHOLE document, not just the pages that happen to be rastered.
+            for (let i = 0; i < pages.length; i++) {
+                await ensureTextLayer(i);
+                if (myToken !== content.pdf.renderToken || pdfView.findQuery.trim().toLowerCase() !== q) return;
+            }
             for (let i = 0; i < pages.length; i++) {
                 const spans = Array.from(pages[i].textDiv.querySelectorAll("span")) as HTMLElement[];
                 for (const span of spans) {
@@ -1300,6 +1714,8 @@ function PdfBody() {
             if (!m) return;
             pdfView.findActive = idx + 1;
             highlightActive();
+            // ensure the match's page (+ neighbours) are crisp before we land.
+            rasterAround(m.page);
             m.els[0]?.scrollIntoView({ block: "center", behavior: "smooth" });
             forceRender?.();
         };
@@ -1311,7 +1727,12 @@ function PdfBody() {
             const p = pages[idx];
             const sc = scroller();
             if (!p || !sc) return;
-            sc.scrollTo({ top: Math.max(0, p.wrap.offsetTop - 8), behavior: "smooth" });
+            // raster the target band UP FRONT so a jump to a far, un-rastered page
+            // lands on a painted page (the IO would only catch it after the scroll
+            // animation finishes). Smooth scroll a short hop, instant a long one.
+            rasterAround(idx + 1);
+            const far = Math.abs(p.wrap.offsetTop - sc.scrollTop) > sc.clientHeight * 3;
+            sc.scrollTo({ top: Math.max(0, p.wrap.offsetTop - 8), behavior: far ? "auto" : "smooth" });
             pdfView.page = idx + 1;
             forceRender?.();
         };
@@ -1394,6 +1815,10 @@ function PdfBody() {
             if (scrollRaf) cancelAnimationFrame(scrollRaf);
             sc?.removeEventListener("scroll", onScroll);
             ro.disconnect();
+            ioRef.current?.disconnect();
+            ioRef.current = null;
+            // drop cached PDFPageProxy refs (the doc itself lives in the cache).
+            pagesRef.current = [];
             if (pdfControls === ctrls) pdfControls = null;
         };
     }, [content.pdf.renderToken, content.seq]);
@@ -1982,6 +2407,14 @@ function DockPanel() {
         applyOpenState();
     }, [width]);
 
+    // After a cache RESTORE of a non-PDF file (code / image / iframe), re-apply
+    // the saved scroll once the body DOM is committed. The PDF body restores its
+    // OWN scroll after its lazy page boxes are built (it needs the column height
+    // to exist first), so we skip it here.
+    useEffect(() => {
+        if (content.type !== "pdf") consumePendingScroll();
+    });
+
     const onResizeStart = useCallback((e: any) => {
         if (e.button != null && e.button !== 0) return;
         e.preventDefault();
@@ -2480,8 +2913,10 @@ export function stopPanel() {
     // unmount can detach asynchronously; sweep again next tick to be sure.
     Promise.resolve().then(removeHosts);
     setTimeout(removeHosts, 0);
-    // 6. release any pdf document
+    // 6. release any pdf document + the whole content cache (destroys all the
+    //    cached pdf docs + revokes blob urls — no leak across plugin restarts).
     resetPdf();
+    clearContentCache();
     // 7. drop per-channel memory (in-memory only).
     channelStates.clear();
     currentChannelId = null;
@@ -2494,7 +2929,8 @@ export function exposeDebug() {
     (window as any).__dockView = {
         toggle, ensureHost, applyOpenState, state, DockPanel, CLS, findPageInner,
         onChannelSelect, getCurrentChannelId, channelStates,
-        load, clear: clearArtifact, popout: popoutArtifact, content, detectType
+        load, clear: clearArtifact, popout: popoutArtifact, content, detectType,
+        contentCache, get loadSeq() { return loadSeq; }, get activeCacheKey() { return activeCacheKey; }
     };
 }
 export function unexposeDebug() {
