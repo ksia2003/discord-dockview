@@ -12,6 +12,7 @@
  * stopPanel().
  */
 
+import * as DataStore from "@api/DataStore";
 import { findByProps, findCssClasses } from "@webpack";
 import { ContextMenuApi, createRoot, Menu, React } from "@webpack/common";
 import type { Root } from "react-dom/client";
@@ -119,21 +120,68 @@ const CLS = {
     clickable: "clickable__9293f"
 };
 
-// In the renderer's isolated context a *bare* `localStorage` is not a defined
-// global (only `window.localStorage` is). Always go via window.
+// --- persistence (panel width + open state) ---------------------------------
+// Vencord's renderer runs in an ISOLATED context where `localStorage` is
+// undefined (both window.* and globalThis.*), so the old localStorage-backed
+// lsGet/lsSet were silent no-ops and width/open never survived a restart.
+//
+// We persist through Vencord's DataStore (IndexedDB, available in the isolated
+// context). DataStore is async, but the existing call sites read/write the
+// state SYNCHRONOUSLY (state init, toggle, resize). So we keep a synchronous
+// in-memory mirror (`persistCache`) that all the lsGet/lsSet sites hit, and:
+//   - load() the persisted values from DataStore once at startPanel(), seeding
+//     the mirror + applying them to `state`/DOM (write-back load),
+//   - write-through every lsSet: update the mirror immediately AND fire an
+//     async DataStore.set (fire-and-forget; ordering is per-key last-write-wins).
+const persistCache = new Map<string, string>();
+let persistLoaded = false;
+
 function lsGet(k: string): string | null {
-    try {
-        return window.localStorage ? window.localStorage.getItem(k) : null;
-    } catch {
-        return null;
-    }
+    return persistCache.has(k) ? persistCache.get(k)! : null;
 }
 function lsSet(k: string, v: string): void {
+    persistCache.set(k, v);
+    // Don't write back before the initial load completes — an early write
+    // (module-init defaults) must not clobber the stored value we're about to
+    // read. After load, every change is durably written through.
+    if (!persistLoaded) return;
     try {
-        window.localStorage?.setItem(k, v);
+        DataStore.set(k, v).catch(() => { /* ignore — best-effort persist */ });
     } catch {
-        /* ignore */
+        /* DataStore unavailable: stay in-memory only */
     }
+}
+
+/** Load persisted width/open from DataStore into the in-memory mirror + state,
+ *  then apply to the live panel. Called once at startPanel(); idempotent. */
+async function loadPersistedState(): Promise<void> {
+    if (persistLoaded) return;
+    let openStr: string | null = null;
+    let widthStr: string | null = null;
+    try {
+        [openStr, widthStr] = await DataStore.getMany([LS_OPEN, LS_WIDTH]);
+    } catch {
+        /* DataStore unavailable — fall through with defaults already in state */
+    }
+    persistLoaded = true;
+    if (typeof openStr === "string") persistCache.set(LS_OPEN, openStr);
+    if (typeof widthStr === "string") persistCache.set(LS_WIDTH, widthStr);
+
+    // Apply to live state. open is only forced TRUE from storage — if a channel
+    // switch already opened the panel during the async gap we don't slam it shut.
+    if (typeof widthStr === "string") {
+        const w = clampWidth(parseInt(widthStr, 10) || DEFAULT_WIDTH);
+        if (w !== state.width) {
+            state.width = w;
+            if (state.open) applyHostWidth();
+        }
+    }
+    if (openStr === "1" && !state.open) {
+        state.open = true;
+        ensureHost();
+        applyOpenState();
+    }
+    forceRender?.();
 }
 
 // --- shared open/width state (kept outside React) ---------------------------
@@ -2781,6 +2829,10 @@ export function getCurrentChannelId(): string | null {
 /** Start the panel: heartbeat, observer, hotkey + resize listeners. */
 export function startPanel() {
     active = true;
+    // Restore persisted width + open state from DataStore (async; seeds the
+    // in-memory mirror, corrects `state`, and applies to the live panel). Until
+    // it resolves the panel uses module-init defaults (closed, 420px).
+    loadPersistedState();
     // Seed the per-channel memory with whatever channel we boot into, so the
     // first save targets the right channel (no spurious save to "null").
     currentChannelId = getCurrentChannelId();
@@ -2936,6 +2988,10 @@ export function stopPanel() {
     channelStates.clear();
     currentChannelId = null;
     activeDescriptor = null;
+    // 8. reset the persistence latch so a re-start re-loads from DataStore. The
+    //    mirror itself is kept (already-correct values) but writes are paused
+    //    until the next loadPersistedState resolves.
+    persistLoaded = false;
 }
 
 // Debug surface: a single neutral window handle so manual console testing
