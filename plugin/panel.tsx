@@ -1999,35 +1999,75 @@ function PdfBody() {
                 p.textScale = renderScaleRef.current;
             } catch { /* optional */ }
         };
-        // Find every occurrence of `q` inside ONE page's text layer and return the
-        // located Ranges in reading order. Matching is per-span (a span = one
-        // glyph run pdf.js laid out); occurrences that straddle two spans are NOT
-        // matched (see report — scoped out). Walks each span's text nodes and uses
-        // indexOf in a loop so repeated hits inside a single span each become their
-        // own Range (the bug fix: the old code counted such a span ONCE).
+        // Build a page's FLAT text string from its rendered text-layer DOM, plus a
+        // per-character map back to the (textNode, offset) it came from. pdf.js lays
+        // a page out as a sequence of spans (one glyph run each, holding a single
+        // text node) interleaved with <br> elements at end-of-line items. The
+        // browser serialises that exact DOM when the user copies a selection — span
+        // text concatenated, each <br> a newline — so reproducing it here makes find
+        // search the SAME string the user reads/copies. Crucially this lets a query
+        // straddle a span boundary (pdf.js splits one visual word into separate runs
+        // on kerning / style changes): "bound"+"ary" are two spans but one string
+        // "boundary", so it now matches where the old per-span scan missed it. Each
+        // <br> contributes a "\n" with a null node (a separator a newline-free query
+        // never lands on), keeping cross-line text from fusing into a false match.
+        const buildPageText = (textDiv: HTMLElement): { text: string; nodes: (Text | null)[]; offs: number[]; } => {
+            let text = "";
+            const nodes: (Text | null)[] = [];
+            const offs: number[] = [];
+            const walk = (el: Node) => {
+                for (const child of Array.from(el.childNodes)) {
+                    if (child.nodeName === "BR") {
+                        text += "\n";
+                        nodes.push(null);
+                        offs.push(0);
+                    } else if (child.nodeType === Node.TEXT_NODE) {
+                        const t = child as Text;
+                        const s = t.data;
+                        for (let i = 0; i < s.length; i++) {
+                            text += s[i];
+                            nodes.push(t);
+                            offs.push(i);
+                        }
+                    } else if (child.nodeType === Node.ELEMENT_NODE) {
+                        // spans (incl. nested markedContent spans) — recurse so the
+                        // string follows reading order across the whole layer.
+                        walk(child);
+                    }
+                }
+            };
+            walk(textDiv);
+            return { text, nodes, offs };
+        };
+        // Find every occurrence of `q` on ONE page and return its Ranges in reading
+        // order. Matches against the whole-page string (see buildPageText) so hits
+        // are found even when they span span boundaries; the start/end character
+        // offsets are mapped back to their text nodes to build a Range that can
+        // cover two (or more) spans. The CSS Custom Highlight API paints such a
+        // multi-node Range without touching the span DOM. Non-overlapping, like
+        // browser find; Aa honoured via case-folding both sides.
         const collectPageMatches = (idx: number, q: string): Range[] => {
             const p = pagesRef.current[idx];
             if (!p) return [];
+            const { text, nodes, offs } = buildPageText(p.textDiv);
+            if (!text) return [];
             const cmp = pdfView.findCase ? q : q.toLowerCase();
+            const hay = pdfView.findCase ? text : text.toLowerCase();
             const out: Range[] = [];
-            const spans = p.textDiv.querySelectorAll("span");
-            for (const span of Array.from(spans)) {
-                // pdf.js puts the glyph text in a single text node per span.
-                const node = span.firstChild;
-                if (!node || node.nodeType !== Node.TEXT_NODE) continue;
-                const raw = node.textContent || "";
-                if (!raw) continue;
-                const hay = pdfView.findCase ? raw : raw.toLowerCase();
-                let from = 0;
-                for (;;) {
-                    const at = hay.indexOf(cmp, from);
-                    if (at < 0) break;
-                    const range = document.createRange();
-                    range.setStart(node, at);
-                    range.setEnd(node, at + cmp.length);
-                    out.push(range);
-                    from = at + cmp.length; // non-overlapping, like browser find
-                }
+            let from = 0;
+            for (;;) {
+                const at = hay.indexOf(cmp, from);
+                if (at < 0) break;
+                from = at + cmp.length; // advance first so a bad map still progresses
+                const startNode = nodes[at];
+                const endNode = nodes[at + cmp.length - 1];
+                // skip a hit that begins/ends on a <br> separator (only possible when
+                // the query itself contains a newline landing on the boundary).
+                if (!startNode || !endNode) continue;
+                const range = document.createRange();
+                range.setStart(startNode, offs[at]);
+                range.setEnd(endNode, offs[at + cmp.length - 1] + 1);
+                out.push(range);
             }
             return out;
         };
