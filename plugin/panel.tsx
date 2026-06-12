@@ -76,9 +76,6 @@ const HOST_ID = "dockview-root";
 const LS_WIDTH = "dockview.dock.width";
 const LS_OPEN = "dockview.dock.open";
 
-// Marker so we only ever touch a sidebar WE hid (member list OR DM profile).
-const HIDDEN_ATTR = "data-dockview-hidden-sidebar";
-
 const MIN_WIDTH = 360;
 const DEFAULT_WIDTH = 420;
 const MAX_WIDTH_FRAC = 0.6; // of window width
@@ -1030,73 +1027,14 @@ function findChat(inner: HTMLElement): HTMLElement | null {
     return inner.querySelector<HTMLElement>(':scope > div[class*="chat_"]');
 }
 
-/** Locate the flex-ROW chat row (content_) that holds the member list. */
-function findChatRow(): HTMLElement | null {
-    const candidates = document.querySelectorAll<HTMLElement>('div[class*="content_"]');
-    for (const el of Array.from(candidates)) {
-        if (!el.querySelector(":scope > main[class*='chatContent']")) continue;
-        const cs = getComputedStyle(el);
-        if (cs.display === "flex" && cs.flexDirection === "row") return el;
-    }
-    return null;
-}
-
-/**
- * The right-side EXCLUSIVE sidebar inside the chat row that we hide while the
- * dock is open. Two cases share the same row-sibling layout slot:
- *   - SERVER channels: the member list — `aside[class*="membersWrap"]`.
- *   - DMs: the user-profile sidebar — `aside[aria-labelledby^="user-profile-
- *     sidebar-heading"]` (it carries NO class, so we key off its stable aria id).
- * Either way we walk up to the row's direct child so hiding it reflows the chat
- * `main` exactly like a native close. Returns null when neither is present
- * (e.g. a DM with the profile collapsed) — then there's nothing to hide.
- */
-function findExclusiveSidebar(row: HTMLElement): HTMLElement | null {
-    const aside =
-        row.querySelector<HTMLElement>('aside[class*="membersWrap"]') ||
-        row.querySelector<HTMLElement>('aside[aria-labelledby^="user-profile-sidebar-heading"]');
-    if (!aside) return null;
-    const host = document.getElementById(HOST_ID);
-    if (host && (aside === host || host.contains(aside))) return null;
-    let el: HTMLElement | null = aside;
-    while (el && el.parentElement !== row) el = el.parentElement;
-    return el && el !== host ? el : aside;
-}
-
-/**
- * The NATIVE THREAD CONVERSATION SIDEBAR. Discord opens it as a `chatLayerWrapper`
- * that is a direct child of the PAGE INNER div — the SAME layout slot our dock
- * occupies (we are built to be pixel-identical to it). When a thread is open and
- * we ALSO open, the page-inner flex row ends up with two ~500px sidebars side by
- * side and the chat is crushed (the reported "overlap / looks weird"). Discord's
- * own sidebar model is mutually exclusive — it only ever shows ONE thing in this
- * slot — so we mirror that: while the dock is open we hide the native thread
- * (exactly like the member list), then restore it on close. Returns every
- * thread-owned sibling to hide: the `chatLayerWrapper` card plus the empty
- * placeholder `<div>` Discord parks next to it during the thread transition.
- */
-function findNativeThreadSidebars(inner: HTMLElement): HTMLElement[] {
-    const host = document.getElementById(HOST_ID);
-    const out: HTMLElement[] = [];
-    for (const child of Array.from(inner.children)) {
-        const el = child as HTMLElement;
-        if (el === host) continue; // never touch our own host
-        // The thread card: a chatLayerWrapper sibling that isn't ours.
-        const isThreadCard =
-            /chatLayerWrapper/.test(el.className) ||
-            !!el.querySelector(':scope > [class*="chatLayerWrapper"]');
-        if (isThreadCard) {
-            out.push(el);
-            // Discord parks an empty placeholder div immediately before the card
-            // while the thread is mounting; hide it too so chat fully reflows.
-            const prev = el.previousElementSibling as HTMLElement | null;
-            if (prev && prev !== host && !prev.className && prev.children.length === 0) {
-                out.push(prev);
-            }
-        }
-    }
-    return out;
-}
+// The exclusive right slot (server member list / DM user-profile sidebar /
+// native thread conversation sidebar) is hidden PREEMPTIVELY by CSS while the
+// panel is open (see applyOpenState + style.css `html.dockview-open`), so it no
+// longer needs to be located in JS — the stylesheet matches it by stable
+// selector and hides it from its first paint (no flash on mount), and a sidebar
+// Discord swaps out can't get stuck hidden. The page-inner is tagged
+// `dockview-page-inner` (in applyOpenState) so the thread-sidebar rule can scope
+// to its direct children without ever matching our own #dockview-root host.
 
 // ---------------------------------------------------------------------------
 // Body renderers (content-type router targets)
@@ -2236,16 +2174,25 @@ function ensureHost(): boolean {
     return true;
 }
 
-/** Reflect open/closed across the spacer host AND the exclusive right sidebar
- *  (server member list OR DM user-profile panel). */
+/** Reflect open/closed across the spacer host AND the exclusive right slot
+ *  (server member list / DM user-profile panel / native thread sidebar).
+ *
+ *  Exclusion is PREEMPTIVE, driven entirely by CSS: we set `dockview-open` on
+ *  <html> and tag the page-inner flex row with `dockview-page-inner`, and the
+ *  injected stylesheet (style.css) hides the exclusive occupant by stable
+ *  selector. Because the rule keys off a document state class — not per-node
+ *  attributes applied after Discord mounts and paints the sidebar — any sidebar
+ *  that gets (re)mounted while the panel is open is hidden from its first paint,
+ *  so a channel switch / thread open never flashes the sidebar before it
+ *  disappears. Closing the panel removes the html class = instant restore (and a
+ *  sidebar Discord swapped out from under us can't get "stuck hidden", since we
+ *  no longer tag individual nodes). */
 function applyOpenState() {
     const host = document.getElementById(HOST_ID);
-    const row = findChatRow();
-    const sidebar = row ? findExclusiveSidebar(row) : null;
-    // The native thread sidebar lives one level up (page-inner sibling of chat_),
-    // not in the chat row, so it's found separately.
     const inner = findPageInner();
-    const threadSidebars = inner ? findNativeThreadSidebars(inner) : [];
+    // Tag the page-inner so the thread-sidebar CSS rule (scoped to its direct
+    // children) can target the native thread card without touching our host.
+    if (inner) inner.classList.add("dockview-page-inner");
 
     if (state.open) {
         if (host) {
@@ -2257,31 +2204,21 @@ function applyOpenState() {
             host.style.flex = `0 0 ${state.width}px`;
             host.style.width = `${state.width}px`;
         }
-        // Hide the exclusive right slot (member list / DM profile / native
-        // thread) so our dock is the single occupant — no overlap, chat reflows
-        // exactly as if that surface were closed. Same class+attr mechanism for
-        // all of them (a !important class beats Discord's inline display resets).
-        const toHide = sidebar && sidebar !== host ? [sidebar, ...threadSidebars] : threadSidebars;
-        for (const el of toHide) {
-            if (el === host) continue;
-            el.setAttribute(HIDDEN_ATTR, "1");
-            el.classList.add("dockview-members-hidden");
-            el.style.removeProperty("display");
-        }
+        // Set the document state class — the stylesheet hides the member list /
+        // DM profile / native thread (whichever is present) preemptively.
+        document.documentElement.classList.add("dockview-open");
     } else {
         if (host) host.classList.remove("dockview-open");
-        restoreHiddenMembers();
+        document.documentElement.classList.remove("dockview-open");
     }
 }
 
-/** Clear our hide on any sidebar we tagged (member list or DM profile; by attr
- *  OR by class). */
+/** Drop the document state class (restoring any preemptively-hidden sidebar) and
+ *  the page-inner tag, so no DockView marks linger after the plugin stops. Used
+ *  on plugin stop; a normal close goes through applyOpenState. */
 function restoreHiddenMembers() {
-    document.querySelectorAll<HTMLElement>(`[${HIDDEN_ATTR}], .dockview-members-hidden`).forEach(el => {
-        el.classList.remove("dockview-members-hidden");
-        el.style.removeProperty("display");
-        el.removeAttribute(HIDDEN_ATTR);
-    });
+    document.documentElement.classList.remove("dockview-open");
+    document.querySelectorAll(".dockview-page-inner").forEach(el => el.classList.remove("dockview-page-inner"));
 }
 
 function toggle() {
