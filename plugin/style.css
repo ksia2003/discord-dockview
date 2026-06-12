@@ -469,13 +469,20 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
 .dockview-pdf-page-wrap .textLayer ::selection {
     background: rgba(88, 101, 242, 0.45);
 }
-/* find highlight: tint the matching span box; the active match is stronger. */
-.dockview-pdf-page-wrap .textLayer span.dockview-pdf-match {
-    background: rgba(255, 213, 0, 0.4);
-    border-radius: 2px;
+/* Find highlight (CSS Custom Highlight API): each match is an exact character
+   Range painted via the global registries set in JS (CSS.highlights.set). This
+   paints ONLY the matched substring — not the whole span — and never touches the
+   span DOM, so the pdf.js scale/transform model is untouched. All matches get a
+   dim yellow tint; the CURRENT match a stronger orange. ::highlight() only
+   accepts a small set of properties (color/background-color/text-decoration), so
+   no border-radius here. */
+.dockview-pdf-page-wrap .textLayer::highlight(dockview-pdf-find) {
+    background-color: rgba(255, 213, 0, 0.4);
+    color: transparent;
 }
-.dockview-pdf-page-wrap .textLayer span.dockview-pdf-match-active {
-    background: rgba(255, 145, 0, 0.65);
+.dockview-pdf-page-wrap .textLayer::highlight(dockview-pdf-find-active) {
+    background-color: rgba(255, 145, 0, 0.7);
+    color: transparent;
 }
 
 /* PDF find overlay: a small floating bar pinned to the top-right of the PDF
@@ -512,6 +519,16 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     font-variant-numeric: tabular-nums;
     color: var(--text-muted, #949ba4);
     user-select: none;
+}
+/* The "Aa" case-sensitivity toggle: a compact text button matching the input
+   height. Reuses .dockview-tool-btn for hover/active; this just tightens it. */
+.dockview-pdf-find .dockview-tool-btn {
+    height: 26px;
+    min-width: 26px;
+}
+.dockview-pdf-find-case {
+    font-size: 12px;
+    font-weight: 600;
 }
 
 /* IMAGE renderer (content type "image"): a centered, fit(contain) image with

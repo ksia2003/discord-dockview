@@ -387,6 +387,7 @@ function applyCachedView(e: CacheEntry) {
         pdfView.findQuery = "";
         pdfView.findMatches = 0;
         pdfView.findActive = 0;
+        pdfView.findCase = false;
     } else if (e.type === "image") {
         imgView.scale = e.view.imgScale ?? 1;
         imgView.tx = e.view.imgTx ?? 0;
@@ -489,7 +490,8 @@ const pdfView = {
     findOpen: false,
     findQuery: "",
     findMatches: 0,
-    findActive: 0 // 1-based index of the active match (0 = none)
+    findActive: 0, // 1-based index of the active match (0 = none)
+    findCase: false // case-sensitive toggle (false = case-insensitive, the default)
 };
 function resetPdfView() {
     pdfView.page = 1;
@@ -500,6 +502,7 @@ function resetPdfView() {
     pdfView.findQuery = "";
     pdfView.findMatches = 0;
     pdfView.findActive = 0;
+    pdfView.findCase = false;
 }
 interface PdfControls {
     goToPage: (n: number) => void;
@@ -510,6 +513,7 @@ interface PdfControls {
     setFit: (f: PdfFit) => void;
     fitWidth: () => void; // reset zoom to 1 (fit panel width) + ensure width mode
     toggleFind: () => void;
+    toggleFindCase: () => void;
     setFindQuery: (q: string) => void;
     findNext: () => void;
     findPrev: () => void;
@@ -1538,8 +1542,12 @@ function PdfBody() {
     // that variable (renderScale × dragRatio) so the whole column reflows +
     // visually scales in one shot, then drag-end re-rasters the visible pages.
     const renderScaleRef = useRef(1);
-    // flat list of match locations: {pageIdx, spanEls}
-    const matchesRef = useRef([] as Array<{ page: number; els: HTMLElement[] }>);
+    // flat list of match OCCURRENCES in document order. Each entry is one
+    // substring hit (NOT a whole span): `range` is the live DOM Range we paint via
+    // the CSS Custom Highlight API. When a page's text layer is rebuilt (zoom /
+    // resize replaces its spans, detaching old Ranges) that page's entries are
+    // re-collected fresh (reapplyFindOnPage / runFind), so the Ranges stay valid.
+    const matchesRef = useRef([] as Array<{ page: number; range: Range }>);
     // IntersectionObserver that rasters pages as they near the viewport.
     const ioRef = useRef(null as IntersectionObserver | null);
 
@@ -1793,10 +1801,46 @@ function PdfBody() {
         };
 
         // --- find -------------------------------------------------------------
+        // Matching is OCCURRENCE-based (Acrobat / browser-viewer semantics): every
+        // substring hit is one match, and we paint each hit's exact character
+        // RANGE — not the enclosing span — via the CSS Custom Highlight API
+        // (`CSS.highlights` + `Highlight` + `Range`). That API draws over arbitrary
+        // text ranges WITHOUT mutating the DOM, so the pdf.js textLayer span model
+        // (percentage left/top + per-span --font-height / --scale-x transforms) is
+        // left completely untouched — no span splitting, no class soup, and it
+        // coexists with native ::selection. Two registries ("dockview-pdf-find" =
+        // all hits, dim; "dockview-pdf-find-active" = the current hit, strong) give
+        // the standard all-vs-current distinction. Each match keeps the live Range;
+        // re-rastering a page replaces its spans, so we rebuild that page's matches
+        // (and thus its Ranges) when its text layer is rebuilt.
+        const HL_ALL = "dockview-pdf-find";
+        const HL_ACTIVE = "dockview-pdf-find-active";
+        const CSSwithHL = (CSS as any);
+        const HighlightCtor = (window as any).Highlight;
+        const hlSupported = typeof HighlightCtor === "function" && !!CSSwithHL?.highlights;
+        const hlAll: any = hlSupported ? new HighlightCtor() : null;
+        const hlActive: any = hlSupported ? new HighlightCtor() : null;
+        if (hlSupported) {
+            CSSwithHL.highlights.set(HL_ALL, hlAll);
+            CSSwithHL.highlights.set(HL_ACTIVE, hlActive);
+        }
+        // Rebuild the two highlight registries from the current match Ranges (the
+        // active match goes ONLY into the active registry so its stronger paint
+        // isn't muddied by the dim layer underneath).
+        const repaintHighlights = () => {
+            if (!hlSupported) return;
+            hlAll.clear();
+            hlActive.clear();
+            const activeIdx = pdfView.findActive - 1;
+            for (let i = 0; i < matchesRef.current.length; i++) {
+                const r = matchesRef.current[i].range;
+                if (i === activeIdx) hlActive.add(r);
+                else hlAll.add(r);
+            }
+        };
         const clearHighlights = () => {
-            host.querySelectorAll(".dockview-pdf-match,.dockview-pdf-match-active").forEach(el => {
-                el.classList.remove("dockview-pdf-match", "dockview-pdf-match-active");
-            });
+            matchesRef.current = [];
+            if (hlSupported) { hlAll.clear(); hlActive.clear(); }
         };
         // Build the text layer of a page WITHOUT rastering its canvas (find needs
         // the spans; getTextContent is raster-free). Used so find covers pages
@@ -1821,76 +1865,107 @@ function PdfBody() {
                 p.textScale = renderScaleRef.current;
             } catch { /* optional */ }
         };
-        // Add highlight classes for the active query to a SINGLE page's spans and
-        // append them to the match list (keeps matches in page order). Used both
-        // by the full runFind sweep and when a page's text layer is built late.
-        const reapplyFindOnPage = (idx: number) => {
-            const q = pdfView.findQuery.trim().toLowerCase();
-            if (!q) return;
+        // Find every occurrence of `q` inside ONE page's text layer and return the
+        // located Ranges in reading order. Matching is per-span (a span = one
+        // glyph run pdf.js laid out); occurrences that straddle two spans are NOT
+        // matched (see report — scoped out). Walks each span's text nodes and uses
+        // indexOf in a loop so repeated hits inside a single span each become their
+        // own Range (the bug fix: the old code counted such a span ONCE).
+        const collectPageMatches = (idx: number, q: string): Range[] => {
             const p = pagesRef.current[idx];
-            if (!p) return;
-            // avoid double-counting if this page already contributed matches
-            if (matchesRef.current.some(m => m.page === idx + 1)) return;
-            const spans = Array.from(p.textDiv.querySelectorAll("span")) as HTMLElement[];
-            const found: typeof matchesRef.current = [];
-            for (const span of spans) {
-                const t = (span.textContent || "").toLowerCase();
-                if (t && t.includes(q)) { span.classList.add("dockview-pdf-match"); found.push({ page: idx + 1, els: [span] }); }
+            if (!p) return [];
+            const cmp = pdfView.findCase ? q : q.toLowerCase();
+            const out: Range[] = [];
+            const spans = p.textDiv.querySelectorAll("span");
+            for (const span of Array.from(spans)) {
+                // pdf.js puts the glyph text in a single text node per span.
+                const node = span.firstChild;
+                if (!node || node.nodeType !== Node.TEXT_NODE) continue;
+                const raw = node.textContent || "";
+                if (!raw) continue;
+                const hay = pdfView.findCase ? raw : raw.toLowerCase();
+                let from = 0;
+                for (;;) {
+                    const at = hay.indexOf(cmp, from);
+                    if (at < 0) break;
+                    const range = document.createRange();
+                    range.setStart(node, at);
+                    range.setEnd(node, at + cmp.length);
+                    out.push(range);
+                    from = at + cmp.length; // non-overlapping, like browser find
+                }
             }
-            if (!found.length) return;
-            // splice into page order
-            matchesRef.current.push(...found);
-            matchesRef.current.sort((a, b) => a.page - b.page);
+            return out;
+        };
+        // Re-locate matches for a SINGLE page whose text layer was just (re)built —
+        // both for late-rastered pages during a live find and after a zoom/resize
+        // rebuild invalidated the old Ranges. Replaces that page's slice in the
+        // ordered match list, preserving the active occurrence's identity when
+        // possible so next/prev don't jump around under the user.
+        const reapplyFindOnPage = (idx: number) => {
+            const q = pdfView.findQuery.trim();
+            if (!q || !hlSupported) return;
+            const page = idx + 1;
+            // remember which match was active (so we can re-aim at the same page)
+            const activeWasOnPage = matchesRef.current[pdfView.findActive - 1]?.page === page;
+            const fresh = collectPageMatches(idx, q).map(range => ({ page, range }));
+            // rebuild the ordered list: drop this page's old entries, splice fresh
+            // ones in at the page-ordered position. Matches are kept in page order;
+            // within a page collectPageMatches already returns reading order.
+            const before = matchesRef.current.filter(m => m.page < page);
+            const after = matchesRef.current.filter(m => m.page > page);
+            matchesRef.current = [...before, ...fresh, ...after];
             pdfView.findMatches = matchesRef.current.length;
-            highlightActive();
+            // keep a sane active index: if it was on this page, re-point at this
+            // page's first fresh hit; otherwise leave it (clamped) where it was.
+            if (pdfView.findMatches === 0) pdfView.findActive = 0;
+            else if (activeWasOnPage && fresh.length) pdfView.findActive = before.length + 1;
+            else if (pdfView.findActive === 0) pdfView.findActive = 1;
+            else if (pdfView.findActive > pdfView.findMatches) pdfView.findActive = pdfView.findMatches;
+            repaintHighlights();
             forceRender?.();
         };
         const runFind = async (query: string, jump: boolean) => {
             clearHighlights();
-            matchesRef.current = [];
             pdfView.findMatches = 0;
             pdfView.findActive = 0;
-            const q = query.trim().toLowerCase();
+            const q = query.trim();
             if (!q) { forceRender?.(); return; }
+            if (!hlSupported) { forceRender?.(); return; }
             const myToken = content.pdf.renderToken;
             const pages = pagesRef.current;
             // Build text layers for every page (raster-free) so find sees the
             // WHOLE document, not just the pages that happen to be rastered.
             for (let i = 0; i < pages.length; i++) {
                 await ensureTextLayer(i);
-                if (myToken !== content.pdf.renderToken || pdfView.findQuery.trim().toLowerCase() !== q) return;
+                if (myToken !== content.pdf.renderToken || pdfView.findQuery.trim() !== q) return;
             }
+            const all: typeof matchesRef.current = [];
             for (let i = 0; i < pages.length; i++) {
-                const spans = Array.from(pages[i].textDiv.querySelectorAll("span")) as HTMLElement[];
-                for (const span of spans) {
-                    const t = (span.textContent || "").toLowerCase();
-                    if (t && t.includes(q)) {
-                        span.classList.add("dockview-pdf-match");
-                        matchesRef.current.push({ page: i + 1, els: [span] });
-                    }
-                }
+                for (const range of collectPageMatches(i, q)) all.push({ page: i + 1, range });
             }
-            pdfView.findMatches = matchesRef.current.length;
-            if (pdfView.findMatches > 0) {
+            matchesRef.current = all;
+            pdfView.findMatches = all.length;
+            if (all.length > 0) {
                 pdfView.findActive = 1;
                 if (jump) focusMatch(0);
-                else highlightActive();
+                else { repaintHighlights(); forceRender?.(); }
+            } else {
+                repaintHighlights();
+                forceRender?.();
             }
-            forceRender?.();
-        };
-        const highlightActive = () => {
-            host.querySelectorAll(".dockview-pdf-match-active").forEach(el => el.classList.remove("dockview-pdf-match-active"));
-            const m = matchesRef.current[pdfView.findActive - 1];
-            if (m) m.els.forEach(el => el.classList.add("dockview-pdf-match-active"));
         };
         const focusMatch = (idx: number) => {
             const m = matchesRef.current[idx];
             if (!m) return;
             pdfView.findActive = idx + 1;
-            highlightActive();
+            repaintHighlights();
             // ensure the match's page (+ neighbours) are crisp before we land.
             rasterAround(m.page);
-            m.els[0]?.scrollIntoView({ block: "center", behavior: "smooth" });
+            // scroll the occurrence's range into view (centre). Use the start
+            // container's parent element — Range has no scrollIntoView itself.
+            const anchor = (m.range.startContainer.parentElement || null);
+            anchor?.scrollIntoView({ block: "center", behavior: "smooth" });
             forceRender?.();
         };
 
@@ -1921,6 +1996,7 @@ function PdfBody() {
             setFit: (f: PdfFit) => { if (pdfView.fit !== f) { pdfView.fit = f; pdfView.zoom = 1; scheduleRerender(); forceRender?.(); } },
             fitWidth: () => { if (pdfView.fit !== "width" || pdfView.zoom !== 1) { pdfView.fit = "width"; pdfView.zoom = 1; scheduleRerender(); forceRender?.(); } },
             toggleFind: () => { pdfView.findOpen = !pdfView.findOpen; if (!pdfView.findOpen) { clearHighlights(); pdfView.findMatches = 0; pdfView.findActive = 0; pdfView.findQuery = ""; } forceRender?.(); },
+            toggleFindCase: () => { pdfView.findCase = !pdfView.findCase; runFind(pdfView.findQuery, false); forceRender?.(); },
             setFindQuery: (qq: string) => { pdfView.findQuery = qq; runFind(qq, true); },
             findNext: () => { if (!pdfView.findMatches) return; focusMatch(pdfView.findActive % pdfView.findMatches); },
             findPrev: () => { if (!pdfView.findMatches) return; focusMatch((pdfView.findActive - 2 + pdfView.findMatches) % pdfView.findMatches); },
@@ -1993,6 +2069,10 @@ function PdfBody() {
             ioRef.current = null;
             // drop cached PDFPageProxy refs (the doc itself lives in the cache).
             pagesRef.current = [];
+            matchesRef.current = [];
+            // CSS.highlights is a GLOBAL document registry — tear our entries down
+            // so a stale highlight can't survive into the next-mounted PDF.
+            if (hlSupported) { CSSwithHL.highlights.delete(HL_ALL); CSSwithHL.highlights.delete(HL_ACTIVE); }
             if (pdfControls === ctrls) pdfControls = null;
         };
     }, [content.pdf.renderToken, content.seq]);
@@ -2038,6 +2118,18 @@ function PdfFindBar() {
             }
         }),
         React.createElement("span", { className: "dockview-pdf-find-count" }, counter),
+        // Case-sensitivity toggle (default off). Text "Aa" rather than an icon —
+        // the universal find-bar convention (browsers, VS Code, Acrobat).
+        React.createElement("button", {
+            key: "find-case",
+            type: "button",
+            className: "dockview-tool-btn dockview-pdf-find-case" + (pdfView.findCase ? " dockview-tool-btn-active" : ""),
+            "aria-label": "Match case",
+            "aria-pressed": pdfView.findCase,
+            title: "Match case",
+            onMouseDown: (e: any) => e.preventDefault(), // keep focus in the input
+            onClick: () => pdfControls?.toggleFindCase()
+        }, "Aa"),
         toolBtn("find-prev", "Previous match (Shift+Enter)",
             "M15.3 5.3a1 1 0 0 1 0 1.4L10 12l5.3 5.3a1 1 0 0 1-1.42 1.4l-6-6a1 1 0 0 1 0-1.4l6-6a1 1 0 0 1 1.42 0Z",
             () => pdfControls?.findPrev()),
@@ -3264,7 +3356,8 @@ export function exposeDebug() {
         toggle, ensureHost, applyOpenState, state, DockPanel, CLS, findPageInner,
         onChannelSelect, getCurrentChannelId, channelStates,
         load, retry: retryActiveLoad, clear: clearArtifact, popout: popoutArtifact, content, detectType,
-        contentCache, get loadSeq() { return loadSeq; }, get activeCacheKey() { return activeCacheKey; }
+        contentCache, get loadSeq() { return loadSeq; }, get activeCacheKey() { return activeCacheKey; },
+        pdfView, get pdfControls() { return pdfControls; }
     };
 }
 export function unexposeDebug() {
