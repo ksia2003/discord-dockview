@@ -917,10 +917,17 @@ function resetCode() {
     codeRenderCache = null; // drop the (possibly large) memoized highlight HTML
 }
 
+/** fetch() wrapper for the loaders. `noCache` (a retry from the error card)
+ *  forces a fresh network round-trip via Cache-Control: no-cache, bypassing the
+ *  HTTP cache without mutating the url (so signed CDN params stay intact). */
+function dvFetch(url: string, noCache?: boolean): Promise<Response> {
+    return noCache ? fetch(url, { cache: "reload" }) : fetch(url);
+}
+
 /** HTML / artifact loader. `token` is the load token captured by load(); a
  *  mismatch on resolve means a newer load superseded us. `entry` (when present)
  *  is the cache entry this load fills on success. */
-function loadHtml(opts: { name: string; html?: string | null; url?: string | null }, token: number, entry: CacheEntry | null) {
+function loadHtml(opts: { name: string; html?: string | null; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
     resetPdf();
     resetCode();
     if (opts.html != null) {
@@ -930,7 +937,7 @@ function loadHtml(opts: { name: string; html?: string | null; url?: string | nul
         resetHtml();
         content.loading = true;
         const reqUrl = opts.url;
-        fetch(reqUrl)
+        dvFetch(reqUrl, opts.noCache)
             .then(r => {
                 if (!r.ok) throw new Error(r.status + " " + r.statusText);
                 return r.text();
@@ -960,7 +967,7 @@ function loadHtml(opts: { name: string; html?: string | null; url?: string | nul
 /** PDF loader: fetch -> ArrayBuffer -> pdf.js (main-thread worker). On success
  *  the doc is stored in `entry` (the cache owns it); a stale resolve (token !=
  *  loadSeq) destroys the freshly-built doc to avoid a leak. */
-function loadPdf(opts: { name: string; url?: string | null }, token: number, entry: CacheEntry | null) {
+function loadPdf(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
     resetHtml();
     resetPdf();
     resetCode();
@@ -971,7 +978,7 @@ function loadPdf(opts: { name: string; url?: string | null }, token: number, ent
     }
     content.loading = true;
     const reqUrl = opts.url;
-    fetch(reqUrl)
+    dvFetch(reqUrl, opts.noCache)
         .then(r => {
             if (!r.ok) throw new Error(r.status + " " + r.statusText);
             return r.arrayBuffer();
@@ -1023,7 +1030,7 @@ function extOf(s: string | null | undefined): string | null {
 }
 
 /** CODE / TEXT loader: fetch text and stash it + its resolved hljs language. */
-function loadCode(opts: { name: string; url?: string | null }, token: number, entry: CacheEntry | null) {
+function loadCode(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
     resetHtml();
     resetPdf();
     resetCode();
@@ -1037,7 +1044,7 @@ function loadCode(opts: { name: string; url?: string | null }, token: number, en
     if (entry) entry.codeLang = lang;
     content.loading = true;
     const reqUrl = opts.url;
-    fetch(reqUrl)
+    dvFetch(reqUrl, opts.noCache)
         .then(r => {
             if (!r.ok) throw new Error(r.status + " " + r.statusText);
             return r.text();
@@ -1086,7 +1093,7 @@ function looksLikeText(buf: ArrayBuffer): boolean {
  *  bytes and sniff: text -> retype to a plaintext code viewer; binary -> mark
  *  `content.binary` and render the unsupported-format fallback (download / open
  *  in new window). Either way nothing raw is ever injected into an iframe. */
-function loadUnknown(opts: { name: string; url?: string | null }, token: number, entry: CacheEntry | null) {
+function loadUnknown(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
     resetHtml();
     resetPdf();
     resetCode();
@@ -1097,7 +1104,7 @@ function loadUnknown(opts: { name: string; url?: string | null }, token: number,
     }
     content.loading = true;
     const reqUrl = opts.url;
-    fetch(reqUrl)
+    dvFetch(reqUrl, opts.noCache)
         .then(r => {
             if (!r.ok) throw new Error(r.status + " " + r.statusText);
             return r.arrayBuffer();
@@ -1143,7 +1150,7 @@ function loadUnknown(opts: { name: string; url?: string | null }, token: number,
 }
 
 /** MARKDOWN loader: fetch -> marked -> dark doc -> nonce sandbox iframe path. */
-function loadMarkdown(opts: { name: string; url?: string | null }, token: number, entry: CacheEntry | null) {
+function loadMarkdown(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
     resetPdf();
     resetCode();
     if (!opts.url) {
@@ -1155,7 +1162,7 @@ function loadMarkdown(opts: { name: string; url?: string | null }, token: number
     resetHtml();
     content.loading = true;
     const reqUrl = opts.url;
-    fetch(reqUrl)
+    dvFetch(reqUrl, opts.noCache)
         .then(r => {
             if (!r.ok) throw new Error(r.status + " " + r.statusText);
             return r.text();
@@ -1260,14 +1267,15 @@ function wrapMarkdownDoc(bodyHtml: string): string {
  *  (channel return). It picks the renderer, hits/populates the cache, and bumps
  *  the load token. It does NOT touch open-state / channel bookkeeping — the
  *  callers do that around it. */
-function showContent(opts: { name: string; html?: string | null; url?: string | null; type: ContentType }): "noop" | "cache" | "fetch" {
+function showContent(opts: { name: string; html?: string | null; url?: string | null; type: ContentType; noCache?: boolean }): "noop" | "cache" | "fetch" {
     const name = opts.name || "file";
     const type = opts.type;
     const url = opts.url ?? null;
     const key = opts.html != null ? null : cacheKeyFor(url, type);
 
     // --- same file already shown? -> no-op (keep DOM, scroll, zoom as-is) -----
-    if (key != null && key === activeCacheKey && content.name != null && content.error == null) {
+    // A retry (noCache) skips the no-op shortcut so it actually re-fetches.
+    if (!opts.noCache && key != null && key === activeCacheKey && content.name != null && content.error == null) {
         content.name = name;
         activeDescriptor = { name, url: url as string, type };
         return "noop";
@@ -1277,7 +1285,8 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
     snapshotActiveView();
 
     // --- cache hit on a DIFFERENT file -> instant restore (no fetch) ----------
-    const hit = key != null ? contentCache.get(key) : null;
+    // A retry (noCache) skips the cache and always re-fetches.
+    const hit = !opts.noCache && key != null ? contentCache.get(key) : null;
     if (hit && hit.error == null && !hit.loading) {
         loadSeq += 1; // supersede any in-flight loader
         content.seq += 1; // new body identity (different file)
@@ -1332,8 +1341,8 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
  *  (no fetch, no re-render, no flicker); clicking a different file we've seen
  *  restores it instantly from cache (no fetch); only a genuinely new file
  *  fetches. The view-state of the file we're leaving is snapshotted first. */
-export function load(opts: { name: string; html?: string | null; url?: string | null; type?: ContentType }) {
-    const result = showContent({ name: opts.name, html: opts.html, url: opts.url, type: detectType(opts) });
+export function load(opts: { name: string; html?: string | null; url?: string | null; type?: ContentType; noCache?: boolean }) {
+    const result = showContent({ name: opts.name, html: opts.html, url: opts.url, type: detectType(opts), noCache: opts.noCache });
 
     // Open FIRST, then persist — so the saved per-channel state records open:true.
     state.open = true;
@@ -1343,6 +1352,16 @@ export function load(opts: { name: string; html?: string | null; url?: string | 
     applyOpenState();
     // A no-op didn't change the body; everything else needs a render.
     if (result !== "noop") forceRender?.();
+}
+
+/** Re-fetch the file currently shown, bypassing both the in-memory content cache
+ *  and the HTTP cache. Invoked by the error card's "다시 시도" button — the active
+ *  descriptor (name/url/type) is re-loaded fresh so a transient/expired-link
+ *  failure can recover without the user re-clicking the original chip. */
+export function retryActiveLoad() {
+    const d = activeDescriptor;
+    if (!d || !d.url) return;
+    load({ name: d.name || "file", url: d.url, type: d.type, noCache: true });
 }
 
 /** Clear the loaded content, returning the body to the placeholder. The file is
@@ -2247,6 +2266,99 @@ function renderCodeBody() {
     );
 }
 
+/** Turn a raw loader error (e.g. "404 ", "TypeError: Failed to fetch", "No
+ *  source") into a calm, human title + subtitle. Kept deliberately plain — a
+ *  later design pass owns the tone/voice; this is just the neutral baseline. */
+function humanizeError(raw: string): { title: string; sub: string } {
+    const status = /^(\d{3})\b/.exec(raw);
+    if (status) {
+        const code = status[1];
+        if (code === "404" || code === "403" || code === "410") {
+            return {
+                title: "파일을 가져올 수 없습니다",
+                sub: "링크가 만료됐거나 더 이상 사용할 수 없을 수 있습니다."
+            };
+        }
+        if (code === "401") {
+            return { title: "파일에 접근할 수 없습니다", sub: "이 파일을 볼 권한이 없습니다." };
+        }
+        if (code.startsWith("5")) {
+            return { title: "서버에서 파일을 보내지 못했습니다", sub: "잠시 후 다시 시도해 보세요." };
+        }
+        return { title: "파일을 불러오지 못했습니다", sub: `서버 응답: ${code}` };
+    }
+    // fetch() rejects (offline / DNS / CORS) surface as a TypeError.
+    if (/failed to fetch|networkerror|load failed/i.test(raw)) {
+        return { title: "연결할 수 없습니다", sub: "네트워크 연결을 확인한 뒤 다시 시도해 보세요." };
+    }
+    if (/^no\b.*source/i.test(raw)) {
+        return { title: "표시할 파일이 없습니다", sub: "불러올 원본을 찾지 못했습니다." };
+    }
+    return { title: "파일을 불러오지 못했습니다", sub: raw };
+}
+
+/** Error fallback: a centered card mirroring the unsupported-format layout, with
+ *  Retry / Open-in-new-window / Download actions. Replaces the old one-line
+ *  "Failed to load: <raw>" dead end. Retry re-fetches the same url bypassing the
+ *  cache; the other two reuse the existing ⋯-menu handlers. */
+function renderErrorBody(raw: string) {
+    const { title, sub } = humanizeError(raw);
+    const url = content.url;
+    const name = content.name || "file";
+    const actions: any[] = [];
+    // Retry only makes sense when there's a url to re-fetch (inline-html
+    // artifacts have none, but they don't take the fetch path anyway).
+    if (url) {
+        actions.push(React.createElement(
+            "button",
+            {
+                key: "retry",
+                type: "button",
+                className: "dockview-unsupported-btn dockview-unsupported-btn-primary",
+                onClick: () => retryActiveLoad()
+            },
+            "다시 시도"
+        ));
+        actions.push(React.createElement(
+            "button",
+            {
+                key: "open",
+                type: "button",
+                className: "dockview-unsupported-btn",
+                onClick: () => { window.open(absUrl(url), "_blank", "noopener,noreferrer"); }
+            },
+            "새 창에서 열기"
+        ));
+        actions.push(React.createElement(
+            "button",
+            {
+                key: "dl",
+                type: "button",
+                className: "dockview-unsupported-btn",
+                onClick: () => downloadUrl(url, name)
+            },
+            "다운로드"
+        ));
+    }
+    return React.createElement(
+        "div",
+        { className: "dockview-unsupported dockview-error-card", key: content.seq },
+        React.createElement(
+            "svg",
+            { className: "dockview-unsupported-icon dockview-error-icon", width: 48, height: 48, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+            React.createElement("path", {
+                fill: "currentColor",
+                d: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-1 5h2v7h-2V7Zm0 9h2v2h-2v-2Z"
+            })
+        ),
+        React.createElement("div", { className: "dockview-unsupported-title" }, title),
+        React.createElement("div", { className: "dockview-unsupported-sub" }, sub),
+        actions.length
+            ? React.createElement("div", { className: "dockview-unsupported-actions" }, ...actions)
+            : null
+    );
+}
+
 /** Unsupported-format fallback: a clean centered card for a binary file we can't
  *  preview, with Download + Open-in-new-window actions (no raw-byte iframe dump).
  *  Reached for an "unknown"-extension file that sniffed as binary. */
@@ -2306,11 +2418,7 @@ function renderBody() {
         );
     }
     if (content.error != null) {
-        return React.createElement(
-            "div",
-            { className: "dockview-status dockview-error" },
-            "Failed to load: " + content.error
-        );
+        return renderErrorBody(content.error);
     }
     if (content.type === "pdf") {
         if (content.loading || content.pdf.doc == null) {
@@ -3155,7 +3263,7 @@ export function exposeDebug() {
     (window as any).__dockView = {
         toggle, ensureHost, applyOpenState, state, DockPanel, CLS, findPageInner,
         onChannelSelect, getCurrentChannelId, channelStates,
-        load, clear: clearArtifact, popout: popoutArtifact, content, detectType,
+        load, retry: retryActiveLoad, clear: clearArtifact, popout: popoutArtifact, content, detectType,
         contentCache, get loadSeq() { return loadSeq; }, get activeCacheKey() { return activeCacheKey; }
     };
 }

@@ -326,6 +326,18 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     background: var(--button-filled-brand-background-hover, var(--brand-560, #4752c4));
 }
 
+/* Error card: reuses the unsupported-format card layout. Only the icon takes a
+   muted-danger tint so it reads as an error without shouting (a later design
+   pass owns the final tone). The action row wraps on a narrow panel. */
+.dockview-error-card .dockview-error-icon {
+    color: var(--text-danger, #f23f43);
+    opacity: 0.85;
+}
+.dockview-error-card .dockview-unsupported-actions {
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
 /* The INTERACTIVE artifact iframe: fills the whole scrollable body. Unlike the
    inline thumbnail it receives pointer events and scrolls its own content. When
    the artifact's own <body> is transparent, the iframe's backdrop shows
