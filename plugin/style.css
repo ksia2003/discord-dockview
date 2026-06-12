@@ -208,6 +208,16 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     display: flex;
     align-items: center;
 }
+/* Leading file-type glyph: a real thread header is [glyph] + title; we mirror it
+   with one muted, document-framed icon ahead of the filename. Tinted with the
+   header's muted-icon token (the bell/⋯ tone), shrink-protected, with a small gap
+   to the title so the cluster reads as one unit. */
+.dockview-header .dockview-header-icon {
+    flex: 0 0 auto;
+    margin-right: 8px;
+    color: var(--interactive-normal, #b5bac1);
+    opacity: 0.9;
+}
 .dockview-title {
     white-space: nowrap;
     overflow: hidden;

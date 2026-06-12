@@ -120,6 +120,49 @@ const CLS = {
     clickable: "clickable__9293f"
 };
 
+// Header leading glyphs, one per content type. Each entry is an array of [d,
+// extraAttrs] tuples (a type can layer a document frame + a type mark). All drawn
+// on a 24x24 grid in Discord's icon tone — single colour (currentColor, the
+// muted header text), consistent visual weight, document-framed so they read as
+// "a file" the way a real thread header reads as "a thread".
+//
+// IMPORTANT: these are PLAIN DATA (path strings), NOT React elements. `React`
+// from @webpack/common is a lazy proxy that is NOT ready at module-eval time, so
+// calling React.createElement here would throw and break the whole plugin import.
+// The header builds the <path> elements lazily at render time (see leadingIcon).
+type IconPath = [string] | [string, Record<string, any>];
+// A shared rounded document outline (page with a folded corner) used as the base
+// frame for the text-ish types so they share one silhouette.
+const DOC_FRAME = "M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-7-7Zm0 2.5L17.5 9H14a1 1 0 0 1-1-1V4.5Z";
+const FILE_TYPE_ICON: Record<string, IconPath[]> = {
+    // PDF: document frame + "PDF" marked by three short text rules.
+    pdf: [
+        [DOC_FRAME],
+        ["M7 12.5h10V14H7v-1.5Zm0 3h10V17H7v-1.5Zm0 3h7V20H7v-1.5Z"]
+    ],
+    // Markdown: document frame + the canonical "M▼" markdown mark.
+    markdown: [
+        [DOC_FRAME],
+        ["M6.5 12.5h11a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-6a.5.5 0 0 1 .5-.5Zm1.25 5.25v-2.4l1.25 1.5 1.25-1.5v2.4h1.25v-4h-1.25l-1.25 1.55L9 13.75H7.75v4h0Zm7-4h-1.25v2h-1l1.625 2 1.625-2h-1v-2Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    // HTML / interactive artifact: angle-bracket code mark on a document.
+    html: [
+        [DOC_FRAME],
+        ["M10 12.6 7.3 15.3a1 1 0 0 0 0 1.4L10 19.4l1-1-2.2-2.2L11 14l-1-1.4Zm4 0-1 1.4 2.2 1.9-2.2 2.2 1 1 2.7-2.7a1 1 0 0 0 0-1.4L14 12.6Z"]
+    ],
+    // Code / text: a document with angle brackets (same family as html, leaner).
+    code: [
+        [DOC_FRAME],
+        ["M9.7 13 7 15.7a1 1 0 0 0 0 1.4L9.7 19.8 11 18.6l-2.4-2.2L11 14.2 9.7 13Zm4.6 0L13 14.2l2.4 2.2L13 18.6l1.3 1.2 2.7-2.7a1 1 0 0 0 0-1.4L14.3 13Z"]
+    ],
+    // Image: the classic Discord "framed picture" (rect + sun + mountain).
+    image: [
+        ["M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V5Zm3-1a1 1 0 0 0-1 1v9.59l2.3-2.3a1 1 0 0 1 1.4 0l2.3 2.3 3.3-3.3a1 1 0 0 1 1.4 0L18 14.6V5a1 1 0 0 0-1-1H7Zm2.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    // Fallback (unknown / binary): a plain document frame.
+    unknown: [[DOC_FRAME]]
+};
+
 // --- persistence (panel width + open state) ---------------------------------
 // Vencord's renderer runs in an ISOLATED context where `localStorage` is
 // undefined (both window.* and globalThis.*), so the old localStorage-backed
@@ -2918,6 +2961,28 @@ function DockPanel() {
     const hasContent = content.name != null;
     const title = hasContent ? (content.name as string) : "DockView";
 
+    // Leading file-type glyph (mirrors a real thread header's [thread glyph] +
+    // title structure). One muted, single-colour, document-framed icon per
+    // content type so the header reads as "a file is docked here" at a glance.
+    // Paths are built lazily here (React is ready now) from the plain-data map.
+    const leadingIcon = hasContent
+        ? React.createElement(
+            "svg",
+            {
+                className: "dockview-header-icon",
+                width: 20,
+                height: 20,
+                viewBox: "0 0 24 24",
+                fill: "none",
+                "aria-hidden": true
+            },
+            ...(FILE_TYPE_ICON[content.type] || FILE_TYPE_ICON.unknown).map(
+                ([d, extra]: IconPath, i: number) =>
+                    React.createElement("path", { key: i, fill: "currentColor", d, ...(extra || {}) })
+            )
+        )
+        : null;
+
     const headerBtn = (
         key: string,
         label: string,
@@ -2998,6 +3063,7 @@ function DockPanel() {
                     React.createElement(
                         "div",
                         { className: `${CLS.headerChildren} dockview-header-children` },
+                        leadingIcon,
                         React.createElement(
                             "h2",
                             { className: `${CLS.title} dockview-title`, title },
