@@ -51,8 +51,28 @@ export function startLatex() {
             parser.defaultRules.latex = {
                 order: 23,
                 match(source: string) {
+                    // $$...$$ display math: kept permissive (an explicit double
+                    // delimiter is a strong intent signal and rarely ambiguous).
                     if (source.startsWith("$$")) return /^\$\$(.+?)\$\$/s.exec(source);
-                    return /^\$(.+?)\$/.exec(source);
+                    // $...$ inline math: guard against plain prose that merely
+                    // contains dollar signs (prices, shell vars, "$5 and $10").
+                    // Mirrors KaTeX auto-render's heuristics so real math still
+                    // renders but money/variables are left as text.
+                    const m = /^\$(.+?)\$/.exec(source);
+                    if (!m) return null;
+                    const inner = m[1];
+                    const after = source.charAt(m[0].length); // char right after closing $
+                    // (1) no whitespace hugging the delimiters: "$ x$" / "$x $".
+                    if (/^\s/.test(inner) || /\s$/.test(inner)) return null;
+                    // (2) a digit immediately after the closing $ means the next
+                    //     "$" was really a price ("$5 and $10" → reject the span).
+                    if (/\d/.test(after)) return null;
+                    // (3) a digit immediately before the opening $... is handled by
+                    //     markdown tokenisation; here we reject spans whose content
+                    //     is nothing but a number / currency-ish amount (no letters,
+                    //     no TeX commands) — "$3.50", "$2", "$1,000".
+                    if (!/[a-zA-Z\\]/.test(inner) && /^[\d.,\s+\-*/()]+$/.test(inner)) return null;
+                    return m;
                 },
                 parse(capture: string[]) {
                     const size = capture[0].startsWith("$$") ? 2 : 1;
