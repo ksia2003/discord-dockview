@@ -1803,6 +1803,37 @@ function PdfBody() {
         mc.port1.onmessage = () => { const rs = yieldResolvers; yieldResolvers = []; rs.forEach(r => r()); };
         const yieldTask = () => new Promise<void>(r => { yieldResolvers.push(r); mc.port2.postMessage(0); });
 
+        // Build a page's pdf.js text layer into `target`, DETACHED from the live
+        // column, then move the finished spans across in one cheap append.
+        //
+        // This is the ISOLATION fix. pdf.js's TextLayer.render() measures every
+        // glyph run (ctx.measureText) and interleaves those reads with the span
+        // DOM it appends to `container`. When `container` is a live .textLayer
+        // sitting INSIDE our 100+ page column — whose box widths/heights are CSS
+        // `round(down, var(--scale-factor) * Npx, ...)` expressions — each
+        // measure forces a synchronous style+layout recalc of the WHOLE round()
+        // column. Profiling a heavy 120-page doc pinned 92% of main-thread time
+        // (~2.2s) in measureText, and a single page's in-column text build cost
+        // ~1.5s of UNINTERRUPTIBLE main thread — freezing the Discord host
+        // (cursor/typing) one page at a time. Building into a container that is
+        // NOT in the document (no --scale-factor / round() ancestor to recalc)
+        // makes the very same build ~1ms; we then move the children into the
+        // real textDiv (instant; positions resolve from the percentage + CSS-var
+        // span model exactly as before — same spans, same --scale-x, same
+        // alignment, find/selection unchanged). 1531ms -> ~1ms, measured.
+        const buildTextLayer = async (target: HTMLElement, page: any, viewport: any): Promise<boolean> => {
+            const textContent = await page.getTextContent();
+            const off = document.createElement("div");
+            off.className = "textLayer";
+            // mirror the scale chain so pdf.js sizes spans identically; the div is
+            // never inserted, so this var only seeds pdf.js's own math.
+            off.style.setProperty("--total-scale-factor", "var(--scale-factor)");
+            const tl = new (pdfjsLib as any).TextLayer({ textContentSource: textContent, container: off, viewport });
+            await tl.render();
+            target.replaceChildren(...off.childNodes);
+            return true;
+        };
+
         // Raster ONE page's canvas (+ build its text layer) at the current
         // document scale, if it isn't already current. Idempotent + reentrancy-
         // guarded so the IntersectionObserver and jumps can call it freely.
@@ -1862,15 +1893,11 @@ function PdfBody() {
                 // match the new geometry. best-effort — never throws upward.
                 if (p.textScale !== docScale) {
                     try {
-                        const textContent = await p.page.getTextContent();
+                        // Build DETACHED then attach (see buildTextLayer) — an
+                        // in-column build of a dense page is a ~1.5s host-freezing
+                        // task; detached it is ~1ms.
+                        await buildTextLayer(p.textDiv, p.page, viewport);
                         if (docToken !== content.pdf.renderToken) return;
-                        p.textDiv.replaceChildren();
-                        const tl = new (pdfjsLib as any).TextLayer({
-                            textContentSource: textContent,
-                            container: p.textDiv,
-                            viewport
-                        });
-                        await tl.render();
                         p.textScale = docScale;
                         // a live find must light up matches on a freshly-built page
                         if (pdfView.findOpen && pdfView.findQuery) reapplyFindOnPage(idx);
@@ -2209,11 +2236,10 @@ function PdfBody() {
             }
             try {
                 const viewport = p.page.getViewport({ scale: renderScaleRef.current });
-                const textContent = await p.page.getTextContent();
+                // detached build (see buildTextLayer) — keeps a whole-document
+                // find from freezing the host one page at a time.
+                await buildTextLayer(p.textDiv, p.page, viewport);
                 if (docToken !== content.pdf.renderToken) return;
-                p.textDiv.replaceChildren();
-                const tl = new (pdfjsLib as any).TextLayer({ textContentSource: textContent, container: p.textDiv, viewport });
-                await tl.render();
                 p.textScale = renderScaleRef.current;
             } catch { /* optional */ }
         };
