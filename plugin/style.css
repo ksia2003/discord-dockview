@@ -490,6 +490,21 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     background: var(--background-gradient-chat, var(--background-base-lower));
 }
 
+/* ART-1: while the artifact/markdown iframe is still doing its first render we
+   keep it mounted-but-hidden and overlay the SHARED loading card on top, so the
+   iframe path shows the same 4-state visuals as every other viewer. The wrap is
+   the positioning context; the overlay fills it and centres the card. */
+.dockview-frame-wrap {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+.dockview-frame-loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: var(--background-gradient-chat, var(--background-base-lower));
+}
+
 /* PDF renderer (content type "pdf"): a vertically scrolling column of page
    WRAPPERS, each holding a <canvas> + an overlaid transparent text layer (for
    selection/copy/find). The body itself (.dockview-body) already scrolls; this

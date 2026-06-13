@@ -1576,14 +1576,81 @@ function findChat(inner: HTMLElement): HTMLElement | null {
 // Body renderers (content-type router targets)
 // ---------------------------------------------------------------------------
 
-/** The HTML/artifact body: the existing nonce-stamped interactive iframe. */
-function renderHtmlBody() {
-    return React.createElement("iframe", {
-        key: content.seq,
+/** The HTML/artifact (and markdown) body: the nonce-stamped interactive iframe,
+ *  now wrapped so an iframe that never renders surfaces the shared ERROR state
+ *  card with a retry affordance instead of a silent blank frame (ART-1).
+ *
+ *  A sandboxed srcDoc iframe fires `load` once its document parses; a successful
+ *  artifact/markdown always fires it within a few frames. We arm a watchdog on
+ *  mount: if `load` (or a DOM `error`) hasn't fired by IFRAME_LOAD_TIMEOUT we
+ *  treat the artifact as failed-to-render and show the error card. Retry re-loads
+ *  the same descriptor fresh (same handler the fetch-error card uses), which
+ *  remounts this body (new content.seq) and re-arms the watchdog. The frame is
+ *  kept mounted-but-hidden while we wait so a slow-but-fine artifact still shows
+ *  the instant it loads (we just clear the timer). */
+const IFRAME_LOAD_TIMEOUT = 8000;
+function HtmlBody() {
+    const { useRef, useState, useEffect } = React;
+    // "loading" until the iframe fires load; "ok" once it does; "failed" if the
+    // watchdog trips or the element errors.
+    const [phase, setPhase] = useState("loading" as "loading" | "ok" | "failed");
+    const timer = useRef(0 as any);
+
+    useEffect(() => {
+        timer.current = setTimeout(() => setPhase(p => (p === "ok" ? p : "failed")), IFRAME_LOAD_TIMEOUT);
+        return () => clearTimeout(timer.current);
+    }, []);
+
+    if (phase === "failed") {
+        // Reuse the shared error card (humanized title + retry/open/download).
+        return renderErrorBody("Artifact failed to render");
+    }
+
+    const onLoad = () => {
+        clearTimeout(timer.current);
+        // An artifact whose <iframe> emits the synthetic about:blank load before
+        // its srcDoc is swapped in would flip "ok" too early; but with srcDoc the
+        // first (and only) load IS the document, so this is the real render.
+        setPhase("ok");
+    };
+    const onError = () => {
+        clearTimeout(timer.current);
+        setPhase("failed");
+    };
+
+    const iframe = React.createElement("iframe", {
+        key: "frame",
         className: "dockview-frame",
         srcDoc: content.frameHtml,
-        sandbox: "allow-scripts allow-same-origin"
+        sandbox: "allow-scripts allow-same-origin",
+        onLoad,
+        onError,
+        // Keep the frame mounted (so it actually loads) but hidden behind the
+        // shared loading card until its first load fires.
+        style: phase === "loading" ? { visibility: "hidden" } : undefined
     });
+
+    // While waiting for the first load, overlay the SHARED loading card on top of
+    // the (hidden) frame so the iframe path uses the same 4-state visuals as
+    // every other viewer. A fast artifact clears this within a frame or two.
+    if (phase === "loading") {
+        return React.createElement(
+            "div",
+            { className: "dockview-frame-wrap" },
+            iframe,
+            React.createElement(
+                "div",
+                { className: "dockview-frame-loading-overlay" },
+                React.createElement(LoadingBody, null)
+            )
+        );
+    }
+    return iframe;
+}
+
+/** Body factory for the html/markdown iframe path (keeps the dispatcher tidy). */
+function renderHtmlBody() {
+    return React.createElement(HtmlBody, { key: content.seq });
 }
 
 /** pdf.js's own pixel-quantization helpers (ported verbatim from the viewer's
