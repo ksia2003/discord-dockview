@@ -1781,10 +1781,32 @@ function PdfBody() {
             return Math.max(1, (sc?.clientWidth || host.clientWidth || state.width) - PDF_SIDE_INSET);
         };
 
+        // Yield a fresh MACROTASK (not rAF). Under main-thread saturation the
+        // browser coalesces back-to-back rAF callbacks into the SAME frame, so a
+        // plain `await rAF` between two heavy renders does NOT actually split them
+        // — measured a settle re-raster as two ~1.1s long tasks despite the rAF
+        // yield. A MessageChannel post is a genuine macrotask boundary the browser
+        // can't fold into the current task, so each render unit lands in its OWN
+        // task and a frame can paint + input can run in between. (setTimeout(0) is
+        // clamped to ~4ms after nesting; MessageChannel posts immediately.) Used
+        // both between queued pages AND inside rasterPage (canvas vs text layer).
+        const mc = new MessageChannel();
+        let yieldResolvers: Array<() => void> = [];
+        mc.port1.onmessage = () => { const rs = yieldResolvers; yieldResolvers = []; rs.forEach(r => r()); };
+        const yieldTask = () => new Promise<void>(r => { yieldResolvers.push(r); mc.port2.postMessage(0); });
+
         // Raster ONE page's canvas (+ build its text layer) at the current
         // document scale, if it isn't already current. Idempotent + reentrancy-
         // guarded so the IntersectionObserver and jumps can call it freely.
         const rasterPage = async (idx: number) => {
+            // NEVER raster during a live resize drag. The drag only re-points
+            // --scale-factor (liveScale), which reflows the column and so trips the
+            // IntersectionObserver for every page that slides under the viewport;
+            // rastering here would (a) fight the cheap CSS-scale preview and (b)
+            // pile up dozens of CPU-bound pdf.js renders into one multi-second
+            // main-thread freeze mid-drag (measured ~5.8s long tasks on a heavy
+            // 41-page doc). The crisp re-raster is deferred to drag-end settle.
+            if (resizeDragging) return;
             const docToken = content.pdf.renderToken;
             const p = pagesRef.current[idx];
             if (!p) return;
@@ -1818,6 +1840,15 @@ function PdfBody() {
                     } catch { return; } // render cancelled
                     if (docToken !== content.pdf.renderToken) return;
                     p.rasterScale = docScale;
+                    // Let the just-painted crisp canvas COMMIT (and the thread
+                    // breathe) before the text layer — which for a text-dense page
+                    // is the heavier half. Without this break the canvas render and
+                    // the hundreds-of-spans text build run as one ~280ms task per
+                    // page; split, the page visibly sharpens a frame sooner and
+                    // input stays responsive between the two halves.
+                    await yieldTask();
+                    if (docToken !== content.pdf.renderToken) return;
+                    if (resizeDragging) return; // a new drag started mid-raster
                 }
                 // text layer (selectable). rebuilt on scale change so span boxes
                 // match the new geometry. best-effort — never throws upward.
@@ -1842,13 +1873,101 @@ function PdfBody() {
             }
         };
 
+        // --- frame-yielding raster queue ------------------------------------
+        // Rasters are CPU-bound (pdf.js paints the page on the main thread). Firing
+        // many `rasterPage` calls at once serializes them into one long blocking
+        // run — e.g. on a resize-settle the IntersectionObserver (150% rootMargin)
+        // wants to raster every short page that now fits the band, which measured
+        // ~13s of frozen main thread for a heavy 41-page doc. Instead we funnel all
+        // raster requests through a queue that renders ONE page, then yields a frame
+        // before the next, so the work spreads across frames and never blocks
+        // scrolling/typing. The currently-viewed pages are enqueued at the FRONT so
+        // they sharpen first; distant pages trickle in behind them. The pump pauses
+        // entirely while a resize drag is active (rasterPage also guards this).
+        const rasterQueue: number[] = [];
+        let rasterPumping = false;
+        const pumpRaster = async () => {
+            if (rasterPumping) return;
+            rasterPumping = true;
+            const myToken = content.pdf.renderToken;
+            try {
+                while (rasterQueue.length) {
+                    if (resizeDragging) break; // resume after the drag (endLiveScale re-pumps)
+                    if (myToken !== content.pdf.renderToken) { rasterQueue.length = 0; break; } // doc swapped
+                    const idx = rasterQueue.shift()!;
+                    await rasterPage(idx);
+                    // yield a macrotask so one heavy page can't monopolize the thread
+                    // and the next page's render starts a brand-new task (paintable
+                    // gap in between) — see yieldTask above for why not rAF.
+                    await yieldTask();
+                }
+            } finally {
+                rasterPumping = false;
+            }
+        };
+        // Enqueue a page for raster (front = priority for visible pages). Skips
+        // pages already crisp at the current scale and duplicates already queued.
+        const enqueueRaster = (idx: number, front = false) => {
+            if (idx < 0 || idx >= pagesRef.current.length) return;
+            const p = pagesRef.current[idx];
+            if (!p) return;
+            const docScale = renderScaleRef.current;
+            if (p.rasterScale === docScale && p.textScale === docScale) return; // already crisp
+            const at = rasterQueue.indexOf(idx);
+            if (at !== -1) { if (!front) return; rasterQueue.splice(at, 1); } // re-prioritize
+            if (front) rasterQueue.unshift(idx); else rasterQueue.push(idx);
+            void pumpRaster();
+        };
+
         // Raster the page band around `centerPage` (1-based): the page + a few
-        // neighbours each way, so scrolling never shows a blank page.
+        // neighbours each way, so scrolling never shows a blank page. Goes through
+        // the frame-yielding queue (front-loaded = these are the priority pages).
+        // Enqueue OUTWARD-then-center so the dominant on-screen page ends up at the
+        // HEAD of the queue (each front enqueue unshifts, so the last one wins) —
+        // after a resize-settle that page sharpens first, neighbours trickle in
+        // behind it one macrotask at a time instead of one big blocking burst.
         const RASTER_NEIGHBOURS = 2;
         const rasterAround = (centerPage: number) => {
-            const lo = Math.max(0, centerPage - 1 - RASTER_NEIGHBOURS);
-            const hi = Math.min(pagesRef.current.length - 1, centerPage - 1 + RASTER_NEIGHBOURS);
-            for (let i = lo; i <= hi; i++) rasterPage(i);
+            const c = centerPage - 1;
+            const lo = Math.max(0, c - RASTER_NEIGHBOURS);
+            const hi = Math.min(pagesRef.current.length - 1, c + RASTER_NEIGHBOURS);
+            // furthest neighbours first, center last => center at queue head.
+            for (let d = Math.max(c - lo, hi - c); d >= 1; d--) {
+                if (c - d >= lo) enqueueRaster(c - d, true);
+                if (c + d <= hi) enqueueRaster(c + d, true);
+            }
+            enqueueRaster(c, true);
+        };
+
+        // Which page indices actually overlap the viewport right now (1+ pages).
+        const visiblePageIdxs = (): number[] => {
+            const sc = scroller();
+            const pages = pagesRef.current;
+            if (!sc || !pages.length) return [];
+            const top = sc.scrollTop, bot = top + sc.clientHeight;
+            const out: number[] = [];
+            for (let i = 0; i < pages.length; i++) {
+                const wt = pages[i].wrap.offsetTop;
+                const wb = wt + pages[i].wrap.offsetHeight;
+                if (wb > top && wt < bot) out.push(i);
+            }
+            return out;
+        };
+        // Settle/zoom re-raster: sharpen ONLY the pages on screen FIRST (front,
+        // 1–2 pages = 1–2 tasks, so the view re-sharpens fast), then enqueue the
+        // ±RASTER_NEIGHBOURS scroll-ahead band at the BACK so it trickles in after
+        // the visible pages without competing with them. Each text-dense page costs
+        // pdf.js ~0.9s to re-raster, so cutting the immediate set from the 5-page
+        // band down to the visible pages is what turns a multi-second choppy
+        // re-sharpen into a near-immediate one. Falls back to the band if nothing
+        // measures visible (e.g. zero-height scroller mid-transition).
+        const rasterViewportFirst = () => {
+            const vis = visiblePageIdxs();
+            if (!vis.length) { rasterAround(pdfView.page || 1); return; }
+            for (let k = vis.length - 1; k >= 0; k--) enqueueRaster(vis[k], true); // first visible at head
+            const lo = Math.max(0, vis[0] - RASTER_NEIGHBOURS);
+            const hi = Math.min(pagesRef.current.length - 1, vis[vis.length - 1] + RASTER_NEIGHBOURS);
+            for (let i = lo; i <= hi; i++) if (!vis.includes(i)) enqueueRaster(i, false); // neighbours trickle behind
         };
 
         // Build the page COLUMN: all wrap boxes sized to the uniform doc scale,
@@ -1924,6 +2043,11 @@ function PdfBody() {
             // rootMargin pre-rasters one screenful ahead/behind so scrolling
             // stays smooth. The scroller is the root.
             const io = new IntersectionObserver((entries) => {
+                // While a resize drag is live the column reflows constantly, firing
+                // this for page after page; queuing them would do nothing (rasterPage
+                // bails on resizeDragging) and just churns. The drag-end settle
+                // re-rasters the visible band, and normal scrolling re-fires this.
+                if (resizeDragging) return;
                 for (const e of entries) {
                     if (!e.isIntersecting) continue;
                     const n = parseInt((e.target as HTMLElement).getAttribute("data-page") || "0", 10);
@@ -1989,8 +2113,8 @@ function PdfBody() {
             // re-anchor scroll to the same page (its offsetTop moved as boxes
             // resized) + scale the in-page offset by the zoom ratio.
             if (sc && anchor) sc.scrollTop = Math.max(0, anchor.wrap.offsetTop + Math.round(delta * ratio));
-            // re-raster the band the user is on.
-            rasterAround(pdfView.page || 1);
+            // re-raster: visible pages first (fast re-sharpen), neighbours trickle.
+            rasterViewportFirst();
             // if a find is active, re-light it (text layers were invalidated).
             if (pdfView.findOpen && pdfView.findQuery) runFind(pdfView.findQuery, false);
             if (docToken !== content.pdf.renderToken) return true;
@@ -2195,8 +2319,12 @@ function PdfBody() {
             const myToken = content.pdf.renderToken;
             const pages = pagesRef.current;
             // Build text layers for every page (raster-free) so find sees the
-            // WHOLE document, not just the pages that happen to be rastered.
+            // WHOLE document, not just the pages that happen to be rastered. Each
+            // build is a ~main-thread block; yield a macrotask between pages so a
+            // big doc (or a re-find after a resize invalidated every text layer)
+            // re-lights PROGRESSIVELY instead of freezing the UI in one run.
             for (let i = 0; i < pages.length; i++) {
+                if (i > 0) await yieldTask();
                 await ensureTextLayer(i);
                 if (myToken !== content.pdf.renderToken || pdfView.findQuery.trim() !== q) return;
             }
@@ -2276,9 +2404,13 @@ function PdfBody() {
                 host.style.setProperty("--scale-factor", String(renderScaleRef.current * r));
             },
             endLiveScale: () => {
-                // Re-raster crisply at the final width. renderAll resets
-                // --scale-factor to the new true docScale, so the live-stretched
-                // bitmaps are replaced by sharp ones with no snap-back gap.
+                // Drag settled: re-raster crisply at the final width. renderAll ->
+                // rescale resets --scale-factor to the new true docScale and
+                // invalidates every page's bitmap, then re-rasters through the
+                // frame-yielding queue VISIBLE-FIRST — so the pages on screen
+                // sharpen within a frame or two while distant pages trickle in
+                // behind them (no 13s all-pages freeze, no snap-back gap). Caller
+                // has already cleared resizeDragging, so the queue pump runs.
                 if (content.pdf.doc) renderAll();
             }
         };
