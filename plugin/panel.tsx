@@ -3314,7 +3314,7 @@ function renderErrorBody(raw: string) {
                 key: "open",
                 type: "button",
                 className: "dockview-unsupported-btn",
-                onClick: () => { window.open(absUrl(url), "_blank", "noopener,noreferrer"); }
+                onClick: () => { if (url) openExternalLink(absUrl(url)); }
             },
             STRINGS.actions.openInNewWindow
         ));
@@ -3389,7 +3389,7 @@ function renderUnsupportedBody() {
                 {
                     type: "button",
                     className: "dockview-unsupported-btn",
-                    onClick: () => { if (url) window.open(absUrl(url), "_blank", "noopener,noreferrer"); }
+                    onClick: () => { if (url) openExternalLink(absUrl(url)); }
                 },
                 STRINGS.actions.openInNewWindow
             )
@@ -3763,15 +3763,20 @@ function DockMoreMenu() {
         }));
     }
 
-    // Open in new window: reuse the artifact popout for HTML, else a plain
-    // window.open of the file url (PDF/image/code/markdown).
+    // Open in new window: reuse the artifact popout for HTML, else open the file
+    // url in the user's EXTERNAL browser. NOTE: a bare window.open() returns null
+    // and does nothing in this Electron renderer (popups are intercepted), so the
+    // old `window.open(absUrl(url), ...)` here was a silent no-op — the reported
+    // "Open in new window does nothing" bug. openExternalLink() goes through
+    // VencordNative.native.openExternal (Electron shell.openExternal), which
+    // reliably hands the url to the OS browser.
     items.push(React.createElement(Menu.MenuItem, {
         id: "dockview-more-popout",
         label: STRINGS.menu.openInNewWindow,
         icon: MENU_ICON.popout,
         action: () => {
             if (isHtml && content.html != null) popoutArtifact();
-            else if (url) window.open(absUrl(url), "_blank", "noopener,noreferrer");
+            else if (url) openExternalLink(absUrl(url));
         }
     }));
 
