@@ -497,7 +497,12 @@ function mountFromCache(e: CacheEntry): boolean {
 // so the toolbar buttons (and keyboard) can drive zoom without prop-drilling.
 const IMG_MIN_SCALE = 1; // never below fit
 const IMG_MAX_SCALE = 8;
-const imgView = { scale: 1, tx: 0, ty: 0, natW: 0, natH: 0 };
+// `fullscreen` flips the image into a self-rendered lightbox overlay (IMG-2). It
+// lives ON imgView (not React state) so the SAME zoom/pan (scale/tx/ty) carries
+// over verbatim when entering/leaving fullscreen — the inline body and the
+// overlay drive one shared view-state, so the picture stays exactly where the
+// user left it across the transition.
+const imgView = { scale: 1, tx: 0, ty: 0, natW: 0, natH: 0, fullscreen: false };
 function resetImgView() {
     imgView.scale = 1;
     imgView.tx = 0;
@@ -508,6 +513,7 @@ interface ImgControls {
     zoomOut: () => void;
     reset: () => void;
     getScale: () => number;
+    toggleFullscreen: () => void;
 }
 let imgControls: ImgControls | null = null;
 
@@ -1372,6 +1378,10 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
 
     // Leaving the current file: snapshot its live view-state into its entry.
     snapshotActiveView();
+    // The fullscreen lightbox is bound to whatever image was shown; switching to
+    // a DIFFERENT file (we're past the no-op guard) must close it so we never
+    // strand the overlay over the wrong / a non-image body.
+    imgView.fullscreen = false;
 
     // --- cache hit on a DIFFERENT file -> instant restore (no fetch) ----------
     // A retry (noCache) skips the cache and always re-fetches.
@@ -1457,6 +1467,7 @@ export function retryActiveLoad() {
  *  kept in the cache (so reopening it is still instant); we just detach it. */
 export function clearArtifact() {
     snapshotActiveView();
+    imgView.fullscreen = false; // the body is going empty — drop the lightbox
     content.name = null;
     content.type = "html";
     resetHtml();
@@ -2426,22 +2437,25 @@ function PdfFindBar() {
     });
 }
 
-/** The IMAGE body: a centered, fit(contain) <img> with zoom + pan, modelled on
- *  Discord's lightbox / a browser image viewer.
- *   - scale 1 = fit (CSS object-fit:contain keeps the whole image visible).
- *   - wheel = zoom toward the cursor; double-click = toggle fit <-> 100% (real
- *     pixels); drag = pan when zoomed past fit. The header toolbar +/-/reset and
- *     the keyboard (+/-/0) drive the same state via `imgControls`. */
-function ImageBody() {
-    const { useRef, useEffect, useState } = React;
-    const wrapRef = useRef(null as HTMLDivElement | null);
-    const imgRef = useRef(null as HTMLImageElement | null);
-    const [, bump] = useState(0);
-    // Re-render the WHOLE panel (not just this body) so the header toolbar's
-    // zoom % readout stays in sync. forceRender bumps DockPanel's state; React
-    // reconciles ImageBody by type (key=content.seq unchanged) so our refs +
-    // view-state survive. Fall back to local bump if the panel isn't mounted.
-    const rerender = () => (forceRender ? forceRender() : bump((n: number) => n + 1));
+/** Shared zoom/pan interaction for an image surface. Both the inline ImageBody
+ *  and the fullscreen lightbox call this with their own wrap/img refs; the actual
+ *  view-state (scale/tx/ty/natW/natH) is module-scoped on `imgView`, so whichever
+ *  surface is mounted drives the SAME numbers — which is exactly why the picture
+ *  keeps its zoom/pan when switching between inline and fullscreen. `rerender`
+ *  repaints the host so the toolbar's % readout follows. Returns the props the
+ *  surface spreads onto its wrap element plus the <img> onLoad. */
+function useImageInteraction(
+    wrapRef: { current: HTMLDivElement | null },
+    imgRef: { current: HTMLImageElement | null },
+    rerender: () => void,
+    // Only the INLINE body owns the shared `imgControls` slot (the header toolbar
+    // + keyboard drive it). The lightbox must NOT register: the inline body never
+    // unmounts when the lightbox opens, so if the lightbox also wrote `imgControls`
+    // its unmount-cleanup would null the slot the still-mounted inline body needs —
+    // leaving the toolbar/keyboard dead after the first fullscreen round-trip.
+    registerControls = true
+) {
+    const { useRef, useEffect } = React;
 
     // Clamp pan so the (scaled) image can't be dragged entirely out of view.
     const clampPan = () => {
@@ -2485,16 +2499,22 @@ function ImageBody() {
         rerender();
     };
 
-    // Expose controls to the toolbar + keyboard while this image is mounted.
+    // Re-clamp + repaint after the surface resizes (e.g. entering fullscreen
+    // changes the wrap size, so the pan limits change). Cheap and idempotent.
+    const reflow = () => { clampPan(); rerender(); };
+
+    // Expose controls to the toolbar + keyboard while the INLINE body is mounted.
+    // Fullscreen toggle lives here so the header button, keyboard ('f') and the
+    // overlay's own close all flip the same module flag and force a host repaint.
+    // The lightbox passes registerControls=false (see note on the param).
     useEffect(() => {
+        if (!registerControls) return;
         const ctrls: ImgControls = {
             zoomIn: () => applyScale(imgView.scale * 1.3),
             zoomOut: () => applyScale(imgView.scale / 1.3),
-            reset: () => {
-                resetImgView();
-                rerender();
-            },
-            getScale: () => imgView.scale
+            reset: () => { resetImgView(); rerender(); },
+            getScale: () => imgView.scale,
+            toggleFullscreen: () => { imgView.fullscreen = !imgView.fullscreen; forceRender?.(); }
         };
         imgControls = ctrls;
         return () => {
@@ -2567,34 +2587,166 @@ function ImageBody() {
             imgView.natW = img.naturalWidth;
             imgView.natH = img.naturalHeight;
         }
+        clampPan();
         rerender();
     };
 
-    const zoomed = imgView.scale > 1;
-    return React.createElement(
-        "div",
-        {
-            key: content.seq,
-            ref: wrapRef,
-            className: "dockview-img-wrap" + (zoomed ? " dockview-img-zoomed" : ""),
-            tabIndex: 0,
+    return {
+        applyScale,
+        reflow,
+        wrapProps: {
             onPointerDown,
             onPointerMove,
             onPointerUp: endDrag,
             onPointerLeave: endDrag,
             onDoubleClick
         },
-        React.createElement("img", {
-            ref: imgRef,
-            className: "dockview-img",
-            src: content.url || "",
-            alt: content.name || "image",
-            draggable: false,
-            onLoad: onImgLoad,
-            style: {
-                transform: `translate(${imgView.tx}px, ${imgView.ty}px) scale(${imgView.scale})`
+        onImgLoad
+    };
+}
+
+/** The INLINE IMAGE body: a centered, fit(contain) <img> with zoom + pan,
+ *  modelled on Discord's lightbox / a browser image viewer.
+ *   - scale 1 = fit (CSS object-fit:contain keeps the whole image visible).
+ *   - wheel = zoom toward the cursor; double-click = toggle fit <-> 100% (real
+ *     pixels); drag = pan when zoomed past fit. The header toolbar +/-/reset/
+ *     fullscreen and the keyboard (+/-/0, f) drive the same state via
+ *     `imgControls`. When `imgView.fullscreen` is set the lightbox renders too. */
+function ImageBody() {
+    const { useRef, useState } = React;
+    const wrapRef = useRef(null as HTMLDivElement | null);
+    const imgRef = useRef(null as HTMLImageElement | null);
+    const [, bump] = useState(0);
+    // Re-render the WHOLE panel (not just this body) so the header toolbar's
+    // zoom % readout stays in sync. forceRender bumps DockPanel's state; React
+    // reconciles ImageBody by type (key=content.seq unchanged) so our refs +
+    // view-state survive. Fall back to local bump if the panel isn't mounted.
+    const rerender = () => (forceRender ? forceRender() : bump((n: number) => n + 1));
+
+    const { wrapProps, onImgLoad } = useImageInteraction(wrapRef, imgRef, rerender);
+
+    const zoomed = imgView.scale > 1;
+    return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(
+            "div",
+            {
+                key: content.seq,
+                ref: wrapRef,
+                className: "dockview-img-wrap" + (zoomed ? " dockview-img-zoomed" : ""),
+                tabIndex: 0,
+                ...wrapProps
+            },
+            React.createElement("img", {
+                ref: imgRef,
+                className: "dockview-img",
+                src: content.url || "",
+                alt: content.name || "image",
+                draggable: false,
+                onLoad: onImgLoad,
+                style: {
+                    transform: `translate(${imgView.tx}px, ${imgView.ty}px) scale(${imgView.scale})`
+                }
+            })
+        ),
+        imgView.fullscreen ? React.createElement(ImageLightbox, null) : null
+    );
+}
+
+/** The FULLSCREEN image lightbox (IMG-2): a self-rendered overlay covering the
+ *  whole renderer (not just the dock panel), with a dimmed backdrop and the SAME
+ *  zoom/pan engine as the inline body (shared via imgView). We self-render rather
+ *  than reuse Discord's ImageModal because that component is NOT cleanly
+ *  resolvable from the isolated plugin context (findByProps("ImageModal") does
+ *  not return the component here) — a custom overlay has zero Discord-internal
+ *  dependencies and can't break on a client update.
+ *   - Esc, the ✕ button, or clicking the dim backdrop closes it.
+ *   - zoom/pan/double-click all work exactly as inline (shared interaction).
+ *   - on enter/exit the view-state (scale/tx/ty) is untouched, so the picture
+ *     stays exactly where it was. A portal would be ideal but the plugin avoids
+ *     extra Discord deps; rendering inside the panel still paints full-viewport
+ *     via position:fixed. */
+function ImageLightbox() {
+    const { useRef, useEffect, useState } = React;
+    const wrapRef = useRef(null as HTMLDivElement | null);
+    const imgRef = useRef(null as HTMLImageElement | null);
+    const [, bump] = useState(0);
+    const rerender = () => (forceRender ? forceRender() : bump((n: number) => n + 1));
+
+    // registerControls=false: the inline body owns `imgControls`; the lightbox
+    // must not touch that slot (see the param note in useImageInteraction).
+    const { reflow, wrapProps, onImgLoad } = useImageInteraction(wrapRef, imgRef, rerender, false);
+
+    const close = () => { imgView.fullscreen = false; (forceRender ? forceRender() : bump((n: number) => n + 1)); };
+
+    // Esc closes the lightbox. Bound at capture on window so it fires even though
+    // the panel's own keydown handler only runs when the panel holds focus —
+    // here we always want Esc to dismiss the overlay first. stopPropagation keeps
+    // it from also hitting Discord's Esc handlers (close-modal, deselect, etc.).
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                close();
             }
-        })
+        };
+        window.addEventListener("keydown", onKey, true);
+        return () => window.removeEventListener("keydown", onKey, true);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // The overlay wrap is a fresh, full-viewport surface; once it mounts the pan
+    // limits differ from the inline body's, so re-clamp + repaint.
+    useEffect(() => { reflow(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+    const zoomed = imgView.scale > 1;
+    return React.createElement(
+        "div",
+        {
+            className: "dockview-lightbox",
+            // clicking the backdrop (but not the image itself) closes.
+            onMouseDown: (e: any) => { if (e.target === e.currentTarget) close(); }
+        },
+        React.createElement(
+            "button",
+            {
+                type: "button",
+                className: "dockview-lightbox-close",
+                "aria-label": STRINGS.image.exitFullscreen,
+                title: STRINGS.image.exitFullscreen,
+                onClick: close
+            },
+            React.createElement(
+                "svg",
+                { width: 24, height: 24, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+                React.createElement("path", {
+                    fill: "currentColor",
+                    d: "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z"
+                })
+            )
+        ),
+        React.createElement(
+            "div",
+            {
+                ref: wrapRef,
+                className: "dockview-lightbox-stage" + (zoomed ? " dockview-img-zoomed" : ""),
+                tabIndex: 0,
+                ...wrapProps
+            },
+            React.createElement("img", {
+                ref: imgRef,
+                className: "dockview-lightbox-img",
+                src: content.url || "",
+                alt: content.name || "image",
+                draggable: false,
+                onLoad: onImgLoad,
+                style: {
+                    transform: `translate(${imgView.tx}px, ${imgView.ty}px) scale(${imgView.scale})`
+                }
+            })
+        )
     );
 }
 
@@ -3464,7 +3616,14 @@ function ImageHeaderControls() {
             { className: "dockview-tool-group" },
             toolBtn("zoom-reset", STRINGS.zoom.reset,
                 "M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5 1 1 0 1 0-2 0 7 7 0 1 0 7-7Z",
-                () => imgControls?.reset())
+                () => imgControls?.reset()),
+            // Fullscreen toggle (IMG-2): the active state reflects whether the
+            // lightbox is currently open, so the button reads as a toggle.
+            toolBtn("img-fullscreen",
+                imgView.fullscreen ? STRINGS.image.exitFullscreen : STRINGS.image.enterFullscreen,
+                "M5 5h5a1 1 0 0 1 0 2H7v3a1 1 0 1 1-2 0V5Zm9 0h5v5a1 1 0 1 1-2 0V7h-3a1 1 0 1 1 0-2ZM6 14a1 1 0 0 1 1 1v3h3a1 1 0 1 1 0 2H5v-5a1 1 0 0 1 1-1Zm12 0a1 1 0 0 1 1 1v5h-5a1 1 0 1 1 0-2h3v-3a1 1 0 0 1 1-1Z",
+                () => imgControls?.toggleFullscreen(),
+                imgView.fullscreen)
         )
     );
 }
@@ -3768,6 +3927,7 @@ function DockPanel() {
 
     const close = useCallback(() => {
         state.open = false;
+        imgView.fullscreen = false; // never strand the lightbox over a closed panel
         lsSet(LS_OPEN, "0");
         saveCurrentChannelState();
         applyOpenState();
@@ -4027,6 +4187,7 @@ function restoreHiddenMembers() {
 function toggle() {
     state.open = !state.open;
     lsSet(LS_OPEN, state.open ? "1" : "0");
+    if (!state.open) imgView.fullscreen = false; // closing the panel drops the lightbox
     if (state.open) ensureHost();
     saveCurrentChannelState();
     applyOpenState();
@@ -4167,6 +4328,12 @@ export function startPanel() {
         } else if (e.key === "0") {
             e.preventDefault();
             imgControls.reset();
+        } else if (e.key === "f" || e.key === "F") {
+            // Toggle the fullscreen lightbox (IMG-2). Esc closes it from anywhere
+            // (the overlay binds its own capture handler); 'f' toggles from the
+            // focused panel like the other single-key image shortcuts.
+            e.preventDefault();
+            imgControls.toggleFullscreen();
         }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -4268,7 +4435,8 @@ export function exposeDebug() {
         onChannelSelect, getCurrentChannelId, channelStates,
         load, retry: retryActiveLoad, clear: clearArtifact, popout: popoutArtifact, content, detectType,
         contentCache, get loadSeq() { return loadSeq; }, get activeCacheKey() { return activeCacheKey; },
-        pdfView, get pdfControls() { return pdfControls; }
+        pdfView, get pdfControls() { return pdfControls; },
+        imgView, get imgControls() { return imgControls; }
     };
 }
 export function unexposeDebug() {

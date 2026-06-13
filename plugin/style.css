@@ -744,6 +744,83 @@ html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ di
     background-position: 0 0;
 }
 
+/* FULLSCREEN image lightbox (IMG-2): a self-rendered overlay over the whole
+   renderer with a dimmed backdrop, modelled on Discord's own lightbox. It is NOT
+   a Discord ModalRoot (that component isn't cleanly resolvable from the isolated
+   plugin context) — it's position:fixed over the viewport with a very high
+   z-index so it sits above the panel AND the rest of the client chrome. Esc / ✕ /
+   backdrop-click dismiss it; the SAME zoom/pan engine as the inline body drives
+   it (shared imgView), so the picture keeps its place on enter/exit. */
+.dockview-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 4000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* Discord's lightbox dims to ~0.85 black; match it so the overlay reads as
+       native, not a translucent panel. */
+    background: rgba(0, 0, 0, 0.85);
+    animation: dockview-lightbox-in 0.12s ease;
+}
+@keyframes dockview-lightbox-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .dockview-lightbox { animation: none; }
+}
+.dockview-lightbox-stage {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    outline: none;
+    cursor: default;
+}
+.dockview-lightbox-stage.dockview-img-zoomed { cursor: grab; }
+.dockview-lightbox-stage.dockview-img-zoomed:active { cursor: grabbing; }
+.dockview-lightbox-img {
+    display: block;
+    /* Leave a margin so the fitted image never bleeds to the screen edge under
+       the close button (matches Discord's lightbox padding). */
+    max-width: calc(100% - 96px);
+    max-height: calc(100% - 96px);
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    transform-origin: center center;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    -webkit-user-select: none;
+    user-select: none;
+    will-change: transform;
+}
+/* Close affordance: a round button in the top-right, above the stage. */
+.dockview-lightbox-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    color: var(--white-500, #ffffff);
+    background: rgba(0, 0, 0, 0.4);
+    transition: background-color 0.15s ease;
+}
+.dockview-lightbox-close:hover {
+    background: rgba(0, 0, 0, 0.7);
+}
+.dockview-lightbox-close svg { display: block; }
+
 /* Header pop-out / close buttons centre their SVG inside the native 32px
    iconWrapper hover target. */
 .dockview-popout,

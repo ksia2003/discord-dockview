@@ -98,6 +98,12 @@ export const STRINGS = {
         reset: "Reset zoom (0)"
     },
 
+    // --- image-only controls ------------------------------------------------
+    image: {
+        enterFullscreen: "Fullscreen (F)",
+        exitFullscreen: "Exit fullscreen (Esc)"
+    },
+
     // --- PDF header controls -------------------------------------------------
     pdf: {
         prevPage: "Previous page (←)",
