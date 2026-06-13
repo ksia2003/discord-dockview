@@ -42,8 +42,7 @@
 }
 
 /* Exclusive right-slot mutual exclusion — PREEMPTIVE. While the panel is open we
-   set `dockview-open` on <html> AND tag the page-inner flex row with
-   `dockview-page-inner` (both from applyOpenState). These rules then hide the
+   set `dockview-open` on <html> (from applyOpenState). These rules then hide the
    exclusive right occupant by STABLE SELECTOR — server member list, DM
    user-profile sidebar, and a native thread sidebar (chatLayerWrapper sibling of
    chat_ + its empty mounting placeholder). Because the rule keys off a document
@@ -53,13 +52,25 @@
    so Discord's own inline display writes can't un-hide it. Cleared by removing
    the html class on close / plugin stop.
 
+   ANCHOR = `[class*="page__"] > div` (the page inner flex row), NOT our own
+   `.dockview-page-inner` JS tag. While typing, Discord rewrites the inner row's
+   `className` on EVERY typing-indicator tick (~800ms), which momentarily WIPES
+   our `.dockview-page-inner` class before the MutationObserver re-adds it. Rules
+   anchored on that JS tag therefore stop matching for a frame each tick and the
+   hidden member list / profile / thread FLASHES back in (the reported flicker).
+   Discord's OWN `page__*` parent class is never touched by those re-renders, so
+   anchoring on it keeps the hide stable across every keystroke. The inner row is
+   the single <div> child of `[class*="page__"]`; our `#dockview-root` host is a
+   child of THAT row, so the descendant/child combinators below still reach the
+   sidebars while the :not(#dockview-root) guards keep our own card visible.
+
    We must NEVER hide our own panel: the member/DM asides are matched by their
    own classes/aria, and the thread card is matched as a DIRECT chatLayerWrapper
-   child of `.dockview-page-inner` — our host is `#dockview-root` (no
-   chatLayerWrapper class; its card is nested one level deeper), so it is excluded
-   structurally, plus an explicit :not(#dockview-root) guard. */
-html.dockview-open .dockview-page-inner aside[class*="membersWrap"],
-html.dockview-open .dockview-page-inner aside[aria-labelledby^="user-profile-sidebar-heading"] {
+   child of the inner row — our host is `#dockview-root` (no chatLayerWrapper
+   class; its card is nested one level deeper), so it is excluded structurally,
+   plus an explicit :not(#dockview-root) guard. */
+html.dockview-open [class*="page__"] > div aside[class*="membersWrap"],
+html.dockview-open [class*="page__"] > div aside[aria-labelledby^="user-profile-sidebar-heading"] {
     display: none !important;
 }
 /* Native thread conversation sidebar: a chatLayerWrapper card that is a direct
@@ -76,16 +87,16 @@ html.dockview-open .dockview-page-inner aside[aria-labelledby^="user-profile-sid
    separate means a future selector quirk can never silently disable the others.
    (We deliberately do NOT nest :has() inside :has() — that form fails to parse
    in this engine.) */
-html.dockview-open .dockview-page-inner > div[class*="chatLayerWrapper"]:not(#dockview-root) {
+html.dockview-open [class*="page__"] > div > div[class*="chatLayerWrapper"]:not(#dockview-root) {
     display: none !important;
 }
-html.dockview-open .dockview-page-inner > div:not(#dockview-root):has(> div[class*="chatLayerWrapper"]) {
+html.dockview-open [class*="page__"] > div > div:not(#dockview-root):has(> div[class*="chatLayerWrapper"]) {
     display: none !important;
 }
 /* The classless empty placeholder Discord parks IMMEDIATELY BEFORE the thread
    card during the transition (sibling combinator scopes it to the thread's own
    placeholder, never an unrelated empty div). */
-html.dockview-open .dockview-page-inner > div:empty:not(#dockview-root):has(+ div[class*="chatLayerWrapper"]) {
+html.dockview-open [class*="page__"] > div > div:empty:not(#dockview-root):has(+ div[class*="chatLayerWrapper"]) {
     display: none !important;
 }
 
