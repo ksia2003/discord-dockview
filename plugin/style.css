@@ -348,22 +348,23 @@
     scrollbar-gutter: stable;
 }
 
-/* Dock-viewer scrollbars: match Discord's NATIVE "thin" scroller (the variant it
-   uses for the channel list / member list / thread side panels) so the bar reads
-   as part of the app instead of a white UA default. We never styled the UA
-   scrollbar before, so the PDF/code/MD body showed a glaring light scrollbar over
-   the dark theme. These rules replicate Discord's own .thin scroller rule set
-   verbatim — 8px track, a 4px-radius thumb painted in --scrollbar-thin-thumb with
-   a 2px transparent padding-box border (which insets the thumb so it reads thin),
-   a transparent track, and the same fade-on-hover behaviour — but anchored to the
-   STABLE theme variables --scrollbar-thin-thumb/-track (NOT Discord's hashed
-   scroller_/thin_ classes, which change every build). Only our own scrollers
-   (.dockview-body = shared vertical scroll for PDF/code/MD; .dockview-code-scroll
-   = the code column's horizontal scroll) are targeted — Discord's scrollers are
-   untouched. (The markdown viewer renders inside a sandboxed srcdoc iframe with
-   its own stylesheet, so ITS scrollers are styled separately in MD_STYLE in
-   panel.tsx — these main-document selectors can't reach into the frame.) Fallback
-   colours kept for the rare theme that lacks the vars. */
+/* Dock-viewer scrollbars: paint the bar in Discord's DARK "thin" scroller colour
+   so it reads as part of the app instead of a white UA default. We never styled the
+   UA scrollbar before, so the PDF/code/MD body showed a glaring light scrollbar over
+   the dark theme. We take Discord's thin-thumb COLOUR (--scrollbar-thin-thumb) but
+   deliberately do NOT copy its 2px transparent padding-box border: that inset shrinks
+   the visible thumb to ~half the bar, and the owner wants the thumb to FILL the full
+   bar width like the old default scroller did. So: an 8px track, a rounded thumb
+   painted edge-to-edge in --scrollbar-thin-thumb (no border, no padding-box clip), a
+   transparent track, and the same fade-on-hover behaviour — anchored to the STABLE
+   theme variables --scrollbar-thin-thumb/-track (NOT Discord's hashed scroller_/thin_
+   classes, which change every build). Only our own scrollers (.dockview-body = shared
+   vertical scroll for PDF/code/MD; .dockview-code-scroll = the code column's
+   horizontal scroll) are targeted — Discord's scrollers are untouched. (The markdown
+   viewer renders inside a sandboxed srcdoc iframe with its own stylesheet, so ITS
+   scrollers are styled separately in MD_STYLE in panel.tsx — these main-document
+   selectors can't reach into the frame.) Fallback colours kept for the rare theme
+   that lacks the vars. */
 .dockview-body::-webkit-scrollbar,
 .dockview-code-scroll::-webkit-scrollbar {
     width: 8px;
@@ -375,9 +376,7 @@
 }
 .dockview-body::-webkit-scrollbar-thumb,
 .dockview-code-scroll::-webkit-scrollbar-thumb {
-    background-clip: padding-box;
     background-color: var(--scrollbar-thin-thumb, #1a1b1e);
-    border: 2px solid transparent;
     border-radius: 4px;
     min-height: 40px;
 }

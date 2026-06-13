@@ -648,21 +648,24 @@ const MD_STYLE = `<style>
 :root { color-scheme: dark; }
 html, body { margin: 0; padding: 0; background: #1e1f22; }
 /* Scrollbars: this is a sandboxed srcdoc iframe with its own document, so it can
-   neither reach our style.css nor see Discord's --scrollbar-* theme vars. Replicate
-   Discord's NATIVE "thin" scroller by hand so the markdown body's vertical bar and
-   any wide code-block / table horizontal bars read as dark-theme chrome, not the
-   white UA default. Geometry is verbatim from Discord's authored .thin rule (8px,
-   4px-radius thumb, 2px transparent padding-box border, min-height 40px, transparent
-   track); #5f606a is exactly what --scrollbar-thin-thumb resolves to in the default
-   dark theme. Same fade-on-hover as Discord's .fade scrollers. */
+   neither reach our style.css nor see Discord's --scrollbar-* theme vars. Paint the
+   markdown body's vertical bar and any wide code-block / table horizontal bars in
+   Discord's DARK thin-thumb colour so they read as dark-theme chrome, not the white
+   UA default. #5f606a is exactly what --scrollbar-thin-thumb resolves to in the
+   default dark theme. We do NOT copy Discord's 2px transparent padding-box border:
+   that inset shrinks the visible thumb to ~half the bar, and the owner wants the
+   thumb to FILL the full bar width like the old default scroller did. So: an 8px
+   track, a rounded thumb painted edge-to-edge (no border, no padding-box clip),
+   transparent track. Same fade-on-hover as Discord's .fade scrollers. Keep this in
+   sync with the .dockview-body/.dockview-code-scroll rules in style.css. */
 html::-webkit-scrollbar, body::-webkit-scrollbar,
 pre::-webkit-scrollbar, table::-webkit-scrollbar { width: 8px; height: 8px; }
 html::-webkit-scrollbar-track, body::-webkit-scrollbar-track,
 pre::-webkit-scrollbar-track, table::-webkit-scrollbar-track { background-color: transparent; }
 html::-webkit-scrollbar-thumb, body::-webkit-scrollbar-thumb,
 pre::-webkit-scrollbar-thumb, table::-webkit-scrollbar-thumb {
-  background-clip: padding-box; background-color: #5f606a;
-  border: 2px solid transparent; border-radius: 4px; min-height: 40px;
+  background-color: #5f606a;
+  border-radius: 4px; min-height: 40px;
 }
 html::-webkit-scrollbar-corner, body::-webkit-scrollbar-corner,
 pre::-webkit-scrollbar-corner, table::-webkit-scrollbar-corner { background-color: transparent; }
