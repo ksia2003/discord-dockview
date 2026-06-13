@@ -114,37 +114,6 @@
     display: none !important;
 }
 
-/* LEFT server/guild list — PREEMPTIVE hide while the panel is open. The reading
-   panel is meant to be the focused surface, so we suppress the 72px column of
-   server icons (the `guilds__` nav) the same way we suppress the exclusive RIGHT
-   slot. Without this the guild bar stays on screen, and worse it can FLASH on a
-   keystroke if its hide is gated on anything Discord rewrites per typing-tick.
-
-   WHY THE RIGHT-SLOT RULES CAN'T REACH IT: the guild nav lives in
-   `content__ > sidebar__ > nav.guilds__`, which is OUTSIDE `page__` entirely —
-   our host `#dockview-root` is buried inside `page__ > div`. So none of the
-   `[class*="page__"] > div:has(> #dockview-root…)` selectors above are ancestors
-   of the guild bar and never matched it (it was never hidden, in any build).
-
-   ANCHOR: gate on `[class*="content__"]:has(#dockview-root.dockview-open)` — the
-   `content__` grid is the nearest STABLE Discord element that contains BOTH the
-   left `sidebar__` and the `page__` holding our host, so `:has(#dockview-root
-   .dockview-open)` lights the rule up only while OUR open host is mounted. The
-   gate keys off `#dockview-root` — OUR element, whose className Discord NEVER
-   rewrites — so it holds every frame. NOT `html.dockview-open`: Discord rewrites
-   the <html> className wholesale on every typing-indicator tick (~28 rewrites
-   over one sentence, measured), and a rule gated on a class living on a node
-   Discord restyles is exactly the per-tick flash bug (handoff §6 anchor lesson).
-   Sampled the guild nav's computed display every ~9ms across a full typed
-   sentence + 4s tail (700 frames, many ticks): display:none EVERY frame, zero
-   flashes. The `:has()` is non-nested (single, at the content__ level) so it
-   parses in this engine. We target the guild nav by its stable `guilds__` class
-   (and as a direct sidebar child) — the CHANNEL list (`sidebarList__`) is left
-   visible so navigation still works; only the redundant server-icon rail goes. */
-[class*="content__"]:has(#dockview-root.dockview-open) [class*="sidebar__"] > nav[class*="guilds"] {
-    display: none !important;
-}
-
 /* The native card wrapper is ABSOLUTE, filling the host spacer. Discord's
    .chatLayerWrapper__* is already position:absolute; here we pin it to the host
    (top:0 -> header aligns with channel header; bottom:0 -> full page height). */
