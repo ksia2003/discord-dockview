@@ -366,22 +366,26 @@
    selectors can't reach into the frame.) Fallback colours kept for the rare theme
    that lacks the vars. */
 .dockview-body::-webkit-scrollbar,
-.dockview-code-scroll::-webkit-scrollbar {
+.dockview-code-scroll::-webkit-scrollbar,
+.dockview-csv-scroll::-webkit-scrollbar {
     width: 8px;
     height: 8px;
 }
 .dockview-body::-webkit-scrollbar-track,
-.dockview-code-scroll::-webkit-scrollbar-track {
+.dockview-code-scroll::-webkit-scrollbar-track,
+.dockview-csv-scroll::-webkit-scrollbar-track {
     background-color: var(--scrollbar-thin-track, transparent);
 }
 .dockview-body::-webkit-scrollbar-thumb,
-.dockview-code-scroll::-webkit-scrollbar-thumb {
+.dockview-code-scroll::-webkit-scrollbar-thumb,
+.dockview-csv-scroll::-webkit-scrollbar-thumb {
     background-color: var(--scrollbar-thin-thumb, #1a1b1e);
     border-radius: 4px;
     min-height: 40px;
 }
 .dockview-body::-webkit-scrollbar-corner,
-.dockview-code-scroll::-webkit-scrollbar-corner {
+.dockview-code-scroll::-webkit-scrollbar-corner,
+.dockview-csv-scroll::-webkit-scrollbar-corner {
     background-color: transparent;
 }
 /* Fade-on-hover, exactly like Discord's .fade scrollers: the thumb/track stay
@@ -390,7 +394,9 @@
 .dockview-body::-webkit-scrollbar-thumb,
 .dockview-body::-webkit-scrollbar-track,
 .dockview-code-scroll::-webkit-scrollbar-thumb,
-.dockview-code-scroll::-webkit-scrollbar-track {
+.dockview-code-scroll::-webkit-scrollbar-track,
+.dockview-csv-scroll::-webkit-scrollbar-thumb,
+.dockview-csv-scroll::-webkit-scrollbar-track {
     visibility: hidden;
 }
 .dockview-body:hover::-webkit-scrollbar-thumb,
@@ -400,7 +406,11 @@
 .dockview-code-scroll:hover::-webkit-scrollbar-thumb,
 .dockview-code-scroll:hover::-webkit-scrollbar-track,
 .dockview-code-scroll:focus-within::-webkit-scrollbar-thumb,
-.dockview-code-scroll:focus-within::-webkit-scrollbar-track {
+.dockview-code-scroll:focus-within::-webkit-scrollbar-track,
+.dockview-csv-scroll:hover::-webkit-scrollbar-thumb,
+.dockview-csv-scroll:hover::-webkit-scrollbar-track,
+.dockview-csv-scroll:focus-within::-webkit-scrollbar-thumb,
+.dockview-csv-scroll:focus-within::-webkit-scrollbar-track {
     visibility: visible;
 }
 
@@ -1114,6 +1124,101 @@
 .dockview-code .hljs-strong { font-weight: 700; }
 .dockview-code .hljs-deletion { color: #ff938a; }
 
+/* ----------------------------------------------------------------------------
+   CSV / TSV GRID. A spreadsheet-style <table> built imperatively (CsvBody): a
+   STICKY header row + data rows that stream in across rAF ticks. The grid lives
+   in its own horizontally-scrollable column (.dockview-csv-scroll) so wide tables
+   scroll sideways while .dockview-body keeps vertical scroll; the header sticks to
+   the top while the body scrolls. Cells never wrap — they truncate with an
+   ellipsis (full value in the title=) so columns stay aligned and rows stay one
+   line tall. Each body row carries content-visibility:auto so off-screen rows
+   cost ~nothing to lay out (O(visible), like the code viewer) — a few thousand
+   rows scroll smoothly and a very large file doesn't freeze the host. Same dark
+   tone + native thin scrollbar as the code view. ------------------------------ */
+/* The grid owns BOTH scroll axes itself (it fills .dockview-body, which doesn't
+   scroll for a CSV): horizontal for wide tables AND vertical for tall ones. This
+   is deliberate — a sticky table header must resolve against the element that
+   actually scrolls vertically, and a single-axis overflow-x:auto would (per the
+   CSS overflow spec) compute overflow-y to auto and make THIS element the vertical
+   scroller anyway. So we make that explicit and route the dock's scroll-restore to
+   this element for the grid (see csvScroller()). */
+.dockview-csv-scroll {
+    display: block;
+    height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+    outline: none;
+    overflow: auto;
+    background: var(--background-base-lower, #1a1a1e);
+    /* readable, compact — system UI font (data, not code) with tabular numbers. */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    color: #dbdee1;
+}
+.dockview-csv-mount { display: block; }
+.dockview-csv-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    /* size to the widest row but at least fill the column, so narrow tables still
+       span the panel and wide ones scroll horizontally within .dockview-csv-scroll. */
+    width: max-content;
+    min-width: 100%;
+    table-layout: auto;
+}
+/* Sticky header row: pins to the top of the scrolling body while data scrolls
+   under it. A solid background (the panel header tone) + a bottom border read it
+   as a frozen header strip; z-index keeps it above scrolled cells. */
+.dockview-csv-th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    text-align: left;
+    font-weight: 600;
+    color: #f2f3f5;
+    background: var(--background-secondary, #2b2d31);
+    border-bottom: 2px solid var(--background-modifier-accent, #3f4147);
+    border-right: 1px solid var(--background-modifier-accent, #2b2d31);
+    padding: 7px 12px;
+    /* truncate long headers with an ellipsis; max-width keeps a single huge cell
+       from stretching the whole column off-screen (full text in the title=). */
+    max-width: 360px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* An empty header cell still needs presence so its column reads — a faint dash. */
+.dockview-csv-th.dockview-csv-empty::after {
+    content: "—";
+    color: var(--text-muted, #6b7280);
+}
+.dockview-csv-td {
+    padding: 5px 12px;
+    border-bottom: 1px solid var(--background-modifier-accent, #26282c);
+    border-right: 1px solid var(--background-modifier-accent, #26282c);
+    max-width: 360px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: top;
+}
+/* content-visibility:auto skips layout+paint for off-screen rows (O(visible) not
+   O(total)) — the load-bearing perf trick, same as the code viewer's rows. The
+   intrinsic-size placeholder keeps the scrollbar/height right before a row is
+   measured; ~27px is one padded line. Every row stays a real node, so native
+   select/copy still work (no virtualisation). */
+.dockview-csv-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 27px;
+}
+/* Zebra striping on the (even) data rows for readability across wide tables. */
+.dockview-csv-row:nth-child(2n) .dockview-csv-td {
+    background: var(--background-secondary-alt, #232428);
+}
+.dockview-csv-row:hover .dockview-csv-td {
+    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.04));
+}
+
 /* HEADER CONTROL BUTTONS — the per-viewer core controls now live inline in the
    single header row (the old `dockview-toolbar` strip is gone). Discord-toned:
    ghost buttons (muted icon, hover bg), and ONE low-chroma active language for
@@ -1158,6 +1263,18 @@
     background: var(--background-modifier-selected, rgba(255, 255, 255, 0.12));
 }
 .dockview-tool-btn svg { display: block; }
+/* Text-labelled tool button (the CSV grid/raw toggle): a word, not a glyph, so
+   it reads as a view switch. A subtle outline distinguishes it from the ghost
+   icon buttons; it keeps the 30px header rhythm. */
+.dockview-tool-textbtn {
+    padding: 0 10px;
+    border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.1));
+}
+.dockview-tool-btn-label {
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
 /* Zoom percentage readout between -/+ */
 .dockview-tool-pct {
     min-width: 44px;

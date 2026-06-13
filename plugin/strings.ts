@@ -114,6 +114,17 @@ export const STRINGS = {
         find: "Find (Ctrl+F)"
     },
 
+    // --- csv/tsv header controls --------------------------------------------
+    // The grid<->raw toggle button shows the action that switches AWAY from the
+    // current view (showing the grid -> "Raw" switches to text; showing the text
+    // -> "Table" switches back). Concise, Discord-sober wording.
+    csv: {
+        showRaw: "Raw",
+        showRawHint: "View as text",
+        showTable: "Table",
+        showTableHint: "View as table"
+    },
+
     // --- code header controls -----------------------------------------------
     code: {
         detectedLanguage: "Detected language",

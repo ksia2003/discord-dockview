@@ -243,7 +243,11 @@ const state = {
 // Instead loadUnknown() fetches it and sniffs text-vs-binary: a text file is
 // retyped to "code" (plaintext viewer), a binary one stays "unknown" and renders
 // the unsupported-format fallback screen (download / open-in-new-window).
-type ContentType = "html" | "pdf" | "code" | "markdown" | "image" | "unknown";
+// "csv" = a comma/tab-separated file: rendered as a spreadsheet-style GRID by
+// default, with a header toggle back to the RAW text (which reuses the code
+// viewer over the same content.code). The grid is parsed lazily from content.code
+// on mount, so the cache stays text-only (no parsed-rows payload to keep alive).
+type ContentType = "html" | "pdf" | "code" | "markdown" | "image" | "unknown" | "csv";
 
 interface PdfState {
     doc: any | null; // pdfjs PDFDocumentProxy
@@ -313,6 +317,8 @@ interface CachedView {
     scrollTop?: number;
     // code
     codeWrap?: boolean;
+    // csv: which view the user left the file on (grid by default)
+    csvMode?: "grid" | "raw";
 }
 interface CacheEntry {
     key: string;
@@ -399,13 +405,25 @@ function bodyScroller(): HTMLElement | null {
     return document.querySelector<HTMLElement>(`#${HOST_ID} .dockview-body`);
 }
 
+/** The scroller that actually owns vertical scroll for the CURRENT view. Almost
+ *  always .dockview-body — EXCEPT the CSV grid, which fills the body and scrolls
+ *  internally (it owns both axes so its sticky header resolves correctly), so the
+ *  grid's scroll lives on .dockview-csv-scroll. The scroll snapshot/restore reads
+ *  through here so a CSV grid reopens at the same row. */
+function viewScroller(): HTMLElement | null {
+    if (content.type === "csv" && csvView.mode === "grid") {
+        return document.querySelector<HTMLElement>(`#${HOST_ID} .dockview-csv-scroll`) || bodyScroller();
+    }
+    return bodyScroller();
+}
+
 /** Snapshot the CURRENT live view-state into the active cache entry so that
  *  reopening this file (re-click / channel return) lands on the same spot. */
 function snapshotActiveView() {
     if (activeCacheKey == null) return;
     const e = contentCache.get(activeCacheKey);
     if (!e) return;
-    const sc = bodyScroller();
+    const sc = viewScroller();
     e.view.scrollTop = sc ? sc.scrollTop : e.view.scrollTop;
     if (e.type === "pdf") {
         e.view.pdfPage = pdfView.page;
@@ -417,6 +435,9 @@ function snapshotActiveView() {
         e.view.imgTy = imgView.ty;
     } else if (e.type === "code") {
         e.view.codeWrap = codeView.wrap;
+    } else if (e.type === "csv") {
+        e.view.codeWrap = codeView.wrap; // the raw view's wrap state
+        e.view.csvMode = csvView.mode;
     }
 }
 
@@ -443,6 +464,12 @@ function applyCachedView(e: CacheEntry) {
         codeView.wrap = e.view.codeWrap ?? false;
         // find never persists across files — a restored file opens with find closed.
         resetCodeView();
+    } else if (e.type === "csv") {
+        codeView.wrap = e.view.codeWrap ?? false;
+        resetCodeView();
+        // restore the grid/raw choice the user left this file on; the delimiter is
+        // re-sniffed by the loader (it lives on csvView already at this point).
+        csvView.mode = e.view.csvMode ?? "grid";
     }
     pendingScrollTop = e.view.scrollTop ?? null;
 }
@@ -452,7 +479,7 @@ function consumePendingScroll() {
     if (pendingScrollTop == null) return;
     const target = pendingScrollTop;
     pendingScrollTop = null;
-    const sc = bodyScroller();
+    const sc = viewScroller();
     if (sc) sc.scrollTop = target;
 }
 
@@ -480,6 +507,9 @@ function mountFromCache(e: CacheEntry): boolean {
         renderToken: content.pdf.renderToken + 1
     };
     applyCachedView(e);
+    // CSV: the delimiter isn't persisted (cheap to re-derive) — re-sniff it from
+    // the restored text so the grid parses identically on a cache return.
+    if (e.type === "csv") csvView.delimiter = csvDelimiterFor(e.name, e.url, e.code ?? "");
     activeCacheKey = e.key;
     cacheTouch(e);
     return true;
@@ -536,6 +566,21 @@ function resetCodeView() {
     codeView.findMatches = 0;
     codeView.findActive = 0;
     codeView.findCase = false;
+}
+
+// --- CSV viewer view-state (grid vs raw text), shared with the toolbar -------
+// A .csv/.tsv file renders as a spreadsheet GRID by default; the header's
+// Table/Raw toggle flips to `mode:"raw"`, which falls through to the SAME code
+// viewer used for any text file (over content.code) — find, copy, wrap all work
+// there unchanged. `delimiter` is decided per file (extension, then a sniff).
+// Module-scope so the header toggle and the body renderer drive one state.
+const csvView = {
+    mode: "grid" as "grid" | "raw",
+    delimiter: "," // "," for csv, "\t" for tsv (decided at load)
+};
+function resetCsvView() {
+    csvView.mode = "grid"; // a fresh CSV always opens as a grid (per-file default)
+    csvView.delimiter = ",";
 }
 
 // --- PDF viewer view-state (page nav / zoom / fit / find), shared w/ toolbar --
@@ -747,6 +792,8 @@ function detectType(opts: { type?: ContentType; url?: string | null; name?: stri
     if (ext === "pdf") return "pdf";
     if (ext && IMG_EXT.has(ext)) return "image";
     if (ext && MD_EXT.has(ext)) return "markdown";
+    // CSV / TSV -> the spreadsheet grid (with a header toggle back to raw text).
+    if (ext === "csv" || ext === "tsv" || ext === "tab") return "csv";
     // ONLY genuine HTML-intent extensions take the iframe path. Everything else
     // unrecognised is "unknown" (sniffed text/binary at load) — NOT "html", so a
     // .xyz / binary file is never dumped raw into a sandbox iframe.
@@ -844,6 +891,13 @@ function escapeHtml(s: string): string {
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
+}
+
+/** Escape a string for use inside a double-quoted HTML ATTRIBUTE value (adds the
+ *  quote escapes escapeHtml omits) — used for CSV cell title= attributes built
+ *  via innerHTML. */
+function escapeAttr(s: string): string {
+    return escapeHtml(s).replace(/"/g, "&quot;");
 }
 
 /** Highlight `code` for `lang`, returning safe HTML (escaped if no language). */
@@ -1154,6 +1208,85 @@ function extOf(s: string | null | undefined): string | null {
     return m ? m[1].toLowerCase() : null;
 }
 
+// ---------------------------------------------------------------------------
+// CSV / TSV parsing (RFC-4180-ish) + delimiter detection.
+// ---------------------------------------------------------------------------
+
+/** Pick the field delimiter for a CSV/TSV file. The extension is the strong
+ *  signal (.tsv/.tab -> tab, .csv -> comma); when it's ambiguous (e.g. a sniffed
+ *  text/csv with no helpful name) we sniff the FIRST line and pick whichever of
+ *  tab/comma/semicolon occurs most (a tie favours comma). We only inspect the
+ *  first line so this is O(line), not O(file). */
+function csvDelimiterFor(name: string | null, url: string | null, text: string): string {
+    const ext = extOf(url) || extOf(name);
+    if (ext === "tsv" || ext === "tab") return "\t";
+    if (ext === "csv") return ",";
+    // Ambiguous: sniff the header line (up to the first newline) outside quotes.
+    const nl = text.indexOf("\n");
+    const head = (nl >= 0 ? text.slice(0, nl) : text).slice(0, 4096);
+    let inQ = false, tab = 0, comma = 0, semi = 0;
+    for (let i = 0; i < head.length; i++) {
+        const c = head[i];
+        if (c === '"') inQ = !inQ;
+        else if (!inQ) {
+            if (c === "\t") tab++;
+            else if (c === ",") comma++;
+            else if (c === ";") semi++;
+        }
+    }
+    if (tab > comma && tab >= semi) return "\t";
+    if (semi > comma && semi > tab) return ";";
+    return ",";
+}
+
+/** Parse CSV/TSV text into a row/cell matrix per RFC 4180, with the given single-
+ *  char delimiter. Honours: quoted fields ("..."), the delimiter and newlines
+ *  INSIDE quotes (kept literal, never split), the "" escape for a literal quote,
+ *  and both \n and \r\n line endings. Ragged rows are returned as-is (the grid
+ *  pads short rows / clips against the header column count at render time, so the
+ *  parser never invents or drops cells). A trailing newline does NOT yield a
+ *  spurious empty final row. Returns rows of string cells. */
+function parseDelimited(text: string, delimiter: string): string[][] {
+    const rows: string[][] = [];
+    let row: string[] = [];
+    let field = "";
+    let inQuotes = false;
+    let started = false; // has the current row produced any char/field yet?
+    const n = text.length;
+    const d = delimiter;
+
+    const endField = () => { row.push(field); field = ""; started = true; };
+    const endRow = () => { endField(); rows.push(row); row = []; started = false; };
+
+    for (let i = 0; i < n; i++) {
+        const c = text[i];
+        if (inQuotes) {
+            if (c === '"') {
+                if (text[i + 1] === '"') { field += '"'; i++; } // "" -> literal "
+                else inQuotes = false; // closing quote
+            } else {
+                field += c; // delimiter / newline inside quotes stays literal
+            }
+            continue;
+        }
+        if (c === '"') { inQuotes = true; started = true; continue; }
+        if (c === d) { endField(); continue; }
+        if (c === "\n") { endRow(); continue; }
+        if (c === "\r") {
+            if (text[i + 1] === "\n") i++; // swallow the LF of a CRLF
+            endRow();
+            continue;
+        }
+        field += c;
+        started = true;
+    }
+    // Flush a final field/row only if there's pending content (so a trailing
+    // newline doesn't add a phantom empty row, but a last line without a newline
+    // is still captured).
+    if (started || field.length || row.length) endRow();
+    return rows;
+}
+
 /** CODE / TEXT loader: fetch text and stash it + its resolved hljs language. */
 function loadCode(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
     resetHtml();
@@ -1178,6 +1311,47 @@ function loadCode(opts: { name: string; url?: string | null; noCache?: boolean }
             if (entry) { entry.code = text; entry.loading = false; entry.error = null; }
             if (token !== loadSeq) return;
             content.code = text;
+            content.loading = false;
+            content.error = null;
+            forceRender?.();
+        })
+        .catch(e => {
+            if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
+            if (token !== loadSeq) return;
+            content.loading = false;
+            content.error = String(e?.message || e);
+            forceRender?.();
+        });
+}
+
+/** CSV / TSV loader: fetch text and stash it as content.code (so the RAW view is
+ *  the very same code viewer) plus decide the delimiter. The grid itself is parsed
+ *  lazily from content.code on mount (CsvBody) so the cache stays text-only — no
+ *  parsed-matrix payload to keep alive or invalidate. Mirrors loadCode otherwise. */
+function loadCsv(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
+    resetHtml();
+    resetPdf();
+    resetCode();
+    resetCsvView(); // a fresh CSV always opens as a grid
+    if (!opts.url) {
+        content.loading = false;
+        content.error = "No source";
+        return;
+    }
+    content.codeLang = "plaintext"; // the raw view is plaintext (no hljs lang)
+    if (entry) entry.codeLang = "plaintext";
+    content.loading = true;
+    const reqUrl = opts.url;
+    dvFetch(reqUrl, opts.noCache)
+        .then(r => {
+            if (!r.ok) throw new Error(r.status + " " + r.statusText);
+            return r.text();
+        })
+        .then(text => {
+            if (entry) { entry.code = text; entry.loading = false; entry.error = null; }
+            if (token !== loadSeq) return;
+            content.code = text;
+            csvView.delimiter = csvDelimiterFor(opts.name, reqUrl, text);
             content.loading = false;
             content.error = null;
             forceRender?.();
@@ -1455,6 +1629,7 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
     if (type === "pdf") loadPdf(opts, token, entry);
     else if (type === "image") loadImage(opts, token, entry);
     else if (type === "code") loadCode(opts, token, entry);
+    else if (type === "csv") loadCsv(opts, token, entry);
     else if (type === "markdown") loadMarkdown(opts, token, entry);
     else if (type === "unknown") loadUnknown(opts, token, entry);
     else loadHtml(opts, token, entry);
@@ -3534,6 +3709,176 @@ function toggleCodeFind() {
     forceRender?.();
 }
 
+// ---------------------------------------------------------------------------
+// CSV / TSV grid body.
+// ---------------------------------------------------------------------------
+// A spreadsheet-style <table>: a STICKY header row (row 0 of the file) + a body
+// of data rows. The first row is always treated as the header. The body is built
+// IMPERATIVELY (a few-thousand-row React tree would be pathological) keyed on
+// content.seq, exactly like CodeBody: the FIRST batch of rows is appended
+// synchronously (instant top), the rest stream in over rAF ticks, and every body
+// row carries content-visibility:auto so off-screen rows cost ~nothing to lay out
+// (O(visible) layout, no virtualisation library — every cell stays a real node,
+// so native select/copy keep working). Cell text never wraps (white-space:nowrap
+// + ellipsis) and the table scrolls horizontally for wide files. Ragged rows are
+// padded to / clipped against the column count so columns stay aligned.
+
+const CSV_FIRST_BATCH = 120;   // body rows appended synchronously on mount (a screenful+)
+const CSV_ROW_BATCH = 800;     // body rows appended per scheduled rAF tick
+const CSV_MAX_COLS = 512;      // hard column cap (a pathological wide row can't blow up the DOM)
+
+/** Live controller for a mounted CSV grid: owns the streaming row build + its rAF
+ *  pump so a teardown (file switch / toggle to raw) cancels in-flight work. */
+interface CsvController {
+    seq: number;
+    cancelled: boolean;
+    rafId: number;
+    rowsBuilt: number;
+    teardown: () => void;
+}
+let csvCtrl: CsvController | null = null;
+
+/** Build the grid DOM into `mount` and stream the body rows in. Returns the
+ *  controller (also stored in csvCtrl). One call per CSV grid mount. */
+function buildCsvController(mount: HTMLElement): CsvController {
+    const rows = parseDelimited(content.code || "", csvView.delimiter);
+    const header = rows.length ? rows[0] : [];
+    // Column count = the widest of the header / a sample of data rows, so ragged
+    // rows still get enough columns; capped so a runaway row can't explode the DOM.
+    let cols = header.length;
+    const sample = Math.min(rows.length, 200);
+    for (let i = 1; i < sample; i++) if (rows[i].length > cols) cols = rows[i].length;
+    cols = Math.max(1, Math.min(cols, CSV_MAX_COLS));
+    const dataCount = Math.max(0, rows.length - 1);
+
+    const table = document.createElement("table");
+    table.className = "dockview-csv-table";
+
+    // --- sticky header row (file row 0). A header cell may be empty; show its
+    //     1-based column index as a faded fallback so the column is still clickable
+    //     /readable. The whole thead is position:sticky via CSS. -----------------
+    const thead = document.createElement("thead");
+    const htr = document.createElement("tr");
+    for (let c = 0; c < cols; c++) {
+        const th = document.createElement("th");
+        th.className = "dockview-csv-th";
+        const v = header[c] ?? "";
+        if (v.length) th.textContent = v;
+        else { th.textContent = ""; th.classList.add("dockview-csv-empty"); }
+        th.title = v; // full value on hover (cells truncate with ellipsis)
+        htr.appendChild(th);
+    }
+    thead.appendChild(htr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    table.appendChild(tbody);
+    mount.appendChild(table);
+
+    const ctrl: CsvController = {
+        seq: content.seq,
+        cancelled: false,
+        rafId: 0,
+        rowsBuilt: 0,
+        teardown: () => { /* set below */ }
+    };
+
+    // Append data rows [from,to) (file rows from+1 .. to). Built off-DOM as an
+    // HTML string parsed in one template, then attached in a single reflow per
+    // batch — same cheap-bulk-append trick the code viewer uses. Short rows are
+    // padded with empty cells, extra cells past `cols` are dropped, so the grid
+    // is always exactly `cols` wide and stays aligned.
+    const appendRows = (from: number, to: number) => {
+        let s = "";
+        for (let i = from; i < to; i++) {
+            const r = rows[i + 1]; // +1: skip the header row
+            s += "<tr class=\"dockview-csv-row\">";
+            for (let c = 0; c < cols; c++) {
+                const v = (r && c < r.length) ? r[c] : "";
+                // attribute-escape for the title, body-escape for the text.
+                s += "<td class=\"dockview-csv-td\" title=\"" + escapeAttr(v) + "\">" + escapeHtml(v) + "</td>";
+            }
+            s += "</tr>";
+        }
+        const tmp = document.createElement("template");
+        tmp.innerHTML = s;
+        tbody.appendChild(tmp.content);
+        ctrl.rowsBuilt = to;
+    };
+
+    const pump = () => {
+        ctrl.rafId = 0;
+        if (ctrl.cancelled) return;
+        if (ctrl.rowsBuilt < dataCount) {
+            appendRows(ctrl.rowsBuilt, Math.min(dataCount, ctrl.rowsBuilt + CSV_ROW_BATCH));
+            if (ctrl.rowsBuilt < dataCount) {
+                ctrl.rafId = (window.requestAnimationFrame || window.setTimeout)(pump) as unknown as number;
+            }
+        }
+    };
+
+    ctrl.teardown = () => {
+        ctrl.cancelled = true;
+        if (ctrl.rafId) {
+            try { (window.cancelAnimationFrame || window.clearTimeout)(ctrl.rafId); } catch { /* ignore */ }
+            ctrl.rafId = 0;
+        }
+    };
+
+    // First batch synchronous (instant top), the rest stream across rAF ticks.
+    appendRows(0, Math.min(dataCount, CSV_FIRST_BATCH));
+    if (ctrl.rowsBuilt < dataCount) {
+        ctrl.rafId = (window.requestAnimationFrame || window.setTimeout)(pump) as unknown as number;
+    }
+
+    csvCtrl = ctrl;
+    return ctrl;
+}
+
+/** The CSV GRID body: an imperatively-built <table> inside a horizontally-
+ *  scrollable column, keyed on content.seq so a new file (or a raw->grid toggle)
+ *  remounts it fresh. React mounts the empty scroll wrap; buildCsvController fills
+ *  it and streams the rows. */
+function CsvBody() {
+    const { useRef, useEffect } = React;
+    const mountRef = useRef(null as HTMLElement | null);
+    useEffect(() => {
+        const m = mountRef.current;
+        if (!m) return;
+        const ctrl = buildCsvController(m);
+        // restore the saved scroll once the (first) rows exist.
+        consumePendingScroll();
+        return () => {
+            ctrl.teardown();
+            if (csvCtrl === ctrl) csvCtrl = null;
+        };
+    }, [content.seq]);
+    return React.createElement(
+        "div",
+        {
+            key: content.seq,
+            className: "dockview-csv-scroll",
+            // focusable so a click into the grid gives the panel keyboard focus.
+            tabIndex: 0
+        },
+        React.createElement("div", { ref: mountRef, className: "dockview-csv-mount" })
+    );
+}
+
+/** Flip a CSV between the grid and the raw text view. Each view re-mounts fresh
+ *  (a new content.seq) and opens at its own top — we don't carry scroll across the
+ *  toggle, which keeps the switch predictable (and the two views have unrelated
+ *  geometries anyway). */
+function toggleCsvMode() {
+    if (content.type !== "csv") return;
+    csvView.mode = csvView.mode === "grid" ? "raw" : "grid";
+    // leaving the raw view: close its find bar so it doesn't linger over the grid.
+    if (csvView.mode === "grid" && codeView.findOpen) toggleCodeFind();
+    content.seq += 1; // new body identity -> CodeBody/CsvBody remount fresh
+    pendingScrollTop = null; // each view opens at its own top (no cross-bleed)
+    forceRender?.();
+}
+
 /** Turn a raw loader error (e.g. "404 ", "TypeError: Failed to fetch", "No
  *  source") into a calm, human title + subtitle. Copy lives in STRINGS.error —
  *  error voice leads with information, never wit. */
@@ -3731,6 +4076,16 @@ function renderBody() {
             return React.createElement(LoadingBody, null);
         }
         return React.createElement(CodeBody, null);
+    }
+    if (content.type === "csv") {
+        if (content.loading || content.code == null) {
+            return React.createElement(LoadingBody, null);
+        }
+        // Grid by default; the header's Table/Raw toggle flips to the code viewer
+        // over the SAME content.code (so raw is the literal file text).
+        return csvView.mode === "raw"
+            ? React.createElement(CodeBody, null)
+            : React.createElement(CsvBody, null);
     }
     if (content.type === "unknown") {
         // Still sniffing (a text file gets retyped to "code" on resolve, so the
@@ -3960,12 +4315,99 @@ function CodeHeaderControls() {
     );
 }
 
+/** A small text-labelled toolbar button (vs the icon-only toolBtn) — used for the
+ *  CSV grid/raw toggle, which reads clearer as a word than a glyph. */
+function toolTextBtn(key: string, label: string, title: string, onClick: () => void, active = false) {
+    return React.createElement(
+        "button",
+        {
+            key,
+            type: "button",
+            className: "dockview-tool-btn dockview-tool-textbtn" + (active ? " dockview-tool-btn-active" : ""),
+            "aria-label": title,
+            title,
+            "aria-pressed": active || undefined,
+            onClick
+        },
+        React.createElement("span", { className: "dockview-tool-btn-label" }, label)
+    );
+}
+
+/** CSV header controls: the grid/raw toggle, plus — when in RAW — the code
+ *  viewer's own find / wrap / copy controls (since raw reuses the code body). The
+ *  toggle button always shows the action that switches AWAY from the current view
+ *  (grid -> "Raw", raw -> "Table"), the universal toggle-label convention. */
+function CsvHeaderControls() {
+    const { useState } = React;
+    const [copied, setCopied] = useState(false);
+    if (content.loading || content.error || content.code == null) return null;
+    const raw = csvView.mode === "raw";
+    const copy = () => {
+        const text = content.code || "";
+        const done = () => { setCopied(true); setTimeout(() => setCopied(false), 1200); };
+        try {
+            if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+            } else { fallbackCopy(text, done); }
+        } catch { fallbackCopy(text, done); }
+    };
+    const children: any[] = [];
+    // RAW-only: find toggle + wrap (collapse before the always-on toggle/copy).
+    if (raw) {
+        children.push(React.createElement(
+            "div",
+            { key: "csv-find-grp", className: "dockview-tool-group dockview-collapse-mid" },
+            toolBtn("csv-find", STRINGS.code.find,
+                "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
+                () => toggleCodeFind(), codeView.findOpen)
+        ));
+        children.push(React.createElement(
+            "div",
+            { key: "csv-wrap-grp", className: "dockview-tool-group dockview-collapse-low" },
+            toolBtn("csv-wrap", codeView.wrap ? STRINGS.code.disableWrap : STRINGS.code.enableWrap,
+                "M4 6a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Zm0 5a1 1 0 0 1 1-1h12a3 3 0 1 1 0 6h-1.59l.3.3a1 1 0 1 1-1.42 1.4l-2-2a1 1 0 0 1 0-1.4l2-2a1 1 0 0 1 1.42 1.4l-.3.3H17a1 1 0 1 0 0-2H5a1 1 0 0 1-1-1Zm0 6a1 1 0 0 1 1-1h6a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z",
+                () => { codeView.wrap = !codeView.wrap; forceRender?.(); },
+                codeView.wrap)
+        ));
+    }
+    // Always: the grid/raw toggle + copy.
+    children.push(React.createElement(
+        "div",
+        { key: "csv-toggle-grp", className: "dockview-tool-group" },
+        toolTextBtn("csv-toggle",
+            raw ? STRINGS.csv.showTable : STRINGS.csv.showRaw,
+            raw ? STRINGS.csv.showTableHint : STRINGS.csv.showRawHint,
+            () => toggleCsvMode()),
+        React.createElement(
+            "button",
+            {
+                key: "csv-copy",
+                type: "button",
+                className: "dockview-tool-btn dockview-tool-copy" + (copied ? " dockview-tool-copied" : ""),
+                "aria-label": STRINGS.code.copyCode,
+                title: STRINGS.code.copyCode,
+                onClick: copy
+            },
+            React.createElement(
+                "svg",
+                { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+                copied
+                    ? React.createElement("path", { fill: "currentColor", d: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z" })
+                    : React.createElement("path", { fill: "currentColor", d: "M8 7V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2Zm2 0h5a2 2 0 0 1 2 2v5h2V5h-9v2ZM6 9v9h9V9H6Z" })
+            ),
+            React.createElement("span", { className: "dockview-tool-copy-label" }, copied ? STRINGS.code.copied : STRINGS.code.copy)
+        )
+    ));
+    return React.createElement(React.Fragment, null, ...children);
+}
+
 /** The header control cluster for the current content type (rendered inside the
  *  header toolbar, left of ⋯/popout/close). Empty for markdown/artifact/unknown. */
 function HeaderControls() {
     if (content.type === "pdf") return React.createElement(PdfHeaderControls, null);
     if (content.type === "image") return React.createElement(ImageHeaderControls, null);
     if (content.type === "code") return React.createElement(CodeHeaderControls, null);
+    if (content.type === "csv") return React.createElement(CsvHeaderControls, null);
     return null;
 }
 
@@ -4346,7 +4788,11 @@ function DockPanel() {
                 // body is inset below it (no content hidden under the bar). PDF and
                 // code share the same FindBar component, each wired to its viewer.
                 const pdfFind = hasContent && content.type === "pdf" && pdfView.findOpen && content.pdf.doc;
-                const codeFind = hasContent && content.type === "code" && codeView.findOpen && content.code != null;
+                // Code find applies to plain code AND a CSV viewed in RAW mode (raw
+                // reuses the code body); the grid view has no find bar.
+                const codeFind = hasContent
+                    && (content.type === "code" || (content.type === "csv" && csvView.mode === "raw"))
+                    && codeView.findOpen && content.code != null;
                 const findShown = pdfFind || codeFind;
                 return React.createElement(
                     "div",
@@ -4730,7 +5176,9 @@ export function startPanel() {
         // Code branch: Ctrl+F toggles our find (Discord may eat the global one);
         // when find is already open Ctrl+F jumps to the next match, matching the
         // PDF UX. The find input itself handles Enter/Shift+Enter/Esc once focused.
-        if (content.type === "code" && content.code != null) {
+        // A CSV in RAW mode reuses the code body, so it gets the same find keys.
+        const csvRaw = content.type === "csv" && csvView.mode === "raw";
+        if ((content.type === "code" || csvRaw) && content.code != null) {
             if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
                 e.preventDefault();
                 if (!codeView.findOpen) toggleCodeFind();
