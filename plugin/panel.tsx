@@ -586,6 +586,9 @@ interface PdfControls {
     // Live resize feedback: during a resize drag we scale the already-rendered
     // pages with a CSS transform (cheap, GPU-composited) for instant feedback,
     // then re-raster crisply on drag end. ratio = newWidth / widthAtDragStart.
+    // beginLiveScale captures the scroll anchor (the content at the viewport top)
+    // BEFORE the first scale change so liveScale can hold it stationary.
+    beginLiveScale: () => void;
     liveScale: (ratio: number) => void;
     endLiveScale: () => void;
 }
@@ -1746,6 +1749,13 @@ function PdfBody() {
     // that variable (renderScale × dragRatio) so the whole column reflows +
     // visually scales in one shot, then drag-end re-rasters the visible pages.
     const renderScaleRef = useRef(1);
+    // Scroll anchor for a live resize: the page at the viewport top + the
+    // fractional offset INTO that page (0 = its top is at the viewport top, 0.5 =
+    // we're halfway down it). A width drag rescales every page box, which moves
+    // the whole column under a fixed scrollTop and slides the visible content
+    // away; holding this anchor stationary keeps the user looking at the same
+    // content throughout the drag (see beginLiveScale / liveScale).
+    const liveAnchorRef = useRef(null as { idx: number; frac: number } | null);
     // flat list of match OCCURRENCES in document order. Each entry is one
     // substring hit (NOT a whole span): `range` is the live DOM Range we paint via
     // the CSS Custom Highlight API. When a page's text layer is rebuilt (zoom /
@@ -2130,9 +2140,15 @@ function PdfBody() {
             const docScale = fitScale * pdfView.zoom;
             const prevScale = renderScaleRef.current || docScale;
             const ratio = docScale / prevScale;
-            // anchor: remember the current page + its in-page scroll offset so
-            // zoom keeps the user roughly where they were.
-            const anchorIdx = Math.max(0, (pdfView.page || 1) - 1);
+            // anchor: keep the user looking at the same content across the rescale.
+            // Prefer the live-drag anchor (page + fraction-into-page captured at
+            // drag start and held through the whole drag) so a width settle lands
+            // exactly where the live preview ended; otherwise fall back to the
+            // current page + its in-page pixel offset (zoom / window resize).
+            const live = liveAnchorRef.current;
+            const anchorIdx = live
+                ? Math.min(pages.length - 1, Math.max(0, live.idx))
+                : Math.max(0, (pdfView.page || 1) - 1);
             const anchor = pages[anchorIdx];
             const beforeTop = anchor ? anchor.wrap.offsetTop : 0;
             const scrollBefore = sc ? sc.scrollTop : 0;
@@ -2145,9 +2161,17 @@ function PdfBody() {
             // invalidate rasters (boxes already resized via the variable).
             for (const p of pages) { p.rasterScale = 0; p.textScale = 0; }
 
-            // re-anchor scroll to the same page (its offsetTop moved as boxes
-            // resized) + scale the in-page offset by the zoom ratio.
-            if (sc && anchor) sc.scrollTop = Math.max(0, anchor.wrap.offsetTop + Math.round(delta * ratio));
+            // re-anchor scroll to the same content (the box offsetTop moved as the
+            // boxes resized). With a live anchor, derive the in-page offset from the
+            // captured FRACTION × the page's NEW height (robust to the constant 8px
+            // gaps not scaling); otherwise scale the recorded pixel delta by the
+            // zoom ratio.
+            if (sc && anchor) {
+                const inPage = live
+                    ? live.frac * anchor.wrap.offsetHeight
+                    : Math.round(delta * ratio);
+                sc.scrollTop = Math.max(0, anchor.wrap.offsetTop + inPage);
+            }
             // re-raster: visible pages first (fast re-sharpen), neighbours trickle.
             rasterViewportFirst();
             // if a find is active, re-light it (text layers were invalidated).
@@ -2422,6 +2446,36 @@ function PdfBody() {
             setFindQuery: (qq: string) => { pdfView.findQuery = qq; runFind(qq, true); },
             findNext: () => { if (!pdfView.findMatches) return; focusMatch(pdfView.findActive % pdfView.findMatches); },
             findPrev: () => { if (!pdfView.findMatches) return; focusMatch((pdfView.findActive - 2 + pdfView.findMatches) % pdfView.findMatches); },
+            // Capture the scroll anchor at the START of a width drag, BEFORE any
+            // scale change. The page boxes are sized off --scale-factor; the 8px
+            // inter-page gaps are NOT (they're a constant flex gap), so a whole-
+            // document scroll fraction would drift as the scaled-content vs fixed-
+            // gap ratio changes. A PER-PAGE anchor (which page sits at the viewport
+            // top + how far into it) survives that exactly: the page box scales,
+            // the offset-into-page scales with it, and we re-derive scrollTop from
+            // the page's NEW offsetTop each frame (gaps above are re-summed by the
+            // layout). So we record the page at the viewport top + the fraction we
+            // are into it.
+            beginLiveScale: () => {
+                liveAnchorRef.current = null;
+                const sc = scroller();
+                const pages = pagesRef.current;
+                if (!sc || !pages.length) return;
+                const top = sc.scrollTop;
+                // find the page whose box spans the viewport top (or the last page
+                // above it — e.g. when the top sits in an inter-page gap).
+                let idx = 0;
+                for (let i = 0; i < pages.length; i++) {
+                    const t = pages[i].wrap.offsetTop;
+                    if (t <= top) idx = i; else break;
+                }
+                const wrap = pages[idx].wrap;
+                const h = wrap.offsetHeight || 1;
+                // fraction into the page (can exceed 1 if top is in the gap below
+                // the page; clamp so we never anchor past the page box).
+                const frac = Math.min(1, Math.max(0, (top - wrap.offsetTop) / h));
+                liveAnchorRef.current = { idx, frac };
+            },
             // Live resize (the pdf.js "CSS zoom first, redraw after" pattern):
             // re-point the container's --scale-factor to renderScale × ratio. The
             // page boxes (sized in that variable) reflow as a connected column and
@@ -2430,12 +2484,29 @@ function PdfBody() {
             // proportional to width so this faithfully previews the new raster; in
             // "page" fit the height also bounds the scale, so a width ratio would
             // over-scale — we hold scale there (drag-end re-raster corrects).
+            //
+            // After the boxes take their new size we re-anchor scrollTop to the
+            // captured page+fraction so the content the user is looking at stays
+            // put — without this, scrollTop stays a fixed pixel while the column
+            // grows/shrinks above it and the visible page violently shifts. One
+            // forced reflow per frame (read the anchor page's new offsetTop/height,
+            // write scrollTop once) — cheap, no per-item loop.
             liveScale: (ratio: number) => {
                 if (!Number.isFinite(ratio) || ratio <= 0) return;
                 const host = containerRef.current;
                 if (!host) return;
                 const r = pdfView.fit === "page" ? 1 : ratio;
                 host.style.setProperty("--scale-factor", String(renderScaleRef.current * r));
+                // hold the anchored content stationary in the viewport.
+                const anchor = liveAnchorRef.current;
+                const sc = scroller();
+                const pages = pagesRef.current;
+                if (sc && anchor && pages[anchor.idx]) {
+                    const wrap = pages[anchor.idx].wrap;
+                    // reading offsetTop/offsetHeight here flushes the pending
+                    // --scale-factor layout, so we get the NEW (rescaled) box.
+                    sc.scrollTop = Math.max(0, wrap.offsetTop + anchor.frac * wrap.offsetHeight);
+                }
             },
             endLiveScale: () => {
                 // Drag settled: re-raster crisply at the final width. renderAll ->
@@ -2445,7 +2516,11 @@ function PdfBody() {
                 // sharpen within a frame or two while distant pages trickle in
                 // behind them (no 13s all-pages freeze, no snap-back gap). Caller
                 // has already cleared resizeDragging, so the queue pump runs.
+                // rescale() re-derives scrollTop from liveAnchorRef (the same
+                // page+fraction we held throughout the drag) so the crisp re-raster
+                // lands on exactly the content the preview was showing — no snap.
                 if (content.pdf.doc) renderAll();
+                liveAnchorRef.current = null;
             }
         };
         pdfControls = ctrls;
@@ -4030,6 +4105,10 @@ function DockPanel() {
         // scales by (newWidth / this). Use the clamped start width as the base.
         const baseWidth = clampWidth(startWidth);
         let liveScaled = false;
+        // Capture the scroll anchor NOW, before the first --scale-factor change,
+        // so the PDF live preview can hold the visible content stationary as the
+        // page boxes rescale (no-op for non-PDF content).
+        pdfControls?.beginLiveScale();
 
         const handle: HTMLElement | null = e.currentTarget || null;
         handle?.classList.add("dockview-resizing");
