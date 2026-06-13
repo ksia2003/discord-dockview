@@ -42,14 +42,22 @@
 }
 
 /* Exclusive right-slot mutual exclusion — PREEMPTIVE. While the panel is open
-   these rules hide the exclusive right occupant by STABLE SELECTOR — server
-   member list, DM user-profile sidebar, and a native thread sidebar
-   (chatLayerWrapper sibling of chat_ + its empty mounting placeholder). Because
-   the rule keys off a structural selector + the host's own state class — not
-   per-node attributes applied after the node paints — a freshly-mounted sidebar
-   is hidden from its FIRST paint (no flash on channel switch / thread open). The
-   match is `display:none !important` so Discord's own inline display writes can't
-   un-hide it. Cleared when the host loses `dockview-open` on close / plugin stop.
+   these rules hide the exclusive right occupant by STABLE SELECTOR — the DM
+   user-profile sidebar and a native thread sidebar (chatLayerWrapper sibling of
+   chat_ + its empty mounting placeholder). Because the rule keys off a
+   structural selector + the host's own state class — not per-node attributes
+   applied after the node paints — a freshly-mounted sidebar is hidden from its
+   FIRST paint (no flash on channel switch / thread open). The match is
+   `display:none !important` so Discord's own inline display writes can't un-hide
+   it. Cleared when the host loses `dockview-open` on close / plugin stop.
+
+   NOTE: the server MEMBER LIST is deliberately NOT in here. It is collapsed the
+   way a real thread does it — by dispatching Discord's own
+   `CHANNEL_TOGGLE_MEMBERS_SECTION` (see syncNativeMemberList in panel.tsx) — so
+   the people-icon toggle button's lit (`selected__`) state goes OFF in lockstep
+   and the member aside is unmounted by Discord itself. A CSS `display:none`
+   would only HIDE the aside while Discord still thinks it's open (button stays
+   lit) — the inconsistent, cosmetic override we replaced.
 
    ANCHOR = `[class*="page__"] > div:has(> #dockview-root.dockview-open)`, i.e.
    the page inner flex row GATED on the presence of OUR open host as its direct
@@ -75,13 +83,12 @@
    The inner row is the single <div> child of `[class*="page__"]`; our host
    `#dockview-root` is a direct child of THAT row, so the descendant/child
    combinators below still reach the sidebars while the :not(#dockview-root)
-   guards keep our own card visible. We must NEVER hide our own panel: the
-   member/DM asides are matched by their own classes/aria, and the thread card is
+   guards keep our own card visible. We must NEVER hide our own panel: the DM
+   profile aside is matched by its own aria, and the thread card is
    matched as a DIRECT chatLayerWrapper child of the inner row — our host is
    `#dockview-root` (no chatLayerWrapper class; its card is nested one level
    deeper), so it is excluded structurally, plus an explicit :not(#dockview-root)
    guard. */
-[class*="page__"] > div:has(> #dockview-root.dockview-open) aside[class*="membersWrap"],
 [class*="page__"] > div:has(> #dockview-root.dockview-open) aside[aria-labelledby^="user-profile-sidebar-heading"] {
     display: none !important;
 }

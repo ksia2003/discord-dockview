@@ -226,6 +226,7 @@ async function loadPersistedState(): Promise<void> {
         state.open = true;
         ensureHost();
         applyOpenState();
+        syncNativeMemberList(true); // restored open across a restart → collapse like a thread
     }
     forceRender?.();
 }
@@ -1449,6 +1450,7 @@ export function load(opts: { name: string; html?: string | null; url?: string | 
     saveCurrentChannelState();
     ensureHost();
     applyOpenState();
+    syncNativeMemberList(true); // collapse the member list like a thread
     // A no-op didn't change the body; everything else needs a render.
     if (result !== "noop") forceRender?.();
 }
@@ -1527,6 +1529,11 @@ export function onChannelSelect(newId: string | null) {
         restoreDescriptor(mem.descriptor);
         ensureHost();
         applyOpenState();
+        // The incoming channel may have its OWN member list shown — collapse it
+        // (this is an explicit edge, so re-collapsing here mirrors a thread
+        // re-collapsing the list on navigation; the prior channel's pending flag
+        // is irrelevant since each shown list gets collapsed in turn).
+        syncNativeMemberList(true);
         forceRender?.();
     } else {
         // nothing remembered (or it was closed) -> empty + closed panel. Snapshot
@@ -1537,6 +1544,7 @@ export function onChannelSelect(newId: string | null) {
         state.open = mem ? mem.open : false;
         lsSet(LS_OPEN, state.open ? "1" : "0");
         applyOpenState();
+        syncNativeMemberList(state.open); // restore the member list if we're closing here
         forceRender?.();
     }
 }
@@ -4264,6 +4272,72 @@ function ensureHost(): boolean {
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Native member-list collapse — behave EXACTLY like a real thread.
+//
+// Opening a real Discord thread makes Discord itself toggle the channel's member
+// list OFF: the people-icon button in the channel header loses its lit
+// (`selected__`) state and Discord UNMOUNTS the member aside. Closing the thread
+// restores it. We reproduce that by dispatching Discord's OWN action
+// (`CHANNEL_TOGGLE_MEMBERS_SECTION`, exposed as `toggleMembersSection()`), NOT by
+// CSS-hiding the aside — a `display:none` would leave Discord thinking the list
+// is still open, so the toggle button would stay LIT while the list is gone
+// (the inconsistent cosmetic override this replaces).
+//
+// READ SIGNAL: the action flips a Flux flag that BOTH lights the button AND
+// mounts/unmounts the `membersWrap` aside, so the aside's mere PRESENCE in the
+// DOM is a locale-independent, button-consistent read of "is the list shown".
+// (The button's lit class is `selected__`; aria-labels are localized, the aside
+// class is not — so we key off the aside.)
+//
+// EDGE-TRIGGERED: we only act from explicit open/close/channel-switch edges
+// (toggle/load/onChannelSelect/start/stop), never from the high-frequency
+// re-injection observer — so a typing-indicator tick can't make us fight the
+// store, and a manual re-show by the user while the panel is open is honored
+// (we don't re-collapse until the next explicit edge, just like a thread only
+// re-collapses on the next navigation).
+// ---------------------------------------------------------------------------
+
+/** True ⟺ we collapsed the member list and owe a restore when the panel closes. */
+let memberListRestorePending = false;
+
+/** Is the server member list currently shown? Keyed off the `membersWrap` aside,
+ *  which Discord mounts/unmounts in lockstep with the toggle button's lit state. */
+function isMemberListShown(): boolean {
+    return !!document.querySelector('aside[class*="membersWrap"]');
+}
+
+/** Dispatch Discord's own member-list toggle (same action the header button and a
+ *  thread fire). Resolved fresh each call so a late webpack chunk can't stale it. */
+function dispatchMemberListToggle(): boolean {
+    try {
+        const mod = (findByProps as any)?.("toggleMembersSection");
+        if (mod && typeof mod.toggleMembersSection === "function") {
+            mod.toggleMembersSection();
+            return true;
+        }
+    } catch { /* ignore — fall through, panel still works without the collapse */ }
+    return false;
+}
+
+/** Drive the native member-list state to match the panel's open state.
+ *  open=true  → if the list is shown, collapse it (button light goes off) and
+ *               remember we owe a restore.
+ *  open=false → if we collapsed it and it is still collapsed, restore it. If the
+ *               user manually re-showed it meanwhile, leave their choice intact. */
+function syncNativeMemberList(open: boolean) {
+    if (open) {
+        if (isMemberListShown() && dispatchMemberListToggle()) {
+            memberListRestorePending = true;
+        }
+    } else if (memberListRestorePending) {
+        // Only toggle back if it's still collapsed (avoid re-hiding a list the
+        // user manually re-opened while the panel was up).
+        if (!isMemberListShown()) dispatchMemberListToggle();
+        memberListRestorePending = false;
+    }
+}
+
 /** Reflect open/closed across the spacer host AND the exclusive right slot
  *  (server member list / DM user-profile panel / native thread sidebar).
  *
@@ -4313,12 +4387,14 @@ function applyHostWidth() {
     host.style.width = `${state.width}px`;
 }
 
-/** Drop the document state class (restoring any preemptively-hidden sidebar) and
- *  the page-inner tag, so no DockView marks linger after the plugin stops. Used
- *  on plugin stop; a normal close goes through applyOpenState. */
+/** Drop the document state class (restoring any preemptively-hidden DM profile /
+ *  thread sidebar) and the page-inner tag, AND restore the natively-collapsed
+ *  member list, so no DockView marks linger after the plugin stops. Used on
+ *  plugin stop; a normal close goes through applyOpenState + syncNativeMemberList. */
 function restoreHiddenMembers() {
     document.documentElement.classList.remove("dockview-open");
     document.querySelectorAll(".dockview-page-inner").forEach(el => el.classList.remove("dockview-page-inner"));
+    syncNativeMemberList(false); // un-collapse the member list if we collapsed it
 }
 
 function toggle() {
@@ -4328,6 +4404,7 @@ function toggle() {
     if (state.open) ensureHost();
     saveCurrentChannelState();
     applyOpenState();
+    syncNativeMemberList(state.open); // collapse the member list like a thread / restore on close
     forceRender?.();
 }
 
@@ -4573,7 +4650,9 @@ export function exposeDebug() {
         load, retry: retryActiveLoad, clear: clearArtifact, popout: popoutArtifact, content, detectType,
         contentCache, get loadSeq() { return loadSeq; }, get activeCacheKey() { return activeCacheKey; },
         pdfView, get pdfControls() { return pdfControls; },
-        imgView, get imgControls() { return imgControls; }
+        imgView, get imgControls() { return imgControls; },
+        get memberListShown() { return isMemberListShown(); },
+        get memberListRestorePending() { return memberListRestorePending; }
     };
 }
 export function unexposeDebug() {
