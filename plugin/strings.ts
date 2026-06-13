@@ -24,12 +24,12 @@ export const STRINGS = {
             sub: "The link may have expired or been removed."
         },
         forbidden: {
-            title: "You can't view this file",
-            sub: "You don't have access to it."
+            title: "You don't have access to this file",
+            sub: "You don't have permission to view it."
         },
         server: {
             title: "The server couldn't send this file",
-            sub: "Give it a moment and try again."
+            sub: "It's us, not you — give it a moment and try again."
         },
         // {code} -> the HTTP status code.
         http: {
@@ -58,8 +58,8 @@ export const STRINGS = {
         // {ext} -> the file extension WITHOUT the dot, or null.
         sub: (ext: string | null) =>
             ext
-                ? `We don't speak .${ext} — download it and the right app will.`
-                : "This file can't be previewed — download it to open it elsewhere."
+                ? `We can't preview .${ext} files — download it to open it in another app.`
+                : "We can't preview this file — download it to open it elsewhere."
     },
 
     // --- system messages: empty state ---------------------------------------
@@ -76,7 +76,7 @@ export const STRINGS = {
     // --- shared action buttons (state cards) --------------------------------
     actions: {
         retry: "Try again",
-        openInNewWindow: "Open in new window",
+        openInNewWindow: "Open in browser",
         download: "Download"
     },
 
@@ -127,7 +127,7 @@ export const STRINGS = {
 
     // --- header buttons (popout / more / close) -----------------------------
     header: {
-        openInNewWindow: "Open in new window",
+        openInNewWindow: "Open in browser",
         popOut: "Pop out",
         more: "More",
         close: "Close",
@@ -137,7 +137,7 @@ export const STRINGS = {
     // --- ⋯ more-menu items ---------------------------------------------------
     menu: {
         fitToWidth: "Fit to width",
-        openInNewWindow: "Open in new window",
+        openInNewWindow: "Open in browser",
         download: "Download",
         copyImage: "Copy image",
         copyLink: "Copy link",
