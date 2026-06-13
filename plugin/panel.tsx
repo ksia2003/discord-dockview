@@ -637,9 +637,17 @@ const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "apn
 const MD_STYLE = `<style>
 :root { color-scheme: dark; }
 html, body { margin: 0; padding: 0; background: #1e1f22; }
+/* MD-1: constrain the reading body to a comfortable measure (~70ch) and centre
+   it as a column, so long-form markdown doesn't stretch edge-to-edge on a wide
+   panel. At narrow widths the 70ch cap exceeds the panel so the column simply
+   fills it (minus the side padding) — i.e. the constraint only bites once the
+   panel is wide enough to harm readability. The cap is on the .md container;
+   tables and code blocks inside still scroll horizontally within it when their
+   own content is wider. */
 .md {
   box-sizing: border-box;
-  max-width: 100%;
+  max-width: 70ch;
+  margin: 0 auto;
   padding: 16px 20px 48px;
   color: #dbdee1;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji";
