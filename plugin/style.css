@@ -348,6 +348,63 @@
     scrollbar-gutter: stable;
 }
 
+/* Dock-viewer scrollbars: match Discord's NATIVE "thin" scroller (the variant it
+   uses for the channel list / member list / thread side panels) so the bar reads
+   as part of the app instead of a white UA default. We never styled the UA
+   scrollbar before, so the PDF/code/MD body showed a glaring light scrollbar over
+   the dark theme. These rules replicate Discord's own .thin scroller rule set
+   verbatim — 8px track, a 4px-radius thumb painted in --scrollbar-thin-thumb with
+   a 2px transparent padding-box border (which insets the thumb so it reads thin),
+   a transparent track, and the same fade-on-hover behaviour — but anchored to the
+   STABLE theme variables --scrollbar-thin-thumb/-track (NOT Discord's hashed
+   scroller_/thin_ classes, which change every build). Only our own scrollers
+   (.dockview-body = shared vertical scroll for PDF/code/MD; .dockview-code-scroll
+   = the code column's horizontal scroll) are targeted — Discord's scrollers are
+   untouched. (The markdown viewer renders inside a sandboxed srcdoc iframe with
+   its own stylesheet, so ITS scrollers are styled separately in MD_STYLE in
+   panel.tsx — these main-document selectors can't reach into the frame.) Fallback
+   colours kept for the rare theme that lacks the vars. */
+.dockview-body::-webkit-scrollbar,
+.dockview-code-scroll::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+.dockview-body::-webkit-scrollbar-track,
+.dockview-code-scroll::-webkit-scrollbar-track {
+    background-color: var(--scrollbar-thin-track, transparent);
+}
+.dockview-body::-webkit-scrollbar-thumb,
+.dockview-code-scroll::-webkit-scrollbar-thumb {
+    background-clip: padding-box;
+    background-color: var(--scrollbar-thin-thumb, #1a1b1e);
+    border: 2px solid transparent;
+    border-radius: 4px;
+    min-height: 40px;
+}
+.dockview-body::-webkit-scrollbar-corner,
+.dockview-code-scroll::-webkit-scrollbar-corner {
+    background-color: transparent;
+}
+/* Fade-on-hover, exactly like Discord's .fade scrollers: the thumb/track stay
+   hidden until the pointer is over the scroller (or it is keyboard-focused), so a
+   quiet PDF/code view shows no bar at rest. */
+.dockview-body::-webkit-scrollbar-thumb,
+.dockview-body::-webkit-scrollbar-track,
+.dockview-code-scroll::-webkit-scrollbar-thumb,
+.dockview-code-scroll::-webkit-scrollbar-track {
+    visibility: hidden;
+}
+.dockview-body:hover::-webkit-scrollbar-thumb,
+.dockview-body:hover::-webkit-scrollbar-track,
+.dockview-body:focus-within::-webkit-scrollbar-thumb,
+.dockview-body:focus-within::-webkit-scrollbar-track,
+.dockview-code-scroll:hover::-webkit-scrollbar-thumb,
+.dockview-code-scroll:hover::-webkit-scrollbar-track,
+.dockview-code-scroll:focus-within::-webkit-scrollbar-thumb,
+.dockview-code-scroll:focus-within::-webkit-scrollbar-track {
+    visibility: visible;
+}
+
 .dockview-placeholder {
     display: flex;
     align-items: center;

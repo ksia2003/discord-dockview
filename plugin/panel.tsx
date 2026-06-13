@@ -647,6 +647,29 @@ const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "apn
 const MD_STYLE = `<style>
 :root { color-scheme: dark; }
 html, body { margin: 0; padding: 0; background: #1e1f22; }
+/* Scrollbars: this is a sandboxed srcdoc iframe with its own document, so it can
+   neither reach our style.css nor see Discord's --scrollbar-* theme vars. Replicate
+   Discord's NATIVE "thin" scroller by hand so the markdown body's vertical bar and
+   any wide code-block / table horizontal bars read as dark-theme chrome, not the
+   white UA default. Geometry is verbatim from Discord's authored .thin rule (8px,
+   4px-radius thumb, 2px transparent padding-box border, min-height 40px, transparent
+   track); #5f606a is exactly what --scrollbar-thin-thumb resolves to in the default
+   dark theme. Same fade-on-hover as Discord's .fade scrollers. */
+html::-webkit-scrollbar, body::-webkit-scrollbar,
+pre::-webkit-scrollbar, table::-webkit-scrollbar { width: 8px; height: 8px; }
+html::-webkit-scrollbar-track, body::-webkit-scrollbar-track,
+pre::-webkit-scrollbar-track, table::-webkit-scrollbar-track { background-color: transparent; }
+html::-webkit-scrollbar-thumb, body::-webkit-scrollbar-thumb,
+pre::-webkit-scrollbar-thumb, table::-webkit-scrollbar-thumb {
+  background-clip: padding-box; background-color: #5f606a;
+  border: 2px solid transparent; border-radius: 4px; min-height: 40px;
+}
+html::-webkit-scrollbar-corner, body::-webkit-scrollbar-corner,
+pre::-webkit-scrollbar-corner, table::-webkit-scrollbar-corner { background-color: transparent; }
+pre::-webkit-scrollbar-thumb, pre::-webkit-scrollbar-track,
+table::-webkit-scrollbar-thumb, table::-webkit-scrollbar-track { visibility: hidden; }
+pre:hover::-webkit-scrollbar-thumb, pre:hover::-webkit-scrollbar-track,
+table:hover::-webkit-scrollbar-thumb, table:hover::-webkit-scrollbar-track { visibility: visible; }
 /* MD-1: constrain the reading body to a comfortable measure (~70ch) and centre
    it as a column, so long-form markdown doesn't stretch edge-to-edge on a wide
    panel. At narrow widths the 70ch cap exceeds the panel so the column simply
