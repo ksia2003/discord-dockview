@@ -28,6 +28,15 @@ import { WorkerMessageHandler as PdfWorkerMessageHandler } from "pdfjs-dist/buil
 // marked — markdown -> HTML, bundled into the renderer IIFE.
 import { marked } from "marked";
 
+// KaTeX — TeX -> static HTML/CSS math, bundled into the renderer IIFE. The
+// markdown body is a sandboxed srcdoc iframe (no runtime JS, no external assets),
+// so we PRE-render each math span to self-contained HTML on the main side here
+// and inline KaTeX's CSS (+ its woff2 fonts as base64) into the iframe head. The
+// existing chat-side renderer (latex.ts) loads KaTeX from a CDN into the main
+// Discord document — that does not reach this sandbox, so we bundle it instead.
+import katex from "katex";
+import { KATEX_CSS } from "./katex-css";
+
 // highlight.js (bundled) — the FALLBACK code highlighter. We prefer Discord's
 // OWN bundled hljs (resolved at runtime via Webpack) and only fall back here.
 import hljs from "highlight.js";
@@ -774,6 +783,19 @@ table:hover::-webkit-scrollbar-thumb, table:hover::-webkit-scrollbar-track { vis
 .hljs-deletion { color: #ff938a; }
 </style>`;
 
+// Dark-theme overlay for KaTeX math, injected after KATEX_CSS only when a doc
+// has math. KaTeX colours math via `currentColor`, so it inherits .md's light
+// text on the dark background with no extra work. We only: (1) let very wide
+// DISPLAY math scroll horizontally instead of overflowing the 70ch column, and
+// (2) style the raw-text fallback for a TeX parse error so it reads as an inline
+// error rather than silently vanishing.
+const MD_MATH_STYLE = `<style>
+.md .katex { font-size: 1.05em; }
+.md .katex-display { margin: 14px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.md .katex-error { color: #f85149; }
+.md .md-math-fallback { color: #f85149; background: #2b2d31; }
+</style>`;
+
 /** Decide the content type from an explicit hint or the url/name extension. */
 function detectType(opts: { type?: ContentType; url?: string | null; name?: string | null }): ContentType {
     if (opts.type) return opts.type;
@@ -1448,6 +1470,125 @@ function loadUnknown(opts: { name: string; url?: string | null; noCache?: boolea
         });
 }
 
+// ---------------------------------------------------------------------------
+// Markdown math (KaTeX) — render `$...$` inline and `$$...$$` display math.
+// ---------------------------------------------------------------------------
+// We register the math detector as marked EXTENSIONS (a block tokenizer for
+// `$$...$$` and an inline tokenizer for `$...$`) rather than pre-scanning the
+// raw source with a regex. That is deliberate: marked has already carved out
+// fenced code blocks and inline code spans by the time these tokenizers run, so
+// a `$` inside ```code``` or `` `code` `` is NEVER offered to them — code-block
+// and inline-code protection comes for free, no fragile masking. `\$` escapes
+// are handled by the `start`/`tokenizer` rejecting a dollar that the lexer has
+// already consumed as an escape, plus our own escaped-delimiter check.
+//
+// Each math token is rendered to self-contained HTML by KaTeX at parse time
+// (renderer below). `throwOnError:false` makes a bad expression degrade to the
+// raw source text styled red instead of throwing — a single broken `$\frac{$`
+// can't break the whole document.
+//
+// `_mdHasMath` is set by the renderer whenever it emits real math, so the doc
+// wrapper knows whether to inject the (heavy) KaTeX CSS+font payload.
+let _mdHasMath = false;
+
+function renderMath(tex: string, displayMode: boolean): string {
+    try {
+        return katex.renderToString(tex, {
+            displayMode,
+            throwOnError: false,
+            output: "html",
+            // Render a parse error as the raw source (red) instead of throwing,
+            // so one bad expression never takes down the rest of the doc.
+            errorColor: "#f85149",
+            strict: "ignore",
+            trust: false
+        });
+    } catch {
+        // Belt-and-braces: even with throwOnError:false KaTeX can throw on a
+        // few pathological inputs. Fall back to the literal delimited source.
+        const d = displayMode ? "$$" : "$";
+        return `<code class="md-math-fallback">${escapeHtml(d + tex + d)}</code>`;
+    }
+}
+
+// Register once at module load. marked, katex and escapeHtml are plain bundled
+// imports (NOT the lazy @webpack proxies), so this top-level call is safe.
+marked.use({
+    extensions: [
+        {
+            // Display math: $$ ... $$  (may span multiple lines). Block-level so
+            // it sits on its own line like a paragraph.
+            name: "mathBlock",
+            level: "block",
+            start(src: string) {
+                const i = src.indexOf("$$");
+                return i < 0 ? undefined : i;
+            },
+            tokenizer(src: string) {
+                // Require the opener at position 0 and a closing $$. Content is
+                // non-empty (reject "$$$$"). `[\s\S]` so it can span newlines.
+                const m = /^\$\$([\s\S]+?)\$\$/.exec(src);
+                if (!m) return undefined;
+                return { type: "mathBlock", raw: m[0], text: m[1] };
+            },
+            renderer(token: any) {
+                _mdHasMath = true;
+                return renderMath(token.text, true) + "\n";
+            }
+        },
+        {
+            // Inline math: $ ... $  on a single line. Guarded against prose that
+            // merely contains dollar signs (prices, shell vars) the same way the
+            // chat renderer is: no whitespace hugging the delimiters, and a span
+            // that is nothing but a number/currency amount is left as text.
+            name: "mathInline",
+            level: "inline",
+            start(src: string) {
+                // Point the inline lexer at the next single `$` that is not part
+                // of a `$$` (display handled at block level) so it gives us a
+                // chance to tokenize there.
+                const m = /(?<!\$)\$(?!\$)/.exec(src);
+                return m ? m.index : undefined;
+            },
+            tokenizer(src: string) {
+                if (src[0] !== "$" || src[1] === "$") return undefined;
+                // Closing single `$` that is not itself escaped or doubled.
+                const m = /^\$((?:\\.|[^$\\])+?)\$(?!\$)/.exec(src);
+                if (!m) return undefined;
+                const inner = m[1];
+                // (1) no whitespace immediately inside the delimiters: "$ x$".
+                if (/^\s/.test(inner) || /\s$/.test(inner)) return undefined;
+                // (2) a digit right after the closing $ means the next "$" was a
+                //     price ("$5 and $10") — reject this span.
+                const after = src.charAt(m[0].length);
+                if (/\d/.test(after)) return undefined;
+                // (3) pure number / currency-ish amount with no letters or TeX
+                //     command: "$3.50", "$1,000" — leave as text.
+                if (!/[a-zA-Z\\]/.test(inner) && /^[\d.,\s+\-*/()]+$/.test(inner)) return undefined;
+                return { type: "mathInline", raw: m[0], text: inner };
+            },
+            renderer(token: any) {
+                _mdHasMath = true;
+                return renderMath(token.text, false);
+            }
+        }
+    ]
+});
+
+/** Render markdown source to body HTML, tracking whether it emitted any math.
+ *  `_mdHasMath` is reset per call and read straight after, so the doc wrapper
+ *  can decide whether to pay for the KaTeX CSS/font payload. */
+function markdownToHtml(md: string): { html: string; hasMath: boolean } {
+    _mdHasMath = false;
+    let html: string;
+    try {
+        html = marked.parse(md, { async: false, gfm: true, breaks: false }) as string;
+    } catch (e) {
+        return { html: "<pre>" + escapeHtml(String(e)) + "</pre>", hasMath: false };
+    }
+    return { html, hasMath: _mdHasMath };
+}
+
 /** MARKDOWN loader: fetch -> marked -> dark doc -> nonce sandbox iframe path. */
 function loadMarkdown(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
     resetPdf();
@@ -1467,14 +1608,9 @@ function loadMarkdown(opts: { name: string; url?: string | null; noCache?: boole
             return r.text();
         })
         .then(md => {
-            let bodyHtml: string;
-            try {
-                bodyHtml = marked.parse(md, { async: false, gfm: true, breaks: false }) as string;
-            } catch (e) {
-                bodyHtml = "<pre>" + escapeHtml(String(e)) + "</pre>";
-            }
-            bodyHtml = highlightMarkdownCode(bodyHtml);
-            const fullHtml = wrapMarkdownDoc(bodyHtml);
+            const { html, hasMath } = markdownToHtml(md);
+            const bodyHtml = highlightMarkdownCode(html);
+            const fullHtml = wrapMarkdownDoc(bodyHtml, hasMath);
             if (entry) { entry.html = fullHtml; const nonce = pageNonce(); entry.frameHtml = nonce ? injectNonce(fullHtml, nonce) : fullHtml; entry.loading = false; entry.error = null; }
             if (token !== loadSeq) return;
             setArtifactHtml(fullHtml);
@@ -1555,9 +1691,15 @@ const MD_LINK_SCRIPT = `<script>(function(){
 
 /** Wrap rendered markdown HTML in a full dark-themed document. Anchors get a
  *  default target so even if the click handler is bypassed they don't navigate
- *  the sandbox itself; the injected script routes clicks to the host browser. */
-function wrapMarkdownDoc(bodyHtml: string): string {
-    return `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">${MD_STYLE}</head><body><article class="md">${bodyHtml}</article>${MD_LINK_SCRIPT}</body></html>`;
+ *  the sandbox itself; the injected script routes clicks to the host browser.
+ *
+ *  When the doc contains math we additionally inject the inlined KaTeX stylesheet
+ *  (CSS + base64 woff2 fonts) plus a small dark-theme overlay. The sandbox can't
+ *  load external fonts, so without the inlined payload math glyphs would render
+ *  as tofu boxes — hence we only pay for it when `hasMath` is true. */
+function wrapMarkdownDoc(bodyHtml: string, hasMath: boolean): string {
+    const mathStyle = hasMath ? `<style>${KATEX_CSS}</style>${MD_MATH_STYLE}` : "";
+    return `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">${MD_STYLE}${mathStyle}</head><body><article class="md">${bodyHtml}</article>${MD_LINK_SCRIPT}</body></html>`;
 }
 
 /** Show a file in the panel body. Returns "noop" (already shown), "cache"
