@@ -241,17 +241,19 @@ html.dockview-open [class*="page__"] > div > div:empty:not(#dockview-root):has(+
     align-items: center;
     /* lowest shrink priority for the filename: it ellipsises, never disappears */
 }
-/* Per-viewer core controls, inline in the header. Shrink-protected vs the
-   filename (so the controls win space first), but ALLOWED to clip its own
-   lowest-priority items at extreme narrow width before the filename gives up its
-   last sliver. The action buttons to its right never shrink. */
+/* Per-viewer core controls, inline in the header. SHRINK-PROTECTED and NEVER
+   clipped (flex:0 0 auto, no overflow:hidden) — the control buttons must always
+   stay fully visible and clickable, even at the minimum panel width. The only
+   thing that gives up space as the header narrows is the filename region (it
+   ellipsises). Affordances we CAN afford to lose (PDF page arrows, code language
+   label, find/copy labels) are dropped via the container queries at the bottom of
+   this file, which removes them cleanly from layout — but the surviving core
+   buttons are never sliced off by an overflow clip. */
 .dockview-header-controls {
-    flex: 0 1 auto;
-    min-width: 0;
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     gap: 6px;
-    overflow: hidden;
 }
 .dockview-header-controls:empty { display: none; }
 .dockview-header-actions {
