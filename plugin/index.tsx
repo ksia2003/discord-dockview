@@ -20,7 +20,7 @@ import managedStyle from "./style.css?managed";
 
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
-import { exposeDebug, onChannelSelect, startPanel, stopPanel, unexposeDebug } from "./panel";
+import { exposeDebug, onChannelSelect, onMemberSectionToggle, onUserProfileSidebarToggle, startPanel, stopPanel, unexposeDebug } from "./panel";
 
 export default definePlugin({
     name: "DockView",
@@ -35,9 +35,22 @@ export default definePlugin({
     // Per-channel panel memory: Discord fires CHANNEL_SELECT on every channel
     // switch. We save the leaving channel's panel state and restore the entered
     // channel's (re-load its remembered file, or leave the panel closed/empty).
+    //
+    // Reverse member-list parity: the member list / DM user-profile sidebar share
+    // the exclusive right slot with a thread (and with our panel). Clicking those
+    // header buttons fires these toggle actions — when our panel holds the slot we
+    // close it so the sidebar can take over, exactly as opening members evicts a
+    // thread. (Our own open/close member-list toggles are filtered inside the
+    // handler via a self-dispatch flag.)
     flux: {
         CHANNEL_SELECT({ channelId }: { channelId: string | null; }) {
             onChannelSelect(channelId ?? null);
+        },
+        CHANNEL_TOGGLE_MEMBERS_SECTION() {
+            onMemberSectionToggle();
+        },
+        USER_PROFILE_SIDEBAR_TOGGLE_SECTION() {
+            onUserProfileSidebarToggle();
         }
     },
 

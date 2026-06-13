@@ -4301,6 +4301,15 @@ function ensureHost(): boolean {
 /** True ⟺ we collapsed the member list and owe a restore when the panel closes. */
 let memberListRestorePending = false;
 
+/** Set while WE are the ones firing `CHANNEL_TOGGLE_MEMBERS_SECTION` (our open-time
+ *  collapse / close-time restore). The action is a pure, argument-less toggle that
+ *  Discord ALSO fires when the user clicks the people-icon header button, and both
+ *  go through the same FluxDispatcher — so the only way to tell our own dispatch
+ *  apart from a real user click in the Flux subscriber is this flag. Flux dispatch
+ *  is synchronous (the subscriber runs INSIDE dispatchMemberListToggle), so the
+ *  flag is reliably true exactly for our own toggles and false for user clicks. */
+let selfMemberToggle = false;
+
 /** Is the server member list currently shown? Keyed off the `membersWrap` aside,
  *  which Discord mounts/unmounts in lockstep with the toggle button's lit state. */
 function isMemberListShown(): boolean {
@@ -4308,8 +4317,11 @@ function isMemberListShown(): boolean {
 }
 
 /** Dispatch Discord's own member-list toggle (same action the header button and a
- *  thread fire). Resolved fresh each call so a late webpack chunk can't stale it. */
+ *  thread fire). Resolved fresh each call so a late webpack chunk can't stale it.
+ *  Flagged with `selfMemberToggle` so our Flux subscriber ignores the resulting
+ *  synchronous CHANNEL_TOGGLE_MEMBERS_SECTION (it's us, not a user click). */
 function dispatchMemberListToggle(): boolean {
+    selfMemberToggle = true;
     try {
         const mod = (findByProps as any)?.("toggleMembersSection");
         if (mod && typeof mod.toggleMembersSection === "function") {
@@ -4317,6 +4329,7 @@ function dispatchMemberListToggle(): boolean {
             return true;
         }
     } catch { /* ignore — fall through, panel still works without the collapse */ }
+    finally { selfMemberToggle = false; }
     return false;
 }
 
@@ -4336,6 +4349,72 @@ function syncNativeMemberList(open: boolean) {
         if (!isMemberListShown()) dispatchMemberListToggle();
         memberListRestorePending = false;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Reverse parity: a real thread and the member list are mutually exclusive, so
+// clicking the people-icon header button while a THREAD is open CLOSES the
+// thread (and shows members). Our panel sits in that same exclusive slot, so it
+// must do the same: pressing the member-list button (or, in a DM, the
+// user-profile sidebar button) while the panel is open CLOSES our panel and lets
+// that sidebar take the slot. Driven off the Flux toggle actions (subscribed in
+// index.tsx) rather than a button-DOM listener, so it survives Discord re-rendering
+// the header and works regardless of locale.
+// ---------------------------------------------------------------------------
+
+/** Close the panel because something else (member list / user-profile sidebar)
+ *  is taking over the exclusive right slot — exactly like opening the member list
+ *  evicts a thread. This is the plain close path MINUS the member-list restore:
+ *  the user just asked for that sidebar, so we must NOT re-collapse it. We clear
+ *  memberListRestorePending so the normal close machinery can't undo their choice. */
+function closeForExclusiveTakeover() {
+    if (!state.open) return;
+    // We owe no restore: the user explicitly wants the sidebar now. Clearing this
+    // BEFORE closing stops syncNativeMemberList/restoreHiddenMembers from fighting
+    // them by re-hiding the list they just opened.
+    memberListRestorePending = false;
+    state.open = false;
+    lsSet(LS_OPEN, "0");
+    imgView.fullscreen = false; // closing the panel drops the lightbox
+    saveCurrentChannelState();
+    applyOpenState(); // drops html.dockview-open → the sidebar is no longer CSS-hidden
+    forceRender?.();
+}
+
+/** Flux subscriber for CHANNEL_TOGGLE_MEMBERS_SECTION. Fires for BOTH our own
+ *  open/close dispatches and a real user click on the people-icon button. We only
+ *  act on a genuine user click (selfMemberToggle === false) while the panel is
+ *  open: that means the user is turning the member list ON in the slot our panel
+ *  occupies, so we vacate it. The action carries no show/hide flag and the aside
+ *  mounts a tick LATER (not synchronously in the handler), so we confirm the
+ *  member list actually came up on the next macrotask before closing — guarding
+ *  against any spurious toggle that would hide rather than show. */
+export function onMemberSectionToggle() {
+    if (selfMemberToggle) return;       // our own collapse/restore — ignore
+    if (!state.open) return;            // nothing of ours to evict
+    // The aside isn't in the DOM yet at dispatch time; let Discord's store + render
+    // settle, then confirm the member list is now shown before we yield the slot.
+    // The mount lands ~a macrotask later, but the exact ordering vs. our timer is
+    // not guaranteed, so we poll a couple of short ticks rather than risk missing
+    // it on a single setTimeout(0) (a false negative = the panel wouldn't close).
+    let tries = 0;
+    const check = () => {
+        if (!state.open) return;        // closed meanwhile
+        if (isMemberListShown()) { closeForExclusiveTakeover(); return; }
+        if (++tries < 4) setTimeout(check, 24);
+    };
+    setTimeout(check, 0);
+}
+
+/** Flux subscriber for USER_PROFILE_SIDEBAR_TOGGLE_SECTION — the DM analog of the
+ *  member-list button (it competes for the same exclusive right slot). We never
+ *  dispatch this action ourselves, so there is no self-trigger to guard; any fire
+ *  is a user click. When the panel is open, vacate the slot for the profile
+ *  sidebar, same as for the member list. (Our open-state CSS already hides the
+ *  profile sidebar, but without this the panel would otherwise just stay put.) */
+export function onUserProfileSidebarToggle() {
+    if (!state.open) return;
+    closeForExclusiveTakeover();
 }
 
 /** Reflect open/closed across the spacer host AND the exclusive right slot
@@ -4652,7 +4731,9 @@ export function exposeDebug() {
         pdfView, get pdfControls() { return pdfControls; },
         imgView, get imgControls() { return imgControls; },
         get memberListShown() { return isMemberListShown(); },
-        get memberListRestorePending() { return memberListRestorePending; }
+        get memberListRestorePending() { return memberListRestorePending; },
+        get selfMemberToggle() { return selfMemberToggle; },
+        onMemberSectionToggle, onUserProfileSidebarToggle, closeForExclusiveTakeover
     };
 }
 export function unexposeDebug() {
