@@ -4797,6 +4797,8 @@ function DockPanel() {
         lsSet(LS_OPEN, "0");
         saveCurrentChannelState();
         applyOpenState();
+        syncNativeMemberList(false);
+        syncNativeProfileSidebar(false);
         forceRender?.();
     }, []);
 
