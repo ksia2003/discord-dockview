@@ -41,83 +41,14 @@
     display: block !important;
 }
 
-/* Exclusive right-slot mutual exclusion — PREEMPTIVE. While the panel is open
-   these rules hide the exclusive right occupant by STABLE SELECTOR — the DM
-   user-profile sidebar and a native thread sidebar (chatLayerWrapper sibling of
-   chat_ + its empty mounting placeholder). Because the rule keys off a
-   structural selector + the host's own state class — not per-node attributes
-   applied after the node paints — a freshly-mounted sidebar is hidden from its
-   FIRST paint (no flash on channel switch / thread open). The match is
-   `display:none !important` so Discord's own inline display writes can't un-hide
-   it. Cleared when the host loses `dockview-open` on close / plugin stop.
-
-   NOTE: the server MEMBER LIST is deliberately NOT in here. It is collapsed the
-   way a real thread does it — by dispatching Discord's own
-   `CHANNEL_TOGGLE_MEMBERS_SECTION` (see syncNativeMemberList in panel.tsx) — so
-   the people-icon toggle button's lit (`selected__`) state goes OFF in lockstep
-   and the member aside is unmounted by Discord itself. A CSS `display:none`
-   would only HIDE the aside while Discord still thinks it's open (button stays
-   lit) — the inconsistent, cosmetic override we replaced.
-
-   ANCHOR = `[class*="page__"] > div:has(> #dockview-root.dockview-open)`, i.e.
-   the page inner flex row GATED on the presence of OUR open host as its direct
-   child — NOT `html.dockview-open`.
-
-   WHY NOT html.dockview-open (the previous anchor): Discord OWNS the <html>
-   className and rewrites it wholesale on every typing-indicator tick (it toggles
-   `app-focused` etc). On those ticks it momentarily strips ALL classes it doesn't
-   manage — including our `dockview-open` — for ~15–200ms before its own React
-   commit (or our MutationObserver) re-adds it. Every rule gated on
-   `html.dockview-open` therefore STOPS matching for those frames and the hidden
-   member list / profile / thread FLASHES back in (the reported flicker — measured
-   at ~11/600 sampled frames while typing). The previous round migrated the
-   DESCENDANT part of the selector off the JS `.dockview-page-inner` tag onto
-   Discord's stable `page__` parent, but left the `html.dockview-open` GATE, which
-   is the same class of bug one level up: a JS-applied marker on a node Discord
-   rewrites. `#dockview-root` is OUR element — Discord never touches its className
-   — so gating on `#dockview-root.dockview-open` via `:has()` is stable across
-   every keystroke (sampled: matched in 603/603 frames, including the 11 where the
-   <html> class was missing). Single non-nested `:has(> …)` parses and applies in
-   this engine (verified).
-
-   The inner row is the single <div> child of `[class*="page__"]`; our host
-   `#dockview-root` is a direct child of THAT row, so the descendant/child
-   combinators below still reach the sidebars while the :not(#dockview-root)
-   guards keep our own card visible. We must NEVER hide our own panel: the DM
-   profile aside is matched by its own aria, and the thread card is
-   matched as a DIRECT chatLayerWrapper child of the inner row — our host is
-   `#dockview-root` (no chatLayerWrapper class; its card is nested one level
-   deeper), so it is excluded structurally, plus an explicit :not(#dockview-root)
-   guard. */
-[class*="page__"] > div:has(> #dockview-root.dockview-open) aside[aria-labelledby^="user-profile-sidebar-heading"] {
-    display: none !important;
-}
-/* Native thread conversation sidebar: a chatLayerWrapper card that is a direct
-   page-inner sibling of chat_ (the SAME layout slot our dock occupies). Discord
-   sometimes mounts the card directly and sometimes inside one wrapper div, so we
-   match both shapes (the child IS a chatLayerWrapper, OR it directly contains
-   one). #dockview-root is excluded structurally (its chatLayerWrapper is nested
-   as `#dockview-root > .dockview-wrapper`, not a page-inner child) AND by the
-   explicit :not guard — without that guard the `:has(> chatLayerWrapper)` rule
-   would also match our own host and hide the whole panel.
-
-   NOTE: each shape is its OWN rule, not a comma group. Chromium drops an ENTIRE
-   grouped rule if any one selector in the group fails to parse, so keeping them
-   separate means a future selector quirk can never silently disable the others.
-   The `:has(> #dockview-root.dockview-open)` GATE and the per-shape `:has(...)`
-   sit at DIFFERENT levels of the selector (parent row vs. sibling/child div) —
-   they are siblings, never nested inside each other — so they parse fine (this
-   engine only rejects :has() literally nested inside another :has()). */
-[class*="page__"] > div:has(> #dockview-root.dockview-open) > div[class*="chatLayerWrapper"]:not(#dockview-root) {
-    display: none !important;
-}
-[class*="page__"] > div:has(> #dockview-root.dockview-open) > div:not(#dockview-root):has(> div[class*="chatLayerWrapper"]) {
-    display: none !important;
-}
-/* The classless empty placeholder Discord parks IMMEDIATELY BEFORE the thread
-   card during the transition (sibling combinator scopes it to the thread's own
-   placeholder, never an unrelated empty div). */
-[class*="page__"] > div:has(> #dockview-root.dockview-open) > div:empty:not(#dockview-root):has(+ div[class*="chatLayerWrapper"]) {
+/* Exclusive right-slot mutual exclusion. panel.tsx marks the competing native
+   occupant (DM profile sidebar, native thread card, and its transition
+   placeholder) while the dock is open. This avoids persistent `:has()` selectors:
+   they were correct visually, but Chromium re-evaluated them on every Discord
+   composer mutation and turned ordinary typing into long tasks even while the
+   panel was closed. The server member list is still collapsed through Discord's
+   own member toggle, not hidden here. */
+[data-dockview-exclusive-hidden="true"] {
     display: none !important;
 }
 

@@ -86,6 +86,7 @@ try {
 }
 
 const HOST_ID = "dockview-root";
+const EXCLUSIVE_HIDDEN_ATTR = "data-dockview-exclusive-hidden";
 const LS_WIDTH = "dockview.dock.width";
 const LS_OPEN = "dockview.dock.open";
 
@@ -1936,14 +1937,12 @@ function findChat(inner: HTMLElement): HTMLElement | null {
     return inner.querySelector<HTMLElement>(':scope > div[class*="chat_"]');
 }
 
-// The exclusive right slot (server member list / DM user-profile sidebar /
-// native thread conversation sidebar) is hidden PREEMPTIVELY by CSS while the
-// panel is open (see applyOpenState + style.css `html.dockview-open`), so it no
-// longer needs to be located in JS — the stylesheet matches it by stable
-// selector and hides it from its first paint (no flash on mount), and a sidebar
-// Discord swaps out can't get stuck hidden. The page-inner is tagged
-// `dockview-page-inner` (in applyOpenState) so the thread-sidebar rule can scope
-// to its direct children without ever matching our own #dockview-root host.
+// The exclusive right slot (DM user-profile sidebar / native thread sidebar) is
+// hidden by marking the actual competing nodes while the panel is open. This
+// replaces persistent `:has()` CSS selectors, which were visually correct but
+// expensive enough to make Discord composer typing miss frames even with the
+// panel closed. The server member list is still collapsed through Discord's own
+// native toggle path below.
 
 // ---------------------------------------------------------------------------
 // Body renderers (content-type router targets)
@@ -5136,24 +5135,61 @@ export function onUserProfileSidebarToggle() {
     closeForExclusiveTakeover();
 }
 
+function clearExclusiveRightSlotHidden(root: ParentNode = document) {
+    root.querySelectorAll<HTMLElement>(`[${EXCLUSIVE_HIDDEN_ATTR}]`)
+        .forEach(el => el.removeAttribute(EXCLUSIVE_HIDDEN_ATTR));
+}
+
+function hideExclusiveRightSlot(inner: HTMLElement | null = findPageInner()) {
+    clearExclusiveRightSlotHidden();
+    if (!state.open || !inner) return;
+
+    const host = document.getElementById(HOST_ID);
+    const mark = (el: Element | null) => {
+        if (!(el instanceof HTMLElement)) return;
+        if (el.id === HOST_ID || (host && host.contains(el))) return;
+        el.setAttribute(EXCLUSIVE_HIDDEN_ATTR, "true");
+    };
+    const isThreadCard = (el: Element | null) =>
+        el instanceof HTMLElement && el.matches('div[class*="chatLayerWrapper"]');
+
+    inner.querySelectorAll<HTMLElement>('aside[aria-labelledby^="user-profile-sidebar-heading"]')
+        .forEach(mark);
+
+    const children = Array.from(inner.children) as HTMLElement[];
+    for (const child of children) {
+        if (child.id === HOST_ID) continue;
+        if (isThreadCard(child) || isThreadCard(child.firstElementChild)) {
+            mark(child);
+            continue;
+        }
+        const next = child.nextElementSibling;
+        if (
+            child.children.length === 0
+            && !(child.textContent || "").trim()
+            && (isThreadCard(next) || isThreadCard(next?.firstElementChild ?? null))
+        ) {
+            mark(child);
+        }
+    }
+}
+
+function nodeMayContainExclusiveRightSlot(node: Node) {
+    if (!(node instanceof HTMLElement)) return false;
+    if (node.matches('aside[aria-labelledby^="user-profile-sidebar-heading"], div[class*="chatLayerWrapper"]')) return true;
+    return !!node.querySelector('aside[aria-labelledby^="user-profile-sidebar-heading"], div[class*="chatLayerWrapper"]');
+}
+
 /** Reflect open/closed across the spacer host AND the exclusive right slot
  *  (server member list / DM user-profile panel / native thread sidebar).
  *
- *  Exclusion is PREEMPTIVE, driven entirely by CSS: we set `dockview-open` on
- *  <html> and tag the page-inner flex row with `dockview-page-inner`, and the
- *  injected stylesheet (style.css) hides the exclusive occupant by stable
- *  selector. Because the rule keys off a document state class — not per-node
- *  attributes applied after Discord mounts and paints the sidebar — any sidebar
- *  that gets (re)mounted while the panel is open is hidden from its first paint,
- *  so a channel switch / thread open never flashes the sidebar before it
- *  disappears. Closing the panel removes the html class = instant restore (and a
- *  sidebar Discord swapped out from under us can't get "stuck hidden", since we
- *  no longer tag individual nodes). */
+ *  Exclusion is applied by `hideExclusiveRightSlot()`, which marks the current
+ *  native sidebar/thread nodes and lets CSS hide only those marked nodes. */
 function applyOpenState() {
     const host = document.getElementById(HOST_ID);
     const inner = findPageInner();
-    // Tag the page-inner so the thread-sidebar CSS rule (scoped to its direct
-    // children) can target the native thread card without touching our host.
+    // Kept as a harmless debug/compat marker; the hide path below no longer
+    // depends on this class because Discord may rewrite className while typing.
     if (inner) inner.classList.add("dockview-page-inner");
 
     if (state.open) {
@@ -5166,13 +5202,14 @@ function applyOpenState() {
             host.style.flex = `0 0 ${state.width}px`;
             host.style.width = `${state.width}px`;
         }
-        // Set the document state class — the stylesheet hides the member list /
-        // DM profile / native thread (whichever is present) preemptively.
+        // Kept for compatibility with any older debug CSS; the current sidebar
+        // exclusion is the targeted data attribute set by hideExclusiveRightSlot.
         document.documentElement.classList.add("dockview-open");
     } else {
         if (host) host.classList.remove("dockview-open");
         document.documentElement.classList.remove("dockview-open");
     }
+    hideExclusiveRightSlot(inner);
 }
 
 /** Write ONLY the host's width/flex from state.width, nothing else. Used in the
@@ -5192,6 +5229,7 @@ function applyHostWidth() {
 function restoreHiddenMembers() {
     document.documentElement.classList.remove("dockview-open");
     document.querySelectorAll(".dockview-page-inner").forEach(el => el.classList.remove("dockview-page-inner"));
+    clearExclusiveRightSlotHidden();
     syncNativeMemberList(false); // un-collapse the member list if we collapsed it
 }
 
@@ -5220,7 +5258,13 @@ function attachObserver() {
 
     observer?.disconnect();
     observedParent = inner;
-    observer = new MutationObserver(() => {
+    observer = new MutationObserver(records => {
+        if (state.open && records.some(r =>
+            r.target === observedParent
+            || Array.from(r.addedNodes).some(nodeMayContainExclusiveRightSlot)
+        )) {
+            hideExclusiveRightSlot();
+        }
         clearTimeout(debounce);
         debounce = setTimeout(() => {
             ensureHost(); // also re-applies open/exclusion state
