@@ -233,10 +233,12 @@ async function loadPersistedState(): Promise<void> {
         }
     }
     if (openStr === "1" && !state.open) {
+        closeNativeChannelSidebar();
         state.open = true;
         ensureHost();
         applyOpenState();
         syncNativeMemberList(true); // restored open across a restart → collapse like a thread
+        syncNativeProfileSidebar(true);
     }
     forceRender?.();
 }
@@ -1792,12 +1794,14 @@ export function load(opts: { name: string; html?: string | null; url?: string | 
     const result = showContent({ name: opts.name, html: opts.html, url: opts.url, type: detectType(opts), noCache: opts.noCache });
 
     // Open FIRST, then persist — so the saved per-channel state records open:true.
+    closeNativeChannelSidebar();
     state.open = true;
     lsSet(LS_OPEN, "1");
     saveCurrentChannelState();
     ensureHost();
     applyOpenState();
     syncNativeMemberList(true); // collapse the member list like a thread
+    syncNativeProfileSidebar(true);
     // A no-op didn't change the body; everything else needs a render.
     if (result !== "noop") forceRender?.();
 }
@@ -1871,6 +1875,7 @@ export function onChannelSelect(newId: string | null) {
     const mem = channelStates.get(newId);
     if (mem && mem.open && mem.descriptor) {
         // restore: open + re-load the remembered file (cache makes this instant).
+        closeNativeChannelSidebar();
         state.open = true;
         lsSet(LS_OPEN, "1");
         restoreDescriptor(mem.descriptor);
@@ -1881,6 +1886,7 @@ export function onChannelSelect(newId: string | null) {
         // re-collapsing the list on navigation; the prior channel's pending flag
         // is irrelevant since each shown list gets collapsed in turn).
         syncNativeMemberList(true);
+        syncNativeProfileSidebar(true);
         forceRender?.();
     } else {
         // nothing remembered (or it was closed) -> empty + closed panel. Snapshot
@@ -1892,6 +1898,7 @@ export function onChannelSelect(newId: string | null) {
         lsSet(LS_OPEN, state.open ? "1" : "0");
         applyOpenState();
         syncNativeMemberList(state.open); // restore the member list if we're closing here
+        syncNativeProfileSidebar(state.open);
         forceRender?.();
     }
 }
@@ -5019,6 +5026,10 @@ function ensureHost(): boolean {
 /** True ⟺ we collapsed the member list and owe a restore when the panel closes. */
 let memberListRestorePending = false;
 
+/** DM analogue of memberListRestorePending: true only when DockView itself
+ *  collapsed the user-profile sidebar while opening. */
+let profileSidebarRestorePending = false;
+
 /** Set while WE are the ones firing `CHANNEL_TOGGLE_MEMBERS_SECTION` (our open-time
  *  collapse / close-time restore). The action is a pure, argument-less toggle that
  *  Discord ALSO fires when the user clicks the people-icon header button, and both
@@ -5028,10 +5039,31 @@ let memberListRestorePending = false;
  *  flag is reliably true exactly for our own toggles and false for user clicks. */
 let selfMemberToggle = false;
 
+/** Same self-dispatch guard for DM user-profile sidebar toggles. */
+let selfProfileToggle = false;
+
 /** Is the server member list currently shown? Keyed off the `membersWrap` aside,
  *  which Discord mounts/unmounts in lockstep with the toggle button's lit state. */
 function isMemberListShown(): boolean {
     return !!document.querySelector('aside[class*="membersWrap"]');
+}
+
+function isUserProfileSidebarShown(): boolean {
+    return !!document.querySelector('aside[aria-labelledby^="user-profile-sidebar-heading"]');
+}
+
+function isThreadCard(el: Element | null) {
+    return el instanceof HTMLElement && el.matches('div[class*="chatLayerWrapper"]');
+}
+
+function findNativeChannelSidebar(inner: HTMLElement | null = findPageInner()): HTMLElement | null {
+    if (!inner) return null;
+    for (const child of Array.from(inner.children) as HTMLElement[]) {
+        if (child.id === HOST_ID) continue;
+        if (isThreadCard(child)) return child;
+        if (isThreadCard(child.firstElementChild)) return child;
+    }
+    return null;
 }
 
 /** Dispatch Discord's own member-list toggle (same action the header button and a
@@ -5051,6 +5083,32 @@ function dispatchMemberListToggle(): boolean {
     return false;
 }
 
+function dispatchUserProfileSidebarToggle(): boolean {
+    selfProfileToggle = true;
+    try {
+        const mod = (findByProps as any)?.("toggleUserProfileSidebarSection");
+        if (mod && typeof mod.toggleUserProfileSidebarSection === "function") {
+            mod.toggleUserProfileSidebarSection();
+            return true;
+        }
+    } catch { /* ignore — fall through, panel still works without the collapse */ }
+    finally { selfProfileToggle = false; }
+    return false;
+}
+
+function closeNativeChannelSidebar(): boolean {
+    if (!findNativeChannelSidebar()) return false;
+    try {
+        const mod = (findByProps as any)?.("openThreadAsSidebar", "closeChannelSidebar");
+        const baseChannelId = getCurrentChannelId();
+        if (baseChannelId && mod && typeof mod.closeChannelSidebar === "function") {
+            mod.closeChannelSidebar(baseChannelId);
+            return true;
+        }
+    } catch { /* ignore — fallback hiding still prevents visual overlap */ }
+    return false;
+}
+
 /** Drive the native member-list state to match the panel's open state.
  *  open=true  → if the list is shown, collapse it (button light goes off) and
  *               remember we owe a restore.
@@ -5066,6 +5124,17 @@ function syncNativeMemberList(open: boolean) {
         // user manually re-opened while the panel was up).
         if (!isMemberListShown()) dispatchMemberListToggle();
         memberListRestorePending = false;
+    }
+}
+
+function syncNativeProfileSidebar(open: boolean) {
+    if (open) {
+        if (isUserProfileSidebarShown() && dispatchUserProfileSidebarToggle()) {
+            profileSidebarRestorePending = true;
+        }
+    } else if (profileSidebarRestorePending) {
+        if (!isUserProfileSidebarShown()) dispatchUserProfileSidebarToggle();
+        profileSidebarRestorePending = false;
     }
 }
 
@@ -5091,6 +5160,7 @@ function closeForExclusiveTakeover() {
     // BEFORE closing stops syncNativeMemberList/restoreHiddenMembers from fighting
     // them by re-hiding the list they just opened.
     memberListRestorePending = false;
+    profileSidebarRestorePending = false;
     state.open = false;
     lsSet(LS_OPEN, "0");
     imgView.fullscreen = false; // closing the panel drops the lightbox
@@ -5131,6 +5201,14 @@ export function onMemberSectionToggle() {
  *  sidebar, same as for the member list. (Our open-state CSS already hides the
  *  profile sidebar, but without this the panel would otherwise just stay put.) */
 export function onUserProfileSidebarToggle() {
+    if (selfProfileToggle) return;
+    if (!state.open) return;
+    closeForExclusiveTakeover();
+}
+
+/** Native thread/channel sidebar opened while DockView owns the right slot:
+ *  vacate the slot and do not restore DockView when that sidebar later closes. */
+export function onChannelSidebarView() {
     if (!state.open) return;
     closeForExclusiveTakeover();
 }
@@ -5150,8 +5228,6 @@ function hideExclusiveRightSlot(inner: HTMLElement | null = findPageInner()) {
         if (el.id === HOST_ID || (host && host.contains(el))) return;
         el.setAttribute(EXCLUSIVE_HIDDEN_ATTR, "true");
     };
-    const isThreadCard = (el: Element | null) =>
-        el instanceof HTMLElement && el.matches('div[class*="chatLayerWrapper"]');
 
     inner.querySelectorAll<HTMLElement>('aside[aria-labelledby^="user-profile-sidebar-heading"]')
         .forEach(mark);
@@ -5231,16 +5307,20 @@ function restoreHiddenMembers() {
     document.querySelectorAll(".dockview-page-inner").forEach(el => el.classList.remove("dockview-page-inner"));
     clearExclusiveRightSlotHidden();
     syncNativeMemberList(false); // un-collapse the member list if we collapsed it
+    syncNativeProfileSidebar(false);
 }
 
 function toggle() {
-    state.open = !state.open;
+    const open = !state.open;
+    if (open) closeNativeChannelSidebar();
+    state.open = open;
     lsSet(LS_OPEN, state.open ? "1" : "0");
     if (!state.open) imgView.fullscreen = false; // closing the panel drops the lightbox
     if (state.open) ensureHost();
     saveCurrentChannelState();
     applyOpenState();
     syncNativeMemberList(state.open); // collapse the member list like a thread / restore on close
+    syncNativeProfileSidebar(state.open);
     forceRender?.();
 }
 
@@ -5497,8 +5577,12 @@ export function exposeDebug() {
         imgView, get imgControls() { return imgControls; },
         get memberListShown() { return isMemberListShown(); },
         get memberListRestorePending() { return memberListRestorePending; },
+        get profileSidebarShown() { return isUserProfileSidebarShown(); },
+        get profileSidebarRestorePending() { return profileSidebarRestorePending; },
         get selfMemberToggle() { return selfMemberToggle; },
-        onMemberSectionToggle, onUserProfileSidebarToggle, closeForExclusiveTakeover
+        get selfProfileToggle() { return selfProfileToggle; },
+        closeNativeChannelSidebar,
+        onMemberSectionToggle, onUserProfileSidebarToggle, onChannelSidebarView, closeForExclusiveTakeover
     };
 }
 export function unexposeDebug() {

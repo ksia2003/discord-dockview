@@ -20,7 +20,7 @@ import managedStyle from "./style.css?managed";
 
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
-import { exposeDebug, onChannelSelect, onMemberSectionToggle, onUserProfileSidebarToggle, startPanel, stopPanel, unexposeDebug } from "./panel";
+import { exposeDebug, onChannelSelect, onChannelSidebarView, onMemberSectionToggle, onUserProfileSidebarToggle, startPanel, stopPanel, unexposeDebug } from "./panel";
 
 export default definePlugin({
     name: "DockView",
@@ -48,6 +48,9 @@ export default definePlugin({
         },
         CHANNEL_TOGGLE_MEMBERS_SECTION() {
             onMemberSectionToggle();
+        },
+        SIDEBAR_VIEW_CHANNEL() {
+            onChannelSidebarView();
         },
         USER_PROFILE_SIDEBAR_TOGGLE_SECTION() {
             onUserProfileSidebarToggle();
