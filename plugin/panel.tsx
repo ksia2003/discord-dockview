@@ -5002,18 +5002,18 @@ function ensureHost(): boolean {
 //
 // Opening a real Discord thread makes Discord itself toggle the channel's member
 // list OFF: the people-icon button in the channel header loses its lit
-// (`selected__`) state and Discord UNMOUNTS the member aside. Closing the thread
-// restores it. We reproduce that by dispatching Discord's OWN action
+// (`selected__`) state and Discord hides/collapses the member aside. Closing the
+// thread restores it. We reproduce that by dispatching Discord's OWN action
 // (`CHANNEL_TOGGLE_MEMBERS_SECTION`, exposed as `toggleMembersSection()`), NOT by
 // CSS-hiding the aside — a `display:none` would leave Discord thinking the list
 // is still open, so the toggle button would stay LIT while the list is gone
 // (the inconsistent cosmetic override this replaces).
 //
 // READ SIGNAL: the action flips a Flux flag that BOTH lights the button AND
-// mounts/unmounts the `membersWrap` aside, so the aside's mere PRESENCE in the
-// DOM is a locale-independent, button-consistent read of "is the list shown".
-// (The button's lit class is `selected__`; aria-labels are localized, the aside
-// class is not — so we key off the aside.)
+// shows/hides the `membersWrap` aside. DOM presence alone is not reliable across
+// Discord builds (a collapsed aside can remain mounted), so we key off the
+// locale-independent aside class AND require it to be actually visible.
+// (The button's lit class is `selected__`; aria-labels are localized.)
 //
 // EDGE-TRIGGERED: we only act from explicit open/close/channel-switch edges
 // (toggle/load/onChannelSelect/start/stop), never from the high-frequency
@@ -5042,10 +5042,27 @@ let selfMemberToggle = false;
 /** Same self-dispatch guard for DM user-profile sidebar toggles. */
 let selfProfileToggle = false;
 
-/** Is the server member list currently shown? Keyed off the `membersWrap` aside,
- *  which Discord mounts/unmounts in lockstep with the toggle button's lit state. */
+function elementIsActuallyVisible(el: HTMLElement): boolean {
+    if (el.hidden || el.getAttribute("aria-hidden") === "true") return false;
+
+    for (let cur: HTMLElement | null = el; cur; cur = cur.parentElement) {
+        const style = getComputedStyle(cur);
+        if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") {
+            return false;
+        }
+    }
+
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return false;
+    return rect.right > 0 && rect.bottom > 0 && rect.left < window.innerWidth && rect.top < window.innerHeight;
+}
+
+/** Is the server member list currently shown? Keyed off the `membersWrap` aside
+ *  plus real visibility. A collapsed member list may remain mounted in the DOM;
+ *  treating mere presence as "shown" causes DockView to skip the owed restore. */
 function isMemberListShown(): boolean {
-    return !!document.querySelector('aside[class*="membersWrap"]');
+    return Array.from(document.querySelectorAll<HTMLElement>('aside[class*="membersWrap"]'))
+        .some(elementIsActuallyVisible);
 }
 
 function isUserProfileSidebarShown(): boolean {
