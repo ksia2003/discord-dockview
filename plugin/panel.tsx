@@ -15,7 +15,7 @@
 import * as DataStore from "@api/DataStore";
 import { getCurrentChannel } from "@utils/discord";
 import { findByProps, findCssClasses } from "@webpack";
-import { Button, ChannelStore, ContextMenuApi, createRoot, DraftType, Menu, React, SelectedChannelStore, UploadHandler } from "@webpack/common";
+import { Button, ChannelStore, ComponentDispatch, ContextMenuApi, createRoot, DraftStore, DraftType, Menu, React, SelectedChannelStore, UploadHandler } from "@webpack/common";
 import type { Root } from "react-dom/client";
 
 // pdf.js — bundled into the renderer by esbuild. We ALSO import the worker
@@ -1890,6 +1890,36 @@ export function attachComposeFile() {
     composeChannel = null;
     // Close the panel (the same path the header X uses).
     closePanel();
+}
+
+/** Convert the channel's CURRENT COMPOSER TEXT into a file attachment, mirroring
+ *  Discord's own "Upload text as file" (`UPLOAD_TEXT_AS_FILE`) flow — no editor,
+ *  no panel, no filename prompt. We read the channel's live draft, wrap it in a
+ *  `File` named like Discord (`message.md`/`message.txt`), stage it as a pending
+ *  upload (the native attachment chip), then clear the composer — exactly as
+ *  Discord does (its handler builds `new File([text], "message.<ext>")`, calls
+ *  the upload handler, then dispatches CLEAR_TEXT). Empty composer -> graceful
+ *  no-op (the native item hides itself when empty; we just bail). The only
+ *  addition over Discord's native item is the `.md`/`text/markdown` variant —
+ *  Discord's native always produces `.txt`/`text/plain`. */
+export function composeTextToFile(channel: any | null, ext: ComposeExt = "md") {
+    const ch = channel ?? resolveComposeChannel();
+    if (!ch) return;
+    // Read the live composer draft the same store Discord reads
+    // (DraftStore.getDraft(channelId, DraftType.ChannelMessage)).
+    let text = "";
+    try { text = (DraftStore as any)?.getDraft?.(ch.id, DraftType.ChannelMessage) ?? ""; } catch { /* fall through */ }
+    if (!text) return; // empty composer -> do nothing (matches native: item hidden)
+
+    const mime = ext === "md" ? "text/markdown" : "text/plain";
+    const file = new File([text], `message.${ext}`, { type: mime });
+    try {
+        UploadHandler.promptToUpload([file], ch, DraftType.ChannelMessage);
+    } catch { return; /* staging failed — leave the draft intact, nothing lost */ }
+
+    // Clear the composer so the text becomes the file (mirrors Discord's
+    // CLEAR_TEXT dispatch after a native text->file conversion).
+    try { ComponentDispatch.dispatch("CLEAR_TEXT"); } catch { /* best-effort */ }
 }
 
 /** Re-fetch the file currently shown, bypassing both the in-memory content cache
@@ -5932,7 +5962,7 @@ export function exposeDebug() {
         get selfProfileToggle() { return selfProfileToggle; },
         closeNativeChannelSidebar,
         onMemberSectionToggle, onUserProfileSidebarToggle, onChannelSidebarView, closeForExclusiveTakeover,
-        openCompose, attachComposeFile, get compose() { return compose; }
+        openCompose, attachComposeFile, composeTextToFile, get compose() { return compose; }
     };
 }
 export function unexposeDebug() {

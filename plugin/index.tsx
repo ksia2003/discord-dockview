@@ -22,7 +22,7 @@ import managedStyle from "./style.css?managed";
 
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
-import { exposeDebug, onChannelSelect, onChannelSidebarView, onMemberSectionToggle, onUserProfileSidebarToggle, openCompose, startPanel, stopPanel, unexposeDebug } from "./panel";
+import { composeTextToFile, exposeDebug, onChannelSelect, onChannelSidebarView, onMemberSectionToggle, onUserProfileSidebarToggle, startPanel, stopPanel, unexposeDebug } from "./panel";
 import { STRINGS } from "./strings";
 
 export default definePlugin({
@@ -60,24 +60,21 @@ export default definePlugin({
         }
     },
 
-    // Compose (write) mode entry points: two items in Discord's `+` composer menu
-    // (navId "channel-attach"), each opening the dock panel as a tiny .txt/.md
-    // writer preset to that format. The native "Upload a File" item is untouched.
+    // "Text -> file" entry point in Discord's `+` composer menu (navId
+    // "channel-attach"), built entirely out of Discord's OWN UI: it converts the
+    // CURRENT COMPOSER TEXT into a `.md` file attachment (a native attachment
+    // chip), then clears the composer — exactly like Discord's native "Upload
+    // text as file" (UPLOAD_TEXT_AS_FILE), which sits right beside it and already
+    // covers the `.txt` case. No editor, no panel, no filename prompt: the user
+    // types in the real composer and this turns it into a markdown file.
     // Registering this auto-adds the ContextMenu API as a dependency.
     contextMenus: {
         "channel-attach": (children: any, props: any) => {
             children.push(
                 React.createElement(Menu.MenuItem, {
-                    id: "dockview-new-txt",
-                    label: STRINGS.compose.menuItemTxt,
-                    action: () => openCompose(props?.channel ?? null, "txt")
-                })
-            );
-            children.push(
-                React.createElement(Menu.MenuItem, {
-                    id: "dockview-new-md",
+                    id: "dockview-send-as-md",
                     label: STRINGS.compose.menuItemMd,
-                    action: () => openCompose(props?.channel ?? null, "md")
+                    action: () => composeTextToFile(props?.channel ?? null, "md")
                 })
             );
         }

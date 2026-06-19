@@ -155,16 +155,16 @@ export const STRINGS = {
         openInPanel: "Open in panel"
     },
 
-    // --- compose (write) mode ------------------------------------------------
-    // The dock panel can also be a tiny scratch writer: compose a .txt/.md file
-    // in-panel and attach it to the composer (staged as a pending upload, review
-    // before send). Two items in the `+` composer menu open it (which also choose
-    // the format, .txt vs .md). The top header row shows the type label (the menu
-    // item text) + a file glyph; the second-row toolbar holds the filename, the
-    // md-only Edit/Preview toggle, and the Attach button.
+    // --- compose ("text -> file") --------------------------------------------
+    // A single item in Discord's `+` composer menu that converts the CURRENT
+    // composer text into a `.md` file attachment (a native attachment chip), then
+    // clears the composer — mirroring Discord's own "Upload text as file"
+    // (which covers the `.txt` case beside it). No editor, panel, or filename
+    // prompt. `menuItemMd` is the visible label; the other keys below feed the
+    // legacy in-panel writer (kept but unused, slated for removal).
     compose: {
         menuItemTxt: "New text file",
-        menuItemMd: "New markdown file",
+        menuItemMd: "Send as markdown file",
         namePlaceholder: "Filename",
         // md Edit/Preview toggle (replaces the old always-split editor|preview).
         editTab: "Edit",
