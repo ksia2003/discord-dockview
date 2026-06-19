@@ -1806,6 +1806,10 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
  *  restores it instantly from cache (no fetch); only a genuinely new file
  *  fetches. The view-state of the file we're leaving is snapshotted first. */
 export function load(opts: { name: string; html?: string | null; url?: string | null; type?: ContentType; noCache?: boolean }) {
+    // Viewing a file exits compose mode so renderBody() shows the file instead of
+    // the compose editor (renderBody short-circuits on compose.active). The draft
+    // body/name are preserved in memory; only the active flag is flipped off.
+    compose.active = false;
     const result = showContent({ name: opts.name, html: opts.html, url: opts.url, type: detectType(opts), noCache: opts.noCache });
 
     // Open FIRST, then persist — so the saved per-channel state records open:true.
