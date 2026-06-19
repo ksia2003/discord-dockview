@@ -1298,3 +1298,105 @@
     .dockview-collapse-mid { display: none; }
     .dockview-tool-copy-label { display: none; }
 }
+
+/* ----------------------------------------------------------------------------
+   COMPOSE (write) MODE — a tiny in-panel .txt/.md writer. The body becomes a
+   flex row that is ALSO a CSS container (container-name: dockview-compose), so
+   the EDIT | PREVIEW split stacks vertically at narrow width purely in CSS (no
+   React resize state, same philosophy as the header collapse). Left = a plain
+   monospace <textarea> editor; right = the persistent markdown-preview iframe.
+   For .txt the preview pane is hidden and the editor fills the width.
+   ------------------------------------------------------------------------- */
+.dockview-compose {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    container-type: inline-size;
+    container-name: dockview-compose;
+}
+.dockview-compose-editor {
+    flex: 1 1 50%;
+    min-width: 0;
+    min-height: 0;
+    box-sizing: border-box;
+    padding: 14px 16px;
+    border: none;
+    outline: none;
+    resize: none;
+    background: var(--background-gradient-chat, var(--background-base-lower));
+    color: var(--text-default, #dbdee1);
+    font-family: Consolas, "Andale Mono WT", "Andale Mono", "Courier New", monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    tab-size: 4;
+    /* Match the dock body's stable-gutter + thin dark scrollbar so the editor
+       reads as part of the same surface as every viewer body. */
+    scrollbar-gutter: stable;
+}
+.dockview-compose-editor::placeholder { color: var(--text-muted, #949ba4); }
+/* .txt: no preview, editor spans the full width. */
+.dockview-compose.dockview-compose-txt .dockview-compose-editor { flex-basis: 100%; }
+.dockview-compose.dockview-compose-txt .dockview-compose-preview { display: none; }
+/* The persistent preview iframe (its own dark stylesheet lives in MD_STYLE; this
+   only sizes/frames it). A 1px divider separates it from the editor. */
+.dockview-compose-preview {
+    flex: 1 1 50%;
+    min-width: 0;
+    min-height: 0;
+    display: block;
+    border: none;
+    border-left: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+    background: #1e1f22;
+}
+/* Editor scrollbar: same thin dark fade-on-hover as .dockview-body. */
+.dockview-compose-editor::-webkit-scrollbar { width: 8px; height: 8px; }
+.dockview-compose-editor::-webkit-scrollbar-track { background-color: var(--scrollbar-thin-track, transparent); }
+.dockview-compose-editor::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thin-thumb, #1a1b1e);
+    border-radius: 4px;
+    min-height: 40px;
+}
+.dockview-compose-editor::-webkit-scrollbar-corner { background-color: transparent; }
+.dockview-compose-editor::-webkit-scrollbar-thumb,
+.dockview-compose-editor::-webkit-scrollbar-track { visibility: hidden; }
+.dockview-compose-editor:hover::-webkit-scrollbar-thumb,
+.dockview-compose-editor:hover::-webkit-scrollbar-track,
+.dockview-compose-editor:focus::-webkit-scrollbar-thumb,
+.dockview-compose-editor:focus::-webkit-scrollbar-track { visibility: visible; }
+
+/* Stack EDIT over PREVIEW once the panel gets narrow (matches the divided split
+   becoming unusable side-by-side). The divider becomes a top border. */
+@container dockview-compose (max-width: 560px) {
+    .dockview-compose { flex-direction: column; }
+    .dockview-compose-editor { flex: 1 1 50%; }
+    .dockview-compose-preview {
+        flex: 1 1 50%;
+        border-left: none;
+        border-top: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+    }
+}
+
+/* Compose header: the filename field where the <h2 title> sat (so it inherits
+   flex:1/min-width:0 and shrinks instead of shoving the controls out), and a
+   sober ghost-input look matching the find bar. */
+.dockview-compose-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    box-sizing: border-box;
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.1));
+    border-radius: 4px;
+    background: var(--input-background, rgba(0, 0, 0, 0.2));
+    color: var(--text-default, #dbdee1);
+    font-size: 14px;
+    outline: none;
+}
+.dockview-compose-name:focus { border-color: var(--text-link, #00a8fc); }
+.dockview-compose-name::placeholder { color: var(--text-muted, #949ba4); }
+/* The txt/md toggle: two text buttons reading as a segmented control. The active
+   one uses the shared low-chroma active state (.dockview-tool-btn-active). */
+.dockview-compose-format { flex: 0 0 auto; }
+.dockview-header-controls .dockview-compose-format .dockview-tool-textbtn { padding: 0 10px; }
