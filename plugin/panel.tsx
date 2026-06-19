@@ -4870,8 +4870,10 @@ function DockMoreMenu() {
 // The top header row is strictly Discord grammar (file-type glyph + a TYPE-LABEL
 // title + close X — identical structure to the PDF/code viewers). All compose-
 // specific controls live HERE, in a sub-toolbar directly below the top row, using
-// NATIVE Discord components: a brand (blurple) `Button` for Attach and a small
-// segmented Edit/Preview toggle. This sits inside `.dockview-header` after the
+// NATIVE Discord components: a brand (blurple) `Button` for Attach and a unified
+// segmented Edit/Preview control (one inset pill, two halves, the active one a
+// raised thumb — it reads as ONE control, not two buttons). This sits inside
+// `.dockview-header` after the
 // upper row, so the card's flex-column layout flows the body BELOW it naturally —
 // no pixel-offset math needed.
 //
@@ -4898,10 +4900,32 @@ function ComposeFilenameInput() {
     });
 }
 
-/** The Edit/Preview toggle — a Discord-styled segmented control (two text buttons
- *  reading as one segmented pair, like the CSV Raw/Table toggle). Flips
- *  `compose.view` and forceRenders so the body re-routes (editor <-> rendered
- *  preview). md only. */
+/** One segment of the Edit/Preview control. NOT a `toolTextBtn` (those carry their
+ *  own border, which reads as a detached button) — these are border-less halves of
+ *  ONE pill: the parent `.dockview-compose-seg` is the single frame; the active
+ *  segment gets a raised "thumb" fill. role=tab + aria-selected so a screen reader
+ *  hears one segmented control, not two buttons. */
+function composeSegItem(key: string, label: string, selected: boolean, onClick: () => void) {
+    return React.createElement(
+        "button",
+        {
+            key,
+            type: "button",
+            className: "dockview-compose-seg-item" + (selected ? " dockview-compose-seg-item-active" : ""),
+            role: "tab",
+            "aria-selected": selected,
+            "aria-label": label,
+            title: label,
+            onClick
+        },
+        label
+    );
+}
+
+/** The Edit/Preview toggle — ONE Discord-native segmented control: a single inset
+ *  pill frame holding two equal-width, border-less segments, the active one raised
+ *  as a thumb. Flips `compose.view` and forceRenders so the body re-routes (editor
+ *  <-> rendered preview). md only. */
 function composeViewToggle() {
     const setView = (view: ComposeView) => {
         if (compose.view === view) return;
@@ -4911,9 +4935,9 @@ function composeViewToggle() {
     const editing = compose.view === "edit";
     return React.createElement(
         "div",
-        { className: "dockview-tool-group dockview-compose-viewtoggle" },
-        toolTextBtn("compose-edit", STRINGS.compose.editTab, STRINGS.compose.editTab, () => setView("edit"), editing),
-        toolTextBtn("compose-preview", STRINGS.compose.previewTab, STRINGS.compose.previewTab, () => setView("preview"), !editing)
+        { className: "dockview-compose-seg", role: "tablist", "aria-label": STRINGS.compose.editTab + " / " + STRINGS.compose.previewTab },
+        composeSegItem("compose-edit", STRINGS.compose.editTab, editing, () => setView("edit")),
+        composeSegItem("compose-preview", STRINGS.compose.previewTab, !editing, () => setView("preview"))
     );
 }
 

@@ -1428,22 +1428,51 @@
 }
 .dockview-compose-name:focus { border-color: var(--text-link, #00a8fc); }
 .dockview-compose-name::placeholder { color: var(--text-muted, #949ba4); }
-/* Edit/Preview toggle: two text buttons reading as one segmented control (same
-   pattern as the CSV Raw/Table toggle; the active one uses the shared low-chroma
-   active state). A subtle pill frame ties the pair together. */
-.dockview-compose-viewtoggle {
+/* Edit/Preview toggle: ONE native segmented control — a single inset pill frame
+   holding two equal-width, border-less segments. The active segment is raised as a
+   "thumb" (solid fill + subtle lift), exactly like Discord's compact segmented
+   toggles; the halves never read as two detached buttons. Height matches the
+   filename field + Attach button (30px) so the whole toolbar sits on one baseline. */
+.dockview-compose-seg {
     flex: 0 0 auto;
+    box-sizing: border-box;
     display: flex;
-    align-items: center;
-    gap: 2px;
+    align-items: stretch;
+    height: 30px;
     padding: 2px;
     border-radius: 6px;
+    border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
     background: var(--input-background, rgba(0, 0, 0, 0.2));
 }
-.dockview-compose-viewtoggle .dockview-tool-textbtn {
-    height: 26px;
+.dockview-compose-seg-item {
+    flex: 1 1 0;
+    min-width: 54px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     padding: 0 12px;
+    border: none;
     border-radius: 4px;
+    background: transparent;
+    color: var(--interactive-normal, #b5bac1);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    transition: background-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+}
+.dockview-compose-seg-item:hover {
+    color: var(--interactive-hover, #dbdee1);
+}
+/* Active segment: the raised thumb. A quiet neutral fill (no brand/blurple, so it
+   never fights the native header) + a hairline lift to read as the selected half. */
+.dockview-compose-seg-item-active,
+.dockview-compose-seg-item-active:hover {
+    color: var(--interactive-active, #f2f3f5);
+    background: var(--background-modifier-selected, rgba(255, 255, 255, 0.14));
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
 }
 /* Keep the native Discord Button (Attach) from being stretched by the flex row. */
 .dockview-compose-attach { flex: 0 0 auto; }
