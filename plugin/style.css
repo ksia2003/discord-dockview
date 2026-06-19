@@ -1308,13 +1308,21 @@
    For .txt the preview pane is hidden and the editor fills the width.
    ------------------------------------------------------------------------- */
 .dockview-compose {
-    display: flex;
-    flex-direction: row;
     width: 100%;
     height: 100%;
     min-height: 0;
     container-type: inline-size;
     container-name: dockview-compose;
+}
+/* The flex row that actually splits EDIT | PREVIEW. It's a DESCENDANT of the
+   query container (.dockview-compose), so it — unlike the container itself — can
+   respond to the @container query and switch to a vertical stack when narrow. */
+.dockview-compose-row {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
 }
 .dockview-compose-editor {
     flex: 1 1 50%;
@@ -1369,7 +1377,7 @@
 /* Stack EDIT over PREVIEW once the panel gets narrow (matches the divided split
    becoming unusable side-by-side). The divider becomes a top border. */
 @container dockview-compose (max-width: 560px) {
-    .dockview-compose { flex-direction: column; }
+    .dockview-compose-row { flex-direction: column; }
     .dockview-compose-editor { flex: 1 1 50%; }
     .dockview-compose-preview {
         flex: 1 1 50%;

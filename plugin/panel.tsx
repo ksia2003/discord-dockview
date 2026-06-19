@@ -4380,16 +4380,25 @@ function ComposeBody() {
         sandbox: "allow-scripts allow-same-origin",
         onLoad: () => {
             composePreviewReady = true;
-            // First load (or a format flip back to md): push the current buffer in.
-            if (isMd) schedulePreview();
+            // Shell parsed: write the current buffer straight in (no debounce, so
+            // the preview is populated the instant the iframe is ready).
+            if (isMd) { try { composeRenderPreview(); } catch { /* not ready */ } }
         }
     });
 
+    // `.dockview-compose` is the query CONTAINER (container-type/name in CSS); the
+    // inner `.dockview-compose-row` is the flex row that actually responds to the
+    // @container query (an element can't react to its OWN container — only
+    // descendants can), so the EDIT|PREVIEW split stacks vertically when narrow.
     return React.createElement(
         "div",
         { className: "dockview-compose" + (isMd ? "" : " dockview-compose-txt") },
-        editor,
-        preview
+        React.createElement(
+            "div",
+            { className: "dockview-compose-row" },
+            editor,
+            preview
+        )
     );
 }
 
