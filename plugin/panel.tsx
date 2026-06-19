@@ -5157,7 +5157,15 @@ function DockPanel() {
             { className: `${CLS.card} dockview-card` },
             React.createElement(
                 "section",
-                { className: `${CLS.headerSection} dockview-header` },
+                {
+                    // Discord's native header container (`container__9293f`) is locked to a
+                    // single 48px row with `justify-content:center`; our two-row compose
+                    // header needs to GROW to fit the second toolbar row, otherwise the
+                    // upper title row overflows upward and gets clipped past the card's
+                    // top edge (the title + close X slice off). The `--compose` modifier
+                    // releases the fixed height and top-aligns the rows (see style.css).
+                    className: `${CLS.headerSection} dockview-header${compose.active ? " dockview-header--compose" : ""}`
+                },
                 React.createElement(
                     "div",
                     { className: `${CLS.upper} dockview-header-upper` },

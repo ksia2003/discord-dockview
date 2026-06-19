@@ -175,6 +175,31 @@
 .dockview-header {
     flex: 0 0 auto;
 }
+/* Compose dresses the header as TWO rows (title row + toolbar row). Discord's
+   native header container is locked to a single 48px row with
+   justify-content:center, so a second child overflows and pushes the title row
+   UP past the card's top edge (the type-label title and the close X get sliced
+   off — the exact "the top row doesn't render" defect). Release the fixed height
+   so the section grows to fit both rows, and top-align them so the title row
+   keeps its native 48px rhythm while the toolbar flows directly below. */
+.dockview-header.dockview-header--compose {
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    justify-content: flex-start;
+    /* The native header carries asymmetric padding (8px 8px 8px 16px) tuned for a
+       single inline row; the two compose rows carry their own horizontal padding,
+       so zero out the section padding and let each row own its insets. */
+    padding: 0;
+}
+/* The title row keeps the native 48px header height even though the section no
+   longer forces it, so the top row reads pixel-identical to a viewer header. */
+.dockview-header.dockview-header--compose .dockview-header-upper {
+    flex: 0 0 auto;
+    height: 48px;
+    padding: 8px 8px 8px 16px;
+    box-sizing: border-box;
+}
 .dockview-header-upper {
     display: flex;
     align-items: center;
