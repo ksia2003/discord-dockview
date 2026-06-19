@@ -4280,45 +4280,58 @@ function LoadingBody() {
 // or reloads the iframe.
 // ---------------------------------------------------------------------------
 
-// The live preview iframe, captured on mount so schedulePreview() can post into
+// The live preview iframe, captured on mount so schedulePreview() can write into
 // it without going through React. Null when compose isn't mounted.
 let composePreviewFrame: HTMLIFrameElement | null = null;
 let composePreviewTimer: any = 0;
-let composePreviewReady = false; // the iframe fired load (receiver script live)
+let composePreviewReady = false; // the iframe fired load (srcDoc shell parsed)
 
 /** The persistent preview document: the same dark markdown shell wrapMarkdownDoc
- *  produces (so it matches the real markdown viewer pixel-for-pixel), but with an
- *  EMPTY article and an extra receiver script. The receiver swaps the article's
- *  innerHTML on each {__dockViewPreview: html} message (debounced patches, no
- *  reload). KaTeX CSS is included unconditionally (hasMath=true) so math renders
- *  without ever reloading the shell to add the stylesheet. The existing
- *  MD_LINK_SCRIPT (folded in by wrapMarkdownDoc) routes link clicks to the host. */
+ *  produces (so it matches the real markdown viewer pixel-for-pixel), with an
+ *  EMPTY article. KaTeX CSS is included unconditionally (hasMath=true) so math
+ *  renders without ever reloading the shell to add the stylesheet.
+ *
+ *  No inline receiver script: Discord's HTTP-header CSP blocks inline scripts in
+ *  this sandboxed srcDoc iframe, so a message receiver never registers. Instead
+ *  the iframe is sandbox="allow-scripts allow-same-origin" (a srcdoc with
+ *  allow-same-origin is same-origin with the host), so the HOST writes straight
+ *  into iframe.contentDocument's article.md — see composeRenderPreview(). The
+ *  MD_LINK_SCRIPT folded in by wrapMarkdownDoc is itself inline and likewise
+ *  blocked, but links here are inert (this is a scratch preview), so that's fine. */
 function composePreviewDoc(): string {
-    const base = wrapMarkdownDoc("", true);
-    const receiver = `<script>(function(){
-  window.addEventListener("message", function(e){
-    var d = e && e.data;
-    if (!d || typeof d !== "object" || typeof d.__dockViewPreview !== "string") return;
-    var art = document.querySelector("article.md");
-    if (art) art.innerHTML = d.__dockViewPreview;
-  });
-})();</script>`;
-    // Inject the receiver just before </body> (after MD_LINK_SCRIPT).
-    return base.replace("</body>", receiver + "</body>");
+    return wrapMarkdownDoc("", true);
 }
 
-/** Render the current compose buffer to body HTML and post it into the live
- *  preview iframe. Debounced 150ms so fast typing patches at most ~7x/sec. Never
- *  touches React (no forceRender) — IME-safe. */
+/** Write the current compose buffer's rendered HTML straight into the same-origin
+ *  preview iframe's <article class="md"> (no postMessage, no srcDoc reload — so no
+ *  flicker and no CSP-blocked script). Matches the normal viewer path exactly:
+ *  markdownToHtml(...).html -> highlightMarkdownCode(...). Math is already baked
+ *  into the HTML by KaTeX at parse time and the shell carries the KaTeX CSS, so
+ *  nothing else is needed for math to render. Returns true if it wrote (article
+ *  was present), false if the iframe doc/article wasn't ready yet. */
+function composeRenderPreview(): boolean {
+    const doc = composePreviewFrame?.contentDocument;
+    const art = doc && doc.querySelector("article.md");
+    if (!art) return false;
+    const { html } = markdownToHtml(compose.body);
+    art.innerHTML = highlightMarkdownCode(html);
+    return true;
+}
+
+/** Render the current compose buffer into the live preview iframe. Debounced
+ *  150ms so fast typing patches at most ~7x/sec. Never touches React (no
+ *  forceRender) — IME-safe. If the iframe's srcDoc hasn't parsed yet (no article),
+ *  re-arm the debounce so the write lands once the shell is ready. */
 function schedulePreview() {
     if (composePreviewTimer) clearTimeout(composePreviewTimer);
     composePreviewTimer = setTimeout(() => {
         composePreviewTimer = 0;
-        if (!composePreviewFrame || !composePreviewReady) return;
-        const { html } = markdownToHtml(compose.body);
-        const bodyHtml = highlightMarkdownCode(html);
+        if (!composePreviewFrame) return;
         try {
-            composePreviewFrame.contentWindow?.postMessage({ __dockViewPreview: bodyHtml }, "*");
+            if (!composeRenderPreview()) {
+                // Shell not parsed yet — retry shortly via the same debounce slot.
+                if (!composePreviewReady) schedulePreview();
+            }
         } catch { /* ignore — frame torn down mid-flight */ }
     }, 150);
 }
