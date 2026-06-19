@@ -153,5 +153,22 @@ export const STRINGS = {
         copyImage: "Copy image",
         copyLink: "Copy link",
         openInPanel: "Open in panel"
+    },
+
+    // --- compose (write) mode ------------------------------------------------
+    // The dock panel can also be a tiny scratch writer: compose a .txt/.md file
+    // in-panel and attach it to the composer (staged as a pending upload, review
+    // before send). Two items in the `+` composer menu open it; the header lets
+    // you name the file, flip the format, and attach.
+    compose: {
+        menuItemTxt: "New text file",
+        menuItemMd: "New markdown file",
+        namePlaceholder: "Filename",
+        formatTxt: "Text",
+        formatMd: "Markdown",
+        attach: "Attach",
+        attachHint: "Attach to message",
+        title: "New file",
+        previewEmpty: "Start writing to see a preview."
     }
 } as const;
