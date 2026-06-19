@@ -16,11 +16,14 @@
  */
 
 import definePlugin from "@utils/types";
+import { Menu, React } from "@webpack/common";
+
 import managedStyle from "./style.css?managed";
 
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
-import { exposeDebug, onChannelSelect, onChannelSidebarView, onMemberSectionToggle, onUserProfileSidebarToggle, startPanel, stopPanel, unexposeDebug } from "./panel";
+import { exposeDebug, onChannelSelect, onChannelSidebarView, onMemberSectionToggle, onUserProfileSidebarToggle, openCompose, startPanel, stopPanel, unexposeDebug } from "./panel";
+import { STRINGS } from "./strings";
 
 export default definePlugin({
     name: "DockView",
@@ -54,6 +57,29 @@ export default definePlugin({
         },
         USER_PROFILE_SIDEBAR_TOGGLE_SECTION() {
             onUserProfileSidebarToggle();
+        }
+    },
+
+    // Compose (write) mode entry points: two items in Discord's `+` composer menu
+    // (navId "channel-attach"), each opening the dock panel as a tiny .txt/.md
+    // writer preset to that format. The native "Upload a File" item is untouched.
+    // Registering this auto-adds the ContextMenu API as a dependency.
+    contextMenus: {
+        "channel-attach": (children: any, props: any) => {
+            children.push(
+                React.createElement(Menu.MenuItem, {
+                    id: "dockview-new-txt",
+                    label: STRINGS.compose.menuItemTxt,
+                    action: () => openCompose(props?.channel ?? null, "txt")
+                })
+            );
+            children.push(
+                React.createElement(Menu.MenuItem, {
+                    id: "dockview-new-md",
+                    label: STRINGS.compose.menuItemMd,
+                    action: () => openCompose(props?.channel ?? null, "md")
+                })
+            );
         }
     },
 
