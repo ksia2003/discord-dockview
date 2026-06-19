@@ -171,6 +171,11 @@ export const STRINGS = {
         previewTab: "Preview",
         attach: "Attach",
         attachHint: "Attach to message",
+        // Editor empty-state. The textarea opens in EDIT mode, so its placeholder
+        // must invite writing — NOT read like a preview ("Start writing to see a
+        // preview" made the editable area look like an empty preview pane).
+        editorPlaceholderMd: "Write Markdown…",
+        editorPlaceholderTxt: "Write…",
         previewEmpty: "Start writing to see a preview."
     }
 } as const;

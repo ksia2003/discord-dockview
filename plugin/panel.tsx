@@ -4312,6 +4312,20 @@ function ComposeBody() {
     const previewing = isMd && compose.view === "preview";
 
     if (previewing) {
+        // Empty buffer -> a quiet centred empty-state instead of a blank iframe, so
+        // flipping to Preview with nothing written reads intentionally (matches the
+        // dock's other idle dead-ends).
+        if (!compose.body.trim()) {
+            return React.createElement(
+                "div",
+                { className: "dockview-compose" },
+                React.createElement(
+                    "div",
+                    { className: "dockview-compose-preview-empty" },
+                    STRINGS.compose.previewEmpty
+                )
+            );
+        }
         // Static-baked preview iframe — same sandbox + srcDoc approach as the
         // normal markdown viewer. Keyed on "preview" (NOT on width) so a resize
         // drag never reloads it; flipping to Preview remounts it fresh from the
@@ -4338,7 +4352,7 @@ function ComposeBody() {
         // or txt/md — never per keystroke.
         defaultValue: compose.body,
         spellCheck: false,
-        placeholder: isMd ? STRINGS.compose.previewEmpty : "",
+        placeholder: isMd ? STRINGS.compose.editorPlaceholderMd : STRINGS.compose.editorPlaceholderTxt,
         onChange: (e: any) => { compose.body = e.target.value; },
         onKeyDown: (e: any) => e.stopPropagation()
     });
