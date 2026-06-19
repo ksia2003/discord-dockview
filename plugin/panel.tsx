@@ -15,7 +15,7 @@
 import * as DataStore from "@api/DataStore";
 import { getCurrentChannel } from "@utils/discord";
 import { findByProps, findCssClasses } from "@webpack";
-import { ChannelStore, ContextMenuApi, createRoot, DraftType, Menu, React, SelectedChannelStore, UploadHandler } from "@webpack/common";
+import { Button, ChannelStore, ContextMenuApi, createRoot, DraftType, Menu, React, SelectedChannelStore, UploadHandler } from "@webpack/common";
 import type { Root } from "react-dom/client";
 
 // pdf.js — bundled into the renderer by esbuild. We ALSO import the worker
@@ -307,7 +307,11 @@ const content: PanelContent = {
 // forceRender (a re-render would remount the textarea and break Korean IME
 // composition). The live markdown preview is driven by postMessage instead.
 type ComposeExt = "txt" | "md";
-const compose = { active: false, name: "", ext: "md" as ComposeExt, body: "" };
+type ComposeView = "edit" | "preview";
+// `view` is the md Edit/Preview toggle (txt has no preview, so it stays "edit").
+// It replaces the old always-split editor|preview: the body shows EITHER the
+// editor OR a full-width rendered-markdown preview, never both side-by-side.
+const compose = { active: false, name: "", ext: "md" as ComposeExt, body: "", view: "edit" as ComposeView };
 // The channel the compose was opened for (from the `+` menu's props, or the
 // current channel). Resolved at open time, used as the attach target.
 let composeChannel: any = null;
@@ -1850,6 +1854,7 @@ function resolveComposeChannel(): any {
 export function openCompose(channel: any | null, ext: ComposeExt = "md") {
     compose.active = true;
     compose.ext = ext;
+    compose.view = "edit"; // always open in the editor, not the preview
     if (!compose.name) compose.name = "untitled";
     composeChannel = channel ?? resolveComposeChannel();
     openPanelChrome();
@@ -1877,10 +1882,11 @@ export function attachComposeFile() {
         UploadHandler.promptToUpload([file], channel, DraftType.ChannelMessage);
     } catch { /* ignore — staging failed, leave compose open so nothing is lost */ }
 
-    // Exit compose: clear the buffer + name, keep `ext` sticky for next time.
+    // Exit compose: clear the buffer + name, reset the view, keep `ext` sticky.
     compose.active = false;
     compose.body = "";
     compose.name = "";
+    compose.view = "edit";
     composeChannel = null;
     // Close the panel (the same path the header X uses).
     closePanel();
@@ -4270,94 +4276,57 @@ function LoadingBody() {
 // ---------------------------------------------------------------------------
 // Compose (write) mode body — a tiny .txt/.md scratch writer.
 //
-// Layout: a flex row that is a CSS container (`dockview-compose`), so it can
-// stack vertically at narrow width purely in CSS (no React resize state). Left
-// = a plain monospace <textarea> editor (NOT CodeMirror/Monaco); right = a
-// PERSISTENT sandboxed iframe live-previewing the markdown. For .txt the preview
-// pane is hidden and the editor fills the width.
+// Layout: the body is FULL WIDTH and shows EITHER the editor OR the rendered
+// markdown preview, switched by the Edit/Preview toggle in the compose toolbar
+// (compose.view). There is NO side-by-side split — a narrow side panel can't
+// afford two cramped columns. For .txt there is no preview at all (the editor
+// always fills the width).
 //
 // CRITICAL: the editor text lives in `compose.body` (module state) and is
 // mutated ONLY in the textarea's onChange — never via forceRender. A re-render
 // would remount the textarea mid-IME-composition and corrupt Korean input. The
-// preview is updated out-of-band by postMessage-ing new HTML into the already-
-// mounted iframe's <article>, debounced, so a keystroke never re-renders React
-// or reloads the iframe.
+// preview is rendered ON DEMAND when the toggle flips to Preview: we bake the
+// current buffer into the iframe's srcDoc (markdownToHtml -> highlightMarkdownCode
+// -> wrapMarkdownDoc, the SAME static path the normal markdown viewer uses), so
+// there is no live-as-you-type update — a keystroke never re-renders React or
+// touches the iframe. Static-bake also sidesteps every CSP/postMessage issue the
+// old live preview fought (the normal viewer proves this path works).
 // ---------------------------------------------------------------------------
 
-// The live preview iframe, captured on mount so schedulePreview() can write into
-// it without going through React. Null when compose isn't mounted.
-let composePreviewFrame: HTMLIFrameElement | null = null;
-let composePreviewTimer: any = 0;
-let composePreviewReady = false; // the iframe fired load (srcDoc shell parsed)
-
-/** The persistent preview document: the same dark markdown shell wrapMarkdownDoc
- *  produces (so it matches the real markdown viewer pixel-for-pixel), with an
- *  EMPTY article. KaTeX CSS is included unconditionally (hasMath=true) so math
- *  renders without ever reloading the shell to add the stylesheet.
- *
- *  No inline receiver script: Discord's HTTP-header CSP blocks inline scripts in
- *  this sandboxed srcDoc iframe, so a message receiver never registers. Instead
- *  the iframe is sandbox="allow-scripts allow-same-origin" (a srcdoc with
- *  allow-same-origin is same-origin with the host), so the HOST writes straight
- *  into iframe.contentDocument's article.md — see composeRenderPreview(). The
- *  MD_LINK_SCRIPT folded in by wrapMarkdownDoc is itself inline and likewise
- *  blocked, but links here are inert (this is a scratch preview), so that's fine. */
+/** Build the full preview document for the current compose buffer: the exact
+ *  static markdown path the normal viewer uses (markdownToHtml -> highlight ->
+ *  wrapMarkdownDoc), so the preview matches the real markdown viewer pixel-for-
+ *  pixel and inherits its CSP-safe sandboxed-iframe rendering for free. */
 function composePreviewDoc(): string {
-    return wrapMarkdownDoc("", true);
+    const { html, hasMath } = markdownToHtml(compose.body);
+    return wrapMarkdownDoc(highlightMarkdownCode(html), hasMath);
 }
 
-/** Write the current compose buffer's rendered HTML straight into the same-origin
- *  preview iframe's <article class="md"> (no postMessage, no srcDoc reload — so no
- *  flicker and no CSP-blocked script). Matches the normal viewer path exactly:
- *  markdownToHtml(...).html -> highlightMarkdownCode(...). Math is already baked
- *  into the HTML by KaTeX at parse time and the shell carries the KaTeX CSS, so
- *  nothing else is needed for math to render. Returns true if it wrote (article
- *  was present), false if the iframe doc/article wasn't ready yet. */
-function composeRenderPreview(): boolean {
-    const doc = composePreviewFrame?.contentDocument;
-    const art = doc && doc.querySelector("article.md");
-    if (!art) return false;
-    const { html } = markdownToHtml(compose.body);
-    art.innerHTML = highlightMarkdownCode(html);
-    return true;
-}
-
-/** Render the current compose buffer into the live preview iframe. Debounced
- *  150ms so fast typing patches at most ~7x/sec. Never touches React (no
- *  forceRender) — IME-safe. If the iframe's srcDoc hasn't parsed yet (no article),
- *  re-arm the debounce so the write lands once the shell is ready. */
-function schedulePreview() {
-    if (composePreviewTimer) clearTimeout(composePreviewTimer);
-    composePreviewTimer = setTimeout(() => {
-        composePreviewTimer = 0;
-        if (!composePreviewFrame) return;
-        try {
-            if (!composeRenderPreview()) {
-                // Shell not parsed yet — retry shortly via the same debounce slot.
-                if (!composePreviewReady) schedulePreview();
-            }
-        } catch { /* ignore — frame torn down mid-flight */ }
-    }, 150);
-}
-
-/** The compose editor + live preview. A React component so the iframe ref +
- *  unmount cleanup are scoped here; the textarea is uncontrolled-ish (value from
- *  module state, mutated in onChange only — see the CRITICAL note above). */
+/** The compose body: full-width editor (edit mode) OR full-width rendered
+ *  markdown (preview mode). The textarea is uncontrolled (defaultValue + onChange
+ *  only — see the CRITICAL note above). The preview is a sandboxed iframe whose
+ *  srcDoc is baked from the current buffer; switching to Preview re-renders this
+ *  component (the toggle forceRenders), so the srcDoc is rebuilt fresh each time. */
 function ComposeBody() {
-    const { useRef, useEffect } = React;
-    const frameRef = useRef(null as HTMLIFrameElement | null);
-
-    useEffect(() => {
-        composePreviewFrame = frameRef.current;
-        return () => {
-            // Unmount: stop the debounce + drop the captured frame.
-            if (composePreviewTimer) { clearTimeout(composePreviewTimer); composePreviewTimer = 0; }
-            composePreviewReady = false;
-            composePreviewFrame = null;
-        };
-    }, []);
-
     const isMd = compose.ext === "md";
+    const previewing = isMd && compose.view === "preview";
+
+    if (previewing) {
+        // Static-baked preview iframe — same sandbox + srcDoc approach as the
+        // normal markdown viewer. Keyed on "preview" (NOT on width) so a resize
+        // drag never reloads it; flipping to Preview remounts it fresh from the
+        // current buffer.
+        return React.createElement(
+            "div",
+            { className: "dockview-compose" },
+            React.createElement("iframe", {
+                key: "compose-preview",
+                className: "dockview-compose-preview",
+                srcDoc: composePreviewDoc(),
+                sandbox: "allow-scripts allow-same-origin"
+            })
+        );
+    }
 
     const editor = React.createElement("textarea", {
         key: "editor",
@@ -4365,52 +4334,26 @@ function ComposeBody() {
         // defaultValue (not value): the textarea is the live source of truth while
         // mounted; reading `compose.body` as `value` would make it controlled and
         // force a re-render per keystroke. We seed it once and read it back via
-        // onChange. The component fully remounts (new content.seq isn't used here,
-        // but the body is keyed on compose.active flips) only when compose toggles.
+        // onChange. The component only remounts when compose toggles edit/preview
+        // or txt/md — never per keystroke.
         defaultValue: compose.body,
         spellCheck: false,
         placeholder: isMd ? STRINGS.compose.previewEmpty : "",
-        onChange: (e: any) => { compose.body = e.target.value; if (isMd) schedulePreview(); },
+        onChange: (e: any) => { compose.body = e.target.value; },
         onKeyDown: (e: any) => e.stopPropagation()
     });
 
-    const preview = React.createElement("iframe", {
-        // STABLE key — never tie it to width/ext or the iframe reloads (losing the
-        // receiver + any rendered preview) on resize / format flip.
-        key: "compose-preview",
-        ref: frameRef,
-        className: "dockview-compose-preview",
-        srcDoc: composePreviewDoc(),
-        sandbox: "allow-scripts allow-same-origin",
-        onLoad: () => {
-            composePreviewReady = true;
-            // Shell parsed: write the current buffer straight in (no debounce, so
-            // the preview is populated the instant the iframe is ready).
-            if (isMd) { try { composeRenderPreview(); } catch { /* not ready */ } }
-        }
-    });
-
-    // `.dockview-compose` is the query CONTAINER (container-type/name in CSS); the
-    // inner `.dockview-compose-row` is the flex row that actually responds to the
-    // @container query (an element can't react to its OWN container — only
-    // descendants can), so the EDIT|PREVIEW split stacks vertically when narrow.
     return React.createElement(
         "div",
-        { className: "dockview-compose" + (isMd ? "" : " dockview-compose-txt") },
-        React.createElement(
-            "div",
-            { className: "dockview-compose-row" },
-            editor,
-            preview
-        )
+        { className: "dockview-compose" },
+        editor
     );
 }
 
-/** Body factory for compose mode. Keyed on the format so a txt<->md flip is a
- *  clean class change (the iframe inside keeps its OWN stable key, so it does not
- *  reload). */
+/** Body factory for compose mode. Keyed on ext+view so an edit<->preview or
+ *  txt<->md flip cleanly remounts the right body (editor or preview iframe). */
 function renderComposeBody() {
-    return React.createElement(ComposeBody, { key: "compose" });
+    return React.createElement(ComposeBody, { key: "compose-" + compose.ext + "-" + compose.view });
 }
 
 /** Body dispatcher: shared loading / error / placeholder, then route. */
@@ -4908,60 +4851,80 @@ function DockMoreMenu() {
 }
 
 // ---------------------------------------------------------------------------
-// Compose-mode header pieces (filename input + txt/md toggle + Attach). Kept out
-// of DockPanel so the filename field owns LOCAL state (typing it doesn't re-run
-// the whole header). The input mirrors FindBar's controlled-input pattern incl.
-// the onKeyDown stopPropagation (so the panel's single-key shortcuts never eat a
-// keystroke). It writes through to `compose.name` on every change.
+// Compose-mode SECOND-ROW toolbar (filename input + Edit/Preview toggle + Attach).
+//
+// The top header row is strictly Discord grammar (file-type glyph + a TYPE-LABEL
+// title + close X — identical structure to the PDF/code viewers). All compose-
+// specific controls live HERE, in a sub-toolbar directly below the top row, using
+// NATIVE Discord components: a brand (blurple) `Button` for Attach and a small
+// segmented Edit/Preview toggle. This sits inside `.dockview-header` after the
+// upper row, so the card's flex-column layout flows the body BELOW it naturally —
+// no pixel-offset math needed.
+//
+// The filename field is UNCONTROLLED (defaultValue + onChange), so typing it never
+// re-renders — same IME-safety as the editor — and it keeps the onKeyDown
+// stopPropagation so the panel's single-key shortcuts never eat a keystroke. The
+// module mirror (`compose.name`) is the source the attach builder reads.
 // ---------------------------------------------------------------------------
 
-/** The filename field, placed where the <h2 title> sits so it inherits the
- *  flex:1 1 auto / min-width:0 that lets it shrink instead of pushing the
- *  controls out. Local state keeps typing cheap; the module mirror is the source
- *  the attach builder reads. */
+/** The filename field. Uncontrolled (defaultValue, mutated in onChange only) so a
+ *  keystroke never re-renders; keyed on ext so the seeded value refreshes when the
+ *  format flips. */
 function ComposeFilenameInput() {
-    const { useState } = React;
-    const [name, setName] = useState(compose.name);
     return React.createElement("input", {
+        key: "compose-name-" + compose.ext,
         className: "dockview-compose-name",
         type: "text",
         placeholder: STRINGS.compose.namePlaceholder,
         "aria-label": STRINGS.compose.namePlaceholder,
-        value: name,
+        defaultValue: compose.name,
         spellCheck: false,
-        onChange: (e: any) => { compose.name = e.target.value; setName(e.target.value); },
+        onChange: (e: any) => { compose.name = e.target.value; },
         onKeyDown: (e: any) => e.stopPropagation()
     });
 }
 
-/** The txt/md toggle (two small text buttons, like the CSV Raw/Table toggle) +
- *  the Attach button. The toggle flips `compose.ext` and forceRenders so the
- *  body re-routes (preview pane shows/hides); on a flip back to md we re-prime
- *  the preview since the persistent iframe's onLoad won't fire again. Attach
- *  builds the File and stages it (promptToUpload), then exits compose + closes. */
-function composeHeaderControls() {
-    const md = compose.ext === "md";
-    const setExt = (ext: ComposeExt) => {
-        if (compose.ext === ext) return;
-        compose.ext = ext;
+/** The Edit/Preview toggle — a Discord-styled segmented control (two text buttons
+ *  reading as one segmented pair, like the CSV Raw/Table toggle). Flips
+ *  `compose.view` and forceRenders so the body re-routes (editor <-> rendered
+ *  preview). md only. */
+function composeViewToggle() {
+    const setView = (view: ComposeView) => {
+        if (compose.view === view) return;
+        compose.view = view;
         forceRender?.();
-        // Re-prime the (already-loaded) preview when switching to markdown — the
-        // iframe stays mounted across the flip so its onLoad won't re-fire.
-        if (ext === "md") schedulePreview();
     };
+    const editing = compose.view === "edit";
     return React.createElement(
-        React.Fragment,
-        null,
+        "div",
+        { className: "dockview-tool-group dockview-compose-viewtoggle" },
+        toolTextBtn("compose-edit", STRINGS.compose.editTab, STRINGS.compose.editTab, () => setView("edit"), editing),
+        toolTextBtn("compose-preview", STRINGS.compose.previewTab, STRINGS.compose.previewTab, () => setView("preview"), !editing)
+    );
+}
+
+/** The compose sub-toolbar (second header row): filename input + (md only) the
+ *  Edit/Preview toggle + the native blurple Attach button. Attach builds the File
+ *  and stages it (promptToUpload), then exits compose + closes. */
+function composeToolbar() {
+    const isMd = compose.ext === "md";
+    return React.createElement(
+        "div",
+        { className: "dockview-compose-toolbar" },
+        React.createElement(ComposeFilenameInput, null),
+        // md only: the Edit/Preview toggle (txt has no preview).
+        isMd ? composeViewToggle() : null,
+        // Attach: Discord's real primary (BRAND/blurple) button.
         React.createElement(
-            "div",
-            { className: "dockview-tool-group dockview-compose-format" },
-            toolTextBtn("compose-txt", STRINGS.compose.formatTxt, STRINGS.compose.formatTxt, () => setExt("txt"), !md),
-            toolTextBtn("compose-md", STRINGS.compose.formatMd, STRINGS.compose.formatMd, () => setExt("md"), md)
-        ),
-        React.createElement(
-            "div",
-            { className: "dockview-tool-group" },
-            toolTextBtn("compose-attach", STRINGS.compose.attach, STRINGS.compose.attachHint, () => attachComposeFile())
+            Button,
+            {
+                className: "dockview-compose-attach",
+                color: Button.Colors.BRAND,
+                size: Button.Sizes.SMALL,
+                "aria-label": STRINGS.compose.attachHint,
+                onClick: () => attachComposeFile()
+            },
+            STRINGS.compose.attach
         )
     );
 }
@@ -5087,13 +5050,23 @@ function DockPanel() {
     }, []);
 
     const hasContent = content.name != null;
-    const title = hasContent ? (content.name as string) : "DockView";
+    // Compose mode dresses the TOP row in pure Discord grammar — the file-type
+    // glyph + a TYPE-LABEL title ("New text file" / "New markdown file"), identical
+    // in structure to the viewers. The filename/Attach/toggle live in the SECOND
+    // row (the compose toolbar), never up here.
+    const title = compose.active
+        ? (compose.ext === "md" ? STRINGS.compose.menuItemMd : STRINGS.compose.menuItemTxt)
+        : hasContent ? (content.name as string) : "DockView";
 
     // Leading file-type glyph (mirrors a real thread header's [thread glyph] +
     // title structure). One muted, single-colour, document-framed icon per
     // content type so the header reads as "a file is docked here" at a glance.
     // Paths are built lazily here (React is ready now) from the plain-data map.
-    const leadingIcon = hasContent
+    // In compose the glyph is the file-type being written (markdown vs code/text).
+    const iconType = compose.active
+        ? (compose.ext === "md" ? "markdown" : "code")
+        : content.type;
+    const leadingIcon = (compose.active || hasContent)
         ? React.createElement(
             "svg",
             {
@@ -5104,7 +5077,7 @@ function DockPanel() {
                 fill: "none",
                 "aria-hidden": true
             },
-            ...(FILE_TYPE_ICON[content.type] || FILE_TYPE_ICON.unknown).map(
+            ...(FILE_TYPE_ICON[iconType] || FILE_TYPE_ICON.unknown).map(
                 ([d, extra]: IconPath, i: number) =>
                     React.createElement("path", { key: i, fill: "currentColor", d, ...(extra || {}) })
             )
@@ -5191,30 +5164,26 @@ function DockPanel() {
                     React.createElement(
                         "div",
                         { className: `${CLS.headerChildren} dockview-header-children` },
-                        // Compose mode replaces the [glyph]+title with the filename
-                        // field (placed here so it gets the title's flex:1/min-w:0).
-                        compose.active
-                            ? React.createElement(ComposeFilenameInput, { key: "compose-name" })
-                            : leadingIcon,
-                        compose.active
-                            ? null
-                            : React.createElement(
-                                "h2",
-                                { className: `${CLS.title} dockview-title`, title },
-                                title
-                            )
+                        // Top row is pure Discord grammar in BOTH modes: [file-type
+                        // glyph] + title. In compose the title is the TYPE LABEL and
+                        // the glyph is the format being written — no compose controls
+                        // up here (they live in the second-row toolbar below).
+                        leadingIcon,
+                        React.createElement(
+                            "h2",
+                            { className: `${CLS.title} dockview-title`, title },
+                            title
+                        )
                     ),
-                    // Per-viewer CORE controls now live INLINE in this one header
-                    // row (the second toolbar strip is gone). They sit between the
-                    // filename and the always-visible ⋯/popout/close actions, and
-                    // collapse priority-low first at narrow width (CSS). In compose
-                    // mode this slot holds the txt/md toggle + Attach instead.
+                    // Per-viewer CORE controls live INLINE in the top header row
+                    // (the second toolbar strip is gone for viewers). They sit
+                    // between the title and the ⋯/popout/close actions, and collapse
+                    // priority-low first at narrow width (CSS). Empty in compose —
+                    // compose's controls are in its own second-row toolbar.
                     React.createElement(
                         "div",
                         { className: "dockview-header-controls" },
-                        compose.active
-                            ? composeHeaderControls()
-                            : React.createElement(HeaderControls, null)
+                        compose.active ? null : React.createElement(HeaderControls, null)
                     ),
                     React.createElement(
                         "div",
@@ -5225,7 +5194,12 @@ function DockPanel() {
                         compose.active ? null : moreBtn,
                         closeBtn
                     )
-                )
+                ),
+                // SECOND ROW (compose only): the sub-toolbar with filename + (md)
+                // Edit/Preview toggle + native Attach button. A sibling of the upper
+                // row inside `.dockview-header`, so the card's flex-column layout
+                // flows the body below it with no offset math.
+                compose.active ? composeToolbar() : null
             ),
             (() => {
                 // The find bar is a one-row dropdown pinned to the TOP of the
