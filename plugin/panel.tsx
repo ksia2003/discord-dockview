@@ -346,8 +346,6 @@ interface CachedView {
     imgTy?: number;
     // shared scroll (px) of the .dockview-body scroller
     scrollTop?: number;
-    // code
-    codeWrap?: boolean;
     // csv: which view the user left the file on (grid by default)
     csvMode?: "grid" | "raw";
 }
@@ -464,10 +462,7 @@ function snapshotActiveView() {
         e.view.imgScale = imgView.scale;
         e.view.imgTx = imgView.tx;
         e.view.imgTy = imgView.ty;
-    } else if (e.type === "code") {
-        e.view.codeWrap = codeView.wrap;
     } else if (e.type === "csv") {
-        e.view.codeWrap = codeView.wrap; // the raw view's wrap state
         e.view.csvMode = csvView.mode;
     }
 }
@@ -492,11 +487,9 @@ function applyCachedView(e: CacheEntry) {
         imgView.tx = e.view.imgTx ?? 0;
         imgView.ty = e.view.imgTy ?? 0;
     } else if (e.type === "code") {
-        codeView.wrap = e.view.codeWrap ?? false;
         // find never persists across files — a restored file opens with find closed.
         resetCodeView();
     } else if (e.type === "csv") {
-        codeView.wrap = e.view.codeWrap ?? false;
         resetCodeView();
         // restore the grid/raw choice the user left this file on; the delimiter is
         // re-sniffed by the loader (it lives on csvView already at this point).
@@ -579,12 +572,15 @@ interface ImgControls {
 }
 let imgControls: ImgControls | null = null;
 
-// --- code viewer view-state (word-wrap toggle + find), shared with the toolbar
+// --- code viewer view-state (find), shared with the toolbar -----------------
 // The find fields mirror pdfView's: the bar/keyboard drive them, the controller
 // (codeCtrl) reads them to repaint matches. Matching is against the ORIGINAL
 // source so it's independent of how far progressive highlighting has reached.
+// `wrap` is now permanently TRUE — code (and CSV raw) always wraps, never scrolls
+// horizontally (locked Discord grammar). The field is kept as a const-true so the
+// body renderer's `dockview-code-wrap` class stays driven from one place.
 const codeView = {
-    wrap: false,
+    wrap: true,
     findOpen: false,
     findQuery: "",
     findMatches: 0,
@@ -1890,6 +1886,52 @@ export function attachComposeFile() {
     composeChannel = null;
     // Close the panel (the same path the header X uses).
     closePanel();
+}
+
+/** ⋯-menu "Attach to message": stage the file CURRENTLY shown in the panel as a
+ *  pending upload on the active channel (the native attachment chip → review-
+ *  before-send), exactly like the compose Attach. The bytes come from what's
+ *  ALREADY loaded — never an external fetch (the renderer's CSP blocks arbitrary
+ *  URLs, and a re-fetch would be wasteful):
+ *    - text family (code / csv / unknown-sniffed-as-text): `content.code`.
+ *    - artifact (inline html with no url): `content.html`.
+ *    - everything else with a url (pdf / image / markdown / artifact-from-url):
+ *      fetch the url and attach the blob. This is the SAME Discord-CDN fetch the
+ *      loaders already do successfully; it is the file's own source, not an
+ *      arbitrary external URL.
+ *  Builds a File with the viewed filename + a best-effort mime, then hands it to
+ *  the upload handler. Best-effort throughout: any failure is a silent no-op so
+ *  nothing the user is viewing is disturbed. */
+export function attachActiveFile() {
+    const channel = resolveComposeChannel();
+    if (!channel) return;
+    const name = (content.name as string | null) || "file";
+
+    const stage = (file: File) => {
+        try { UploadHandler.promptToUpload([file], channel, DraftType.ChannelMessage); } catch { /* ignore */ }
+    };
+
+    // 1) Text family — bytes already in memory, no fetch.
+    if (content.code != null && (content.type === "code" || content.type === "csv" || content.type === "unknown")) {
+        stage(new File([content.code], name, { type: "text/plain" }));
+        return;
+    }
+    // 2) Inline artifact (no url) — the html source is in memory.
+    if (content.type === "html" && content.html != null && !content.url) {
+        const base = /\.html?$/i.test(name) ? name : name + ".html";
+        stage(new File([content.html], base, { type: "text/html" }));
+        return;
+    }
+    // 3) Has a url (pdf / image / markdown / artifact-from-url): attach the source
+    //    blob. This re-uses the file's OWN url (Discord CDN), which dvFetch already
+    //    reaches; it is NOT an arbitrary external fetch.
+    if (content.url) {
+        const reqUrl = content.url;
+        dvFetch(reqUrl)
+            .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.blob(); })
+            .then(blob => { stage(new File([blob], name, { type: blob.type || "application/octet-stream" })); })
+            .catch(() => { /* fetch blocked / failed — silent no-op */ });
+    }
 }
 
 /** Convert the channel's CURRENT COMPOSER TEXT into a file attachment, mirroring
@@ -4614,8 +4656,8 @@ function ImageHeaderControls() {
     );
 }
 
-/** Code header controls: language label, wrap toggle, copy. Own component for
- *  the copy "Copied" flash state. */
+/** Code row-2 controls: language label, find trigger, copy. (Word wrap is always
+ *  on, so there is no wrap toggle.) Own component for the copy "Copied" flash. */
 function CodeHeaderControls() {
     const { useState } = React;
     const [copied, setCopied] = useState(false);
@@ -4649,58 +4691,38 @@ function CodeHeaderControls() {
                 "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
                 () => toggleCodeFind(), codeView.findOpen)
         ),
-        React.createElement(
-            "div",
-            { className: "dockview-tool-group" },
-            toolBtn("wrap", codeView.wrap ? STRINGS.code.disableWrap : STRINGS.code.enableWrap,
-                "M4 6a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Zm0 5a1 1 0 0 1 1-1h12a3 3 0 1 1 0 6h-1.59l.3.3a1 1 0 1 1-1.42 1.4l-2-2a1 1 0 0 1 0-1.4l2-2a1 1 0 0 1 1.42 1.4l-.3.3H17a1 1 0 1 0 0-2H5a1 1 0 0 1-1-1Zm0 6a1 1 0 0 1 1-1h6a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z",
-                () => { codeView.wrap = !codeView.wrap; forceRender?.(); },
-                codeView.wrap),
-            React.createElement(
-                "button",
-                {
-                    key: "copy",
-                    type: "button",
-                    className: "dockview-tool-btn dockview-tool-copy" + (copied ? " dockview-tool-copied" : ""),
-                    "aria-label": STRINGS.code.copyCode,
-                    title: STRINGS.code.copyCode,
-                    onClick: copy
-                },
-                React.createElement(
-                    "svg",
-                    { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
-                    copied
-                        ? React.createElement("path", { fill: "currentColor", d: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z" })
-                        : React.createElement("path", { fill: "currentColor", d: "M8 7V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2Zm2 0h5a2 2 0 0 1 2 2v5h2V5h-9v2ZM6 9v9h9V9H6Z" })
-                ),
-                React.createElement("span", { className: "dockview-tool-copy-label" }, copied ? STRINGS.code.copied : STRINGS.code.copy)
-            )
-        )
+        copyBtn("code-copy", STRINGS.code.copy, copied, copy)
     );
 }
 
-/** A small text-labelled toolbar button (vs the icon-only toolBtn) — used for the
- *  CSV grid/raw toggle, which reads clearer as a word than a glyph. */
-function toolTextBtn(key: string, label: string, title: string, onClick: () => void, active = false) {
+/** A ghost icon copy button (Discord message code-block copy glyph) with a
+ *  "copied" check flash. Shared by code + CSV row-2 controls. `label` is the
+ *  tooltip; `copied` flips the glyph to a check + tints positive. */
+function copyBtn(key: string, label: string, copied: boolean, onClick: () => void) {
     return React.createElement(
         "button",
         {
             key,
             type: "button",
-            className: "dockview-tool-btn dockview-tool-textbtn" + (active ? " dockview-tool-btn-active" : ""),
-            "aria-label": title,
-            title,
-            "aria-pressed": active || undefined,
+            className: "dockview-tool-btn dockview-tool-copy" + (copied ? " dockview-tool-copied" : ""),
+            "aria-label": copied ? STRINGS.code.copied : label,
+            title: copied ? STRINGS.code.copied : label,
             onClick
         },
-        React.createElement("span", { className: "dockview-tool-btn-label" }, label)
+        React.createElement(
+            "svg",
+            { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+            copied
+                ? React.createElement("path", { fill: "currentColor", d: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z" })
+                : React.createElement("path", { fill: "currentColor", d: "M8 7V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2Zm2 0h5a2 2 0 0 1 2 2v5h2V5h-9v2ZM6 9v9h9V9H6Z" })
+        )
     );
 }
 
-/** CSV header controls: the grid/raw toggle, plus — when in RAW — the code
- *  viewer's own find / wrap / copy controls (since raw reuses the code body). The
- *  toggle button always shows the action that switches AWAY from the current view
- *  (grid -> "Raw", raw -> "Table"), the universal toggle-label convention. */
+/** CSV row-2 controls: a single STATE-COLOUR Raw toggle (member-list-toggle
+ *  grammar — one ghost icon button that fills/highlights when raw is active),
+ *  plus a find trigger (raw only, since raw reuses the code body) and a copy icon.
+ *  Word wrap is always on, so there is no wrap control. */
 function CsvHeaderControls() {
     const { useState } = React;
     const [copied, setCopied] = useState(false);
@@ -4716,7 +4738,7 @@ function CsvHeaderControls() {
         } catch { fallbackCopy(text, done); }
     };
     const children: any[] = [];
-    // RAW-only: find toggle + wrap (collapse before the always-on toggle/copy).
+    // RAW-only: find trigger (collapse before the always-on Raw toggle / copy).
     if (raw) {
         children.push(React.createElement(
             "div",
@@ -4725,54 +4747,38 @@ function CsvHeaderControls() {
                 "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
                 () => toggleCodeFind(), codeView.findOpen)
         ));
-        children.push(React.createElement(
-            "div",
-            { key: "csv-wrap-grp", className: "dockview-tool-group dockview-collapse-low" },
-            toolBtn("csv-wrap", codeView.wrap ? STRINGS.code.disableWrap : STRINGS.code.enableWrap,
-                "M4 6a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Zm0 5a1 1 0 0 1 1-1h12a3 3 0 1 1 0 6h-1.59l.3.3a1 1 0 1 1-1.42 1.4l-2-2a1 1 0 0 1 0-1.4l2-2a1 1 0 0 1 1.42 1.4l-.3.3H17a1 1 0 1 0 0-2H5a1 1 0 0 1-1-1Zm0 6a1 1 0 0 1 1-1h6a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z",
-                () => { codeView.wrap = !codeView.wrap; forceRender?.(); },
-                codeView.wrap)
-        ));
     }
-    // Always: the grid/raw toggle + copy.
+    // Always: the Raw state-colour toggle (icon highlights when active) + copy.
     children.push(React.createElement(
         "div",
         { key: "csv-toggle-grp", className: "dockview-tool-group" },
-        toolTextBtn("csv-toggle",
-            raw ? STRINGS.csv.showTable : STRINGS.csv.showRaw,
-            raw ? STRINGS.csv.showTableHint : STRINGS.csv.showRawHint,
-            () => toggleCsvMode()),
-        React.createElement(
-            "button",
-            {
-                key: "csv-copy",
-                type: "button",
-                className: "dockview-tool-btn dockview-tool-copy" + (copied ? " dockview-tool-copied" : ""),
-                "aria-label": STRINGS.code.copyCode,
-                title: STRINGS.code.copyCode,
-                onClick: copy
-            },
-            React.createElement(
-                "svg",
-                { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
-                copied
-                    ? React.createElement("path", { fill: "currentColor", d: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z" })
-                    : React.createElement("path", { fill: "currentColor", d: "M8 7V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2Zm2 0h5a2 2 0 0 1 2 2v5h2V5h-9v2ZM6 9v9h9V9H6Z" })
-            ),
-            React.createElement("span", { className: "dockview-tool-copy-label" }, copied ? STRINGS.code.copied : STRINGS.code.copy)
-        )
+        // Raw toggle = one button that changes COLOUR by state (off = grid view,
+        // highlighted = raw text). The "</>" code glyph reads as "show the raw text".
+        toolBtn("csv-raw", STRINGS.csv.rawHint,
+            "M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4Zm5.2 0L19.2 12l-4.6-4.6L16 6l6 6-6 6-1.4-1.4Z",
+            () => toggleCsvMode(), raw),
+        copyBtn("csv-copy", STRINGS.csv.copyHint, copied, copy)
     ));
     return React.createElement(React.Fragment, null, ...children);
 }
 
-/** The header control cluster for the current content type (rendered inside the
- *  header toolbar, left of ⋯/popout/close). Empty for markdown/artifact/unknown. */
+/** The per-viewer control cluster for the current content type, rendered in the
+ *  SECOND header row (below the icon/name/⋯/X top row). Empty for markdown /
+ *  artifact / unknown (their row 2 is suppressed entirely — see hasViewerControls). */
 function HeaderControls() {
     if (content.type === "pdf") return React.createElement(PdfHeaderControls, null);
     if (content.type === "image") return React.createElement(ImageHeaderControls, null);
     if (content.type === "code") return React.createElement(CodeHeaderControls, null);
     if (content.type === "csv") return React.createElement(CsvHeaderControls, null);
     return null;
+}
+
+/** True when the current content has row-2 controls (so the second header row is
+ *  rendered). Artifact / markdown / unknown have none — no empty strip. */
+function hasViewerControls(): boolean {
+    if (content.loading || content.error) return false;
+    return content.type === "pdf" || content.type === "image"
+        || content.type === "code" || content.type === "csv";
 }
 
 /** Clipboard fallback for environments where navigator.clipboard is blocked. */
@@ -4807,7 +4813,9 @@ const MENU_ICON = {
     download: menuIcon("M12 3a1 1 0 0 1 1 1v9.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42l2.3 2.3V4a1 1 0 0 1 1-1ZM5 18a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Z"),
     copyImage: menuIcon("M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V5Zm3-1a1 1 0 0 0-1 1v9.59l2.3-2.3a1 1 0 0 1 1.4 0l2.3 2.3 3.3-3.3a1 1 0 0 1 1.4 0L18 14.6V5a1 1 0 0 0-1-1H7Zm2.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"),
     copyLink: menuIcon("M9.88 13.41a1 1 0 0 1 0-1.41l2.12-2.12a1 1 0 0 1 1.42 1.41L11.3 13.4a1 1 0 0 1-1.42 0Zm-2.3 4.6a3 3 0 0 1 0-4.24l2.12-2.12a1 1 0 0 1 1.42 1.41l-2.12 2.12a1 1 0 0 0 1.41 1.42l2.12-2.13a1 1 0 0 1 1.42 1.42l-2.13 2.12a3 3 0 0 1-4.24 0Zm9.9-9.9a3 3 0 0 1 0 4.25l-2.13 2.12a1 1 0 0 1-1.41-1.41l2.12-2.13a1 1 0 0 0-1.41-1.41l-2.12 2.12a1 1 0 1 1-1.42-1.42l2.13-2.12a3 3 0 0 1 4.24 0Z"),
-    fitWidth: menuIcon("M4 5a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1Zm16 0a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1ZM8.7 8.3a1 1 0 0 0-1.4 1.4l.29.3H7a1 1 0 0 0 0 2h.59l-.3.3a1 1 0 1 0 1.42 1.4l2-2a1 1 0 0 0 0-1.4l-2-2Zm6.6 0a1 1 0 0 1 1.4 1.4l-.29.3H17a1 1 0 1 1 0 2h-.59l.3.3a1 1 0 0 1-1.42 1.4l-2-2a1 1 0 0 1 0-1.4l2-2Z")
+    fitWidth: menuIcon("M4 5a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1Zm16 0a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1ZM8.7 8.3a1 1 0 0 0-1.4 1.4l.29.3H7a1 1 0 0 0 0 2h.59l-.3.3a1 1 0 1 0 1.42 1.4l2-2a1 1 0 0 0 0-1.4l-2-2Zm6.6 0a1 1 0 0 1 1.4 1.4l-.29.3H17a1 1 0 1 1 0 2h-.59l.3.3a1 1 0 0 1-1.42 1.4l-2-2a1 1 0 0 1 0-1.4l2-2Z"),
+    // Paperclip — the universal "attach a file" affordance (matches Discord's own).
+    attach: menuIcon("M16.5 6.3 8.8 14a2 2 0 1 0 2.83 2.83l7.07-7.07a4 4 0 1 0-5.66-5.66l-7.07 7.07a6 6 0 0 0 8.49 8.49l6.36-6.36a1 1 0 0 0-1.41-1.42l-6.37 6.37a4 4 0 0 1-5.65-5.66l7.07-7.07a2 2 0 0 1 2.83 2.83l-7.08 7.07a.99.99 0 0 1-1.4-1.41l7.7-7.7a1 1 0 0 0-1.42-1.41Z")
 };
 
 // ---------------------------------------------------------------------------
@@ -4823,6 +4831,21 @@ function DockMoreMenu() {
     const isPdf = type === "pdf";
 
     const items: any[] = [];
+
+    // Attach to message: stage the CURRENTLY-VIEWED file as a pending upload on the
+    // active channel (the native attachment chip). Shown whenever there's a file to
+    // attach — text in memory (code/csv/unknown), inline artifact html, or a url
+    // (pdf/image/markdown/artifact-from-url). attachActiveFile() picks the source.
+    const canAttach = !content.loading && !content.error && content.name != null
+        && (content.code != null || (isHtml && content.html != null) || url != null);
+    if (canAttach) {
+        items.push(React.createElement(Menu.MenuItem, {
+            id: "dockview-more-attach",
+            label: STRINGS.menu.attach,
+            icon: MENU_ICON.attach,
+            action: () => attachActiveFile()
+        }));
+    }
 
     // PDF-only: "Fit to width" (reset zoom to 100%). A secondary control moved
     // off the header (spec §2.1 PDF "fit-width → ⋯"). Shown only when zoomed away
@@ -4930,8 +4953,8 @@ function ComposeFilenameInput() {
     });
 }
 
-/** One segment of the Edit/Preview control. NOT a `toolTextBtn` (those carry their
- *  own border, which reads as a detached button) — these are border-less halves of
+/** One segment of the Edit/Preview control. NOT a bordered tool button (a border
+ *  reads as a detached button) — these are border-less halves of
  *  ONE pill: the parent `.dockview-compose-seg` is the single frame; the active
  *  segment gets a raised "thumb" fill. role=tab + aria-selected so a screen reader
  *  hears one segmented control, not two buttons. */
@@ -5178,17 +5201,6 @@ function DockPanel() {
             )
         );
 
-    const popoutBtn = hasContent && content.type === "html" && content.html != null
-        ? headerBtn(
-            "popout",
-            STRINGS.header.openInNewWindow,
-            STRINGS.header.openInNewWindow,
-            "M10 5a1 1 0 0 0 0 2h5.59l-8.3 8.3a1 1 0 1 0 1.42 1.4l8.29-8.29V14a1 1 0 1 0 2 0V6a1 1 0 0 0-1-1h-8Z M5 8a3 3 0 0 1 3-3h2a1 1 0 1 1 0 2H8a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2a1 1 0 1 1 2 0v2a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8Z",
-            () => popoutArtifact(),
-            "dockview-popout"
-        )
-        : null;
-
     // "⋯" more-actions button (left of close): opens a Discord-native context
     // menu with secondary actions (popout / download / copy link / copy image).
     const moreBtn = hasContent
@@ -5211,6 +5223,13 @@ function DockPanel() {
         "dockview-close"
     );
 
+    // The header grows to TWO rows whenever there's a second-row strip below the
+    // top row: compose's sub-toolbar, OR a viewer's relocated controls. The
+    // `--tworow` modifier releases the fixed 48px height so the section fits both
+    // rows; `--compose` additionally drives compose-only body layout (see CSS).
+    const showViewerRow = !compose.active && hasViewerControls();
+    const twoRow = compose.active || showViewerRow;
+
     return React.createElement(
         "div",
         {
@@ -5227,12 +5246,14 @@ function DockPanel() {
                 "section",
                 {
                     // Discord's native header container (`container__9293f`) is locked to a
-                    // single 48px row with `justify-content:center`; our two-row compose
-                    // header needs to GROW to fit the second toolbar row, otherwise the
-                    // upper title row overflows upward and gets clipped past the card's
-                    // top edge (the title + close X slice off). The `--compose` modifier
-                    // releases the fixed height and top-aligns the rows (see style.css).
-                    className: `${CLS.headerSection} dockview-header${compose.active ? " dockview-header--compose" : ""}`
+                    // single 48px row with `justify-content:center`; our two-row header
+                    // needs to GROW to fit the second-row strip, otherwise the upper title
+                    // row overflows upward and gets clipped past the card's top edge (the
+                    // title + close X slice off). `--tworow` releases the fixed height and
+                    // top-aligns the rows; `--compose` adds compose-only layout (see CSS).
+                    className: `${CLS.headerSection} dockview-header`
+                        + (twoRow ? " dockview-header--tworow" : "")
+                        + (compose.active ? " dockview-header--compose" : "")
                 },
                 React.createElement(
                     "div",
@@ -5251,31 +5272,31 @@ function DockPanel() {
                             title
                         )
                     ),
-                    // Per-viewer CORE controls live INLINE in the top header row
-                    // (the second toolbar strip is gone for viewers). They sit
-                    // between the title and the ⋯/popout/close actions, and collapse
-                    // priority-low first at narrow width (CSS). Empty in compose —
-                    // compose's controls are in its own second-row toolbar.
-                    React.createElement(
-                        "div",
-                        { className: "dockview-header-controls" },
-                        compose.active ? null : React.createElement(HeaderControls, null)
-                    ),
                     React.createElement(
                         "div",
                         { className: `${CLS.toolbar} dockview-header-actions` },
-                        // popout/⋯ belong to the viewer, not the writer — in compose
+                        // The top row is LOCKED to icon / name / ⋯ / X for every
+                        // viewer. ⋯ belongs to the viewer, not the writer — in compose
                         // mode only the close (X, which exits compose) is shown.
-                        compose.active ? null : popoutBtn,
                         compose.active ? null : moreBtn,
                         closeBtn
                     )
                 ),
-                // SECOND ROW (compose only): the sub-toolbar with filename + (md)
-                // Edit/Preview toggle + native Attach button. A sibling of the upper
-                // row inside `.dockview-header`, so the card's flex-column layout
-                // flows the body below it with no offset math.
-                compose.active ? composeToolbar() : null
+                // SECOND ROW. Compose: the filename + (md) Edit/Preview + Attach
+                // sub-toolbar. Viewers (pdf/image/code/csv): the per-type controls
+                // strip — relocated here so the top row stays icon/name/⋯/X. Both are
+                // a sibling of the upper row inside `.dockview-header`, so the card's
+                // flex-column layout flows the body below with no offset math.
+                // Artifact / markdown / unknown have NO second row (no controls).
+                compose.active
+                    ? composeToolbar()
+                    : showViewerRow
+                        ? React.createElement(
+                            "div",
+                            { className: "dockview-viewer-toolbar" },
+                            React.createElement(HeaderControls, null)
+                        )
+                        : null
             ),
             (() => {
                 // The find bar is a one-row dropdown pinned to the TOP of the
@@ -5962,7 +5983,7 @@ export function exposeDebug() {
         get selfProfileToggle() { return selfProfileToggle; },
         closeNativeChannelSidebar,
         onMemberSectionToggle, onUserProfileSidebarToggle, onChannelSidebarView, closeForExclusiveTakeover,
-        openCompose, attachComposeFile, composeTextToFile, get compose() { return compose; }
+        openCompose, attachComposeFile, attachActiveFile, composeTextToFile, get compose() { return compose; }
     };
 }
 export function unexposeDebug() {

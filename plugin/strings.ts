@@ -115,25 +115,22 @@ export const STRINGS = {
     },
 
     // --- csv/tsv header controls --------------------------------------------
-    // The grid<->raw toggle button shows the action that switches AWAY from the
-    // current view (showing the grid -> "Raw" switches to text; showing the text
-    // -> "Table" switches back). Concise, Discord-sober wording.
+    // The Raw control is a single STATE-COLOUR toggle (Discord member-list style):
+    // off = grid, on (highlighted) = raw text. Icon-only — the colour state, not a
+    // label, communicates whether raw is active; `rawHint` is its tooltip. Copy =
+    // a CSV-appropriate tooltip (the data table, not a code block).
     csv: {
-        showRaw: "Raw",
-        showRawHint: "View as text",
-        showTable: "Table",
-        showTableHint: "View as table"
+        rawHint: "Show raw text",
+        copyHint: "Copy table data"
     },
 
     // --- code header controls -----------------------------------------------
+    // Word wrap is always on (no toggle): code never scrolls horizontally.
     code: {
         detectedLanguage: "Detected language",
         find: "Find (Ctrl+F)",
-        enableWrap: "Enable word wrap",
-        disableWrap: "Disable word wrap",
         copy: "Copy",
-        copied: "Copied",
-        copyCode: "Copy code"
+        copied: "Copied"
     },
 
     // --- header buttons (popout / more / close) -----------------------------
@@ -152,7 +149,10 @@ export const STRINGS = {
         download: "Download",
         copyImage: "Copy image",
         copyLink: "Copy link",
-        openInPanel: "Open in panel"
+        openInPanel: "Open in panel",
+        // Attach the file currently shown in the panel to the message composer
+        // (a pending upload chip on the active channel).
+        attach: "Attach to message"
     },
 
     // --- compose ("text -> file") --------------------------------------------

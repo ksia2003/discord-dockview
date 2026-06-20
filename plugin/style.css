@@ -161,40 +161,33 @@
 }
 
 /* Header: native classes give the 48px bar, padding, tint and border-bottom.
-   The header is now a SINGLE row holding everything: [glyph][filename] +
-   [per-viewer core controls] + [⋯ popout close]. Discord's .upperContainer__*
-   is the flex row; we make the three regions lay out with the filename region
-   flexing/ellipsising and the controls + actions shrink-protected to the right.
-
-   COLLAPSE PRIORITY at narrow width (spec §2.1 "결정 필요 5" = collapse controls,
-   keep filename): the filename region (.dockview-header-children) keeps flex:1
-   and min-width:0 so it is the FIRST to give up space (its text ellipsises) only
-   AFTER the controls have nowhere left to go — but the controls region itself is
-   allowed to shrink (min-width:0 + overflow hidden) so it sheds its lowest-
-   priority items first, while the action buttons (⋯/close) never shrink. */
+   The TOP row is LOCKED to Discord grammar — [glyph][filename] + [⋯ close] — for
+   EVERY viewer; per-viewer controls live in a SECOND row below (.dockview-viewer-
+   toolbar). Discord's .upperContainer__* is the flex row; the filename region
+   flexes/ellipsises and the action buttons (⋯/close) are shrink-protected. */
 .dockview-header {
     flex: 0 0 auto;
 }
-/* Compose dresses the header as TWO rows (title row + toolbar row). Discord's
-   native header container is locked to a single 48px row with
-   justify-content:center, so a second child overflows and pushes the title row
-   UP past the card's top edge (the type-label title and the close X get sliced
-   off — the exact "the top row doesn't render" defect). Release the fixed height
-   so the section grows to fit both rows, and top-align them so the title row
-   keeps its native 48px rhythm while the toolbar flows directly below. */
-.dockview-header.dockview-header--compose {
+/* Whenever a SECOND row is present (compose sub-toolbar OR a viewer's relocated
+   controls), the header must GROW to fit both rows. Discord's native header
+   container is locked to a single 48px row with justify-content:center, so a
+   second child overflows and pushes the title row UP past the card's top edge
+   (the title and close X get sliced off). Release the fixed height so the section
+   grows, and top-align so the title row keeps its native 48px rhythm while the
+   second row flows directly below. */
+.dockview-header.dockview-header--tworow {
     height: auto;
     min-height: 0;
     max-height: none;
     justify-content: flex-start;
     /* The native header carries asymmetric padding (8px 8px 8px 16px) tuned for a
-       single inline row; the two compose rows carry their own horizontal padding,
-       so zero out the section padding and let each row own its insets. */
+       single inline row; the two rows carry their own horizontal padding, so zero
+       out the section padding and let each row own its insets. */
     padding: 0;
 }
 /* The title row keeps the native 48px header height even though the section no
-   longer forces it, so the top row reads pixel-identical to a viewer header. */
-.dockview-header.dockview-header--compose .dockview-header-upper {
+   longer forces it, so the top row reads pixel-identical to a one-row header. */
+.dockview-header.dockview-header--tworow .dockview-header-upper {
     flex: 0 0 auto;
     height: 48px;
     padding: 8px 8px 8px 16px;
@@ -205,11 +198,6 @@
     align-items: center;
     gap: 8px;
     min-width: 0;
-    /* The query container for narrow-width control collapse (see the bottom of
-       this file). Its inline size tracks the PANEL width (header padding aside),
-       a stable measure independent of the controls' own content width. */
-    container-type: inline-size;
-    container-name: dockview-header;
 }
 .dockview-header .dockview-header-children {
     flex: 1 1 auto;
@@ -218,31 +206,30 @@
     align-items: center;
     /* lowest shrink priority for the filename: it ellipsises, never disappears */
 }
-/* Per-viewer core controls, inline in the header. SHRINK-PROTECTED and NEVER
-   clipped (flex:0 0 auto, no overflow:hidden) — the control buttons must always
-   stay fully visible and clickable, even at the minimum panel width. The only
-   thing that gives up space as the header narrows is the filename region (it
-   ellipsises). Affordances we CAN afford to lose (PDF page arrows, code language
-   label, find/copy labels) are dropped via the container queries at the bottom of
-   this file, which removes them cleanly from layout — but the surviving core
-   buttons are never sliced off by an overflow clip. */
-.dockview-header-controls {
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-.dockview-header-controls:empty { display: none; }
 .dockview-header-actions {
     flex: 0 0 auto;
     display: flex;
     align-items: center;
 }
-/* In the single header row the tool buttons share the action buttons' 32px
-   rhythm. They keep the 18px glyph but match the header height visually. */
-.dockview-header-controls .dockview-tool-btn {
-    height: 30px;
-    min-width: 30px;
+/* SECOND ROW (viewers): the relocated per-type controls strip, below the locked
+   top row. Mirrors the compose sub-toolbar — same padding/divider so the two-row
+   header reads as one consistent component across compose and every viewer. It is
+   the query container for the narrow-width control collapse (see the bottom of
+   this file): its inline size tracks the PANEL width, a stable measure. */
+.dockview-viewer-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-top: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+    container-type: inline-size;
+    container-name: dockview-header;
+}
+/* In the second row the tool buttons keep the ghost-icon rhythm (28px). */
+.dockview-viewer-toolbar .dockview-tool-btn {
+    height: 28px;
+    min-width: 28px;
 }
 /* Leading file-type glyph: a real thread header is [glyph] + title; we mirror it
    with one muted, document-framed icon ahead of the filename. Tinted with the
@@ -891,9 +878,8 @@
 }
 .dockview-lightbox-close svg { display: block; }
 
-/* Header pop-out / close buttons centre their SVG inside the native 32px
-   iconWrapper hover target. */
-.dockview-popout,
+/* Header ⋯ / close buttons centre their SVG inside the native 32px iconWrapper
+   hover target. */
 .dockview-more,
 .dockview-close {
     display: flex;
@@ -901,7 +887,6 @@
     justify-content: center;
     cursor: pointer;
 }
-.dockview-popout svg,
 .dockview-more svg,
 .dockview-close svg {
     display: block;
@@ -1028,6 +1013,14 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;
+    /* The base row carries `width:max-content` so a nowrap row sizes to its
+       longest content (for h-scroll). In wrap mode that intrinsic width must be
+       dropped — otherwise `pre-wrap` only wraps WITHIN the (over-wide) max-content
+       box and the column still h-scrolls. Pin to the column width and fold the
+       gutter/right padding INTO it (border-box) so the row wraps to the panel edge
+       and the parent `pre` never h-scrolls. */
+    width: 100%;
+    box-sizing: border-box;
 }
 
 /* Code find highlight (CSS Custom Highlight API), the same pattern as PDF find:
@@ -1219,18 +1212,6 @@
     background: var(--background-modifier-selected, rgba(255, 255, 255, 0.12));
 }
 .dockview-tool-btn svg { display: block; }
-/* Text-labelled tool button (the CSV grid/raw toggle): a word, not a glyph, so
-   it reads as a view switch. A subtle outline distinguishes it from the ghost
-   icon buttons; it keeps the 30px header rhythm. */
-.dockview-tool-textbtn {
-    padding: 0 10px;
-    border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.1));
-}
-.dockview-tool-btn-label {
-    font-size: 12px;
-    font-weight: 600;
-    white-space: nowrap;
-}
 /* Zoom percentage readout between -/+ */
 .dockview-tool-pct {
     min-width: 44px;
@@ -1283,12 +1264,13 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-/* In the header the language label is capped so a long lang id can't crowd out
-   the controls; it ellipsises within its cap. */
-.dockview-header-controls .dockview-tool-lang { max-width: 96px; }
-/* Copy button shows a label that flips to "Copied" with a positive tint. */
-.dockview-tool-copy .dockview-tool-copy-label { font-size: 12px; }
-.dockview-tool-copy.dockview-tool-copied {
+/* In the row-2 strip the language label is capped so a long lang id can't crowd
+   out the controls; it ellipsises within its cap. */
+.dockview-viewer-toolbar .dockview-tool-lang { max-width: 140px; }
+/* Copy is now an icon-only ghost button; it tints positive on the "copied" flash
+   (the glyph itself swaps to a check). */
+.dockview-tool-copy.dockview-tool-copied,
+.dockview-tool-copy.dockview-tool-copied:hover {
     color: var(--text-positive, #23a559);
 }
 
@@ -1304,24 +1286,21 @@
 
 /* ----------------------------------------------------------------------------
    NARROW-WIDTH COLLAPSE (spec §2.1 "결정 필요 5": collapse controls, never the
-   filename). The header row (.dockview-header-upper) is a CSS CONTAINER keyed on
+   filename). The SECOND row (.dockview-viewer-toolbar) is a CSS CONTAINER keyed on
    the PANEL width; as the panel narrows (min 360px) the lowest-priority control
    affordances drop out FIRST, purely in CSS so it reflows live during a resize
    drag with no React re-render. Order of collapse:
      1) `.dockview-collapse-low`  — page arrows, code language label
-     2) `.dockview-collapse-mid`  — find toggle, copy's text label
-   The CORE controls (zoom group, page readout/jump, wrap, copy icon) and the
-   filename always survive; find/page-nav stay reachable via keyboard (Ctrl+F,
-   ←/→) so nothing is lost, only the affordance is hidden. Thresholds are the
-   header inline width (≈ panel width − ~16px padding); the dense PDF cluster is
-   what sets them, so they're tuned to keep a readable filename beside it.
-   ------------------------------------------------------------------------- */
+     2) `.dockview-collapse-mid`  — find trigger
+   The CORE controls (zoom group, page readout/jump, Raw toggle, copy icon) and the
+   filename above always survive; find/page-nav stay reachable via keyboard (Ctrl+F,
+   ←/→) so nothing is lost, only the affordance is hidden. Thresholds are the row
+   inline width (≈ panel width − ~24px padding); the dense PDF cluster sets them. */
 @container dockview-header (max-width: 400px) {
     .dockview-collapse-low { display: none; }
 }
 @container dockview-header (max-width: 344px) {
     .dockview-collapse-mid { display: none; }
-    .dockview-tool-copy-label { display: none; }
 }
 
 /* ----------------------------------------------------------------------------
