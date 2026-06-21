@@ -228,14 +228,14 @@ async function loadPersistedState(): Promise<void> {
     // switch already opened the panel during the async gap we don't slam it shut.
     if (typeof widthStr === "string") {
         const w = clampWidth(parseInt(widthStr, 10) || DEFAULT_WIDTH);
-        if (w !== state.width) {
-            state.width = w;
-            if (state.open) applyHostWidth();
+        if (w !== activeWindow.state.width) {
+            activeWindow.state.width = w;
+            if (activeWindow.state.open) applyHostWidth();
         }
     }
-    if (openStr === "1" && !state.open) {
+    if (openStr === "1" && !activeWindow.state.open) {
         closeNativeChannelSidebar();
-        state.open = true;
+        activeWindow.state.open = true;
         ensureHost();
         applyOpenState();
         syncNativeMemberList(true); // restored open across a restart → collapse like a thread
@@ -243,12 +243,6 @@ async function loadPersistedState(): Promise<void> {
     }
     forceRender?.();
 }
-
-// --- shared open/width state (kept outside React) ---------------------------
-const state = {
-    open: lsGet(LS_OPEN) === "1",
-    width: clampWidth(parseInt(lsGet(LS_WIDTH) || "", 10) || DEFAULT_WIDTH)
-};
 
 // --- panel content state ----------------------------------------------------
 // "unknown" = a file whose extension we don't recognise. We DON'T guess "html"
@@ -283,19 +277,128 @@ interface PanelContent {
     binary: boolean;
     seq: number;
 }
-const content: PanelContent = {
-    name: null,
-    type: "html",
-    html: null,
-    frameHtml: null,
-    pdf: { doc: null, pages: 0, renderToken: 0 },
-    code: null,
-    codeLang: "plaintext",
-    url: null,
-    loading: false,
-    error: null,
-    binary: false,
-    seq: 0
+
+// --- the dock window (single, for now) --------------------------------------
+// ONE DockWindow holds the entire per-window state that used to live in the
+// scattered module singletons (`state`/`content`/`pdfView`/`imgView`/`codeView`/
+// `csvView`/`editView`/`gallery` + the active descriptor/cache key). It is the
+// foundation for multi-window: today there is exactly one (`activeWindow`); a
+// later step turns this into a window collection with a tab strip. Everything
+// genuinely cross-window stays OUTSIDE it (the LRU `contentCache`, `channelStates`,
+// the host/root refs, sidebar/Flux state, `currentChannelId`). Behaviour is
+// identical to the singleton form — this is a pure restructure.
+interface ImgViewState { scale: number; tx: number; ty: number; natW: number; natH: number; fullscreen: boolean; }
+interface GalleryState {
+    channelId: string | null;
+    items: GalleryEntry[];
+    hasMoreBefore: boolean;
+    hasMoreAfter: boolean;
+    loading: boolean; // a fetchMessages() is in flight (dim the stepping button)
+}
+interface CodeViewState {
+    findOpen: boolean;
+    findQuery: string;
+    findMatches: number;
+    findActive: number; // 1-based index of the active match (0 = none)
+    findCase: boolean;
+}
+interface CsvViewState {
+    mode: "grid" | "raw";
+    delimiter: string; // "," for csv, "\t" for tsv (decided at load)
+}
+interface EditViewState {
+    mode: "view" | "edit";
+    editBuffer: string | null;
+}
+interface PdfViewState {
+    page: number;
+    total: number;
+    fit: PdfFit;
+    zoom: number;
+    dragMode: PdfDragMode; // default = current text-select behaviour
+    // search state
+    findOpen: boolean;
+    findQuery: string;
+    findMatches: number;
+    findActive: number; // 1-based index of the active match (0 = none)
+    findCase: boolean; // case-sensitive toggle (false = case-insensitive, the default)
+}
+interface DockWindow {
+    // shared open/width state (kept outside React)
+    state: { open: boolean; width: number };
+    // panel content state
+    content: PanelContent;
+    // per-viewer view-state, shared with the toolbars
+    imgView: ImgViewState;
+    gallery: GalleryState;
+    codeView: CodeViewState;
+    csvView: CsvViewState;
+    editView: EditViewState;
+    pdfView: PdfViewState;
+    // the descriptor currently shown in the panel (so we can save it on switch)
+    activeDescriptor: ChannelDescriptor | null;
+    // the content-cache key this window is currently mirroring (null = none)
+    activeCacheKey: string | null;
+}
+const activeWindow: DockWindow = {
+    state: {
+        open: lsGet(LS_OPEN) === "1",
+        width: clampWidth(parseInt(lsGet(LS_WIDTH) || "", 10) || DEFAULT_WIDTH)
+    },
+    content: {
+        name: null,
+        type: "html",
+        html: null,
+        frameHtml: null,
+        pdf: { doc: null, pages: 0, renderToken: 0 },
+        code: null,
+        codeLang: "plaintext",
+        url: null,
+        loading: false,
+        error: null,
+        binary: false,
+        seq: 0
+    },
+    // scale === 1 means "fit" (contain); tx/ty pan when zoomed past fit. `fullscreen`
+    // flips into a self-rendered lightbox overlay, sharing the SAME zoom/pan.
+    imgView: { scale: 1, tx: 0, ty: 0, natW: 0, natH: 0, fullscreen: false },
+    // ordered channel-image list for prev/next nav (oldest→newest), keyed by channel.
+    gallery: {
+        channelId: null,
+        items: [],
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+        loading: false
+    },
+    codeView: {
+        findOpen: false,
+        findQuery: "",
+        findMatches: 0,
+        findActive: 0,
+        findCase: false
+    },
+    csvView: {
+        mode: "grid",
+        delimiter: ","
+    },
+    editView: {
+        mode: "view",
+        editBuffer: null
+    },
+    pdfView: {
+        page: 1,
+        total: 0,
+        fit: "width",
+        zoom: 1,
+        dragMode: "text",
+        findOpen: false,
+        findQuery: "",
+        findMatches: 0,
+        findActive: 0,
+        findCase: false
+    },
+    activeDescriptor: null,
+    activeCacheKey: null
 };
 
 // --- new-file (empty editable surface) state --------------------------------
@@ -369,7 +472,6 @@ interface CacheEntry {
     view: CachedView;
 }
 const contentCache = new Map<string, CacheEntry>();
-let activeCacheKey: string | null = null;
 
 /** The cache key for a file: its url + content type (type disambiguates e.g. a
  *  .svg opened as image vs code, though in practice url is unique enough). */
@@ -415,7 +517,7 @@ function cacheTouch(entry: CacheEntry) {
         // evict the oldest non-active entry.
         let victim: string | null = null;
         for (const k of contentCache.keys()) {
-            if (k !== activeCacheKey) { victim = k; break; }
+            if (k !== activeWindow.activeCacheKey) { victim = k; break; }
         }
         if (victim == null) break; // only the active entry remains
         const e = contentCache.get(victim)!;
@@ -428,7 +530,7 @@ function cacheTouch(entry: CacheEntry) {
 function clearContentCache() {
     for (const e of contentCache.values()) disposeCacheEntry(e);
     contentCache.clear();
-    activeCacheKey = null;
+    activeWindow.activeCacheKey = null;
 }
 
 /** The scrollable body element (px scroll position lives here). */
@@ -445,7 +547,7 @@ function bodyScroller(): HTMLElement | null {
  *  The scroll snapshot/restore reads through here so a file reopens at the same
  *  spot. */
 function viewScroller(): HTMLElement | null {
-    if (content.type === "csv" && csvView.mode === "grid") {
+    if (activeWindow.content.type === "csv" && activeWindow.csvView.mode === "grid") {
         return document.querySelector<HTMLElement>(`#${HOST_ID} .dockview-csv-scroll`) || bodyScroller();
     }
     // The CM editor (code / csv-raw / markdown-or-artifact in edit mode) owns its
@@ -459,28 +561,28 @@ function viewScroller(): HTMLElement | null {
 /** Snapshot the CURRENT live view-state into the active cache entry so that
  *  reopening this file (re-click / channel return) lands on the same spot. */
 function snapshotActiveView() {
-    if (activeCacheKey == null) return;
-    const e = contentCache.get(activeCacheKey);
+    if (activeWindow.activeCacheKey == null) return;
+    const e = contentCache.get(activeWindow.activeCacheKey);
     if (!e) return;
     const sc = viewScroller();
     e.view.scrollTop = sc ? sc.scrollTop : e.view.scrollTop;
     if (e.type === "pdf") {
-        e.view.pdfPage = pdfView.page;
-        e.view.pdfZoom = pdfView.zoom;
-        e.view.pdfFit = pdfView.fit;
-        e.view.pdfDragMode = pdfView.dragMode;
+        e.view.pdfPage = activeWindow.pdfView.page;
+        e.view.pdfZoom = activeWindow.pdfView.zoom;
+        e.view.pdfFit = activeWindow.pdfView.fit;
+        e.view.pdfDragMode = activeWindow.pdfView.dragMode;
     } else if (e.type === "image") {
-        e.view.imgScale = imgView.scale;
-        e.view.imgTx = imgView.tx;
-        e.view.imgTy = imgView.ty;
+        e.view.imgScale = activeWindow.imgView.scale;
+        e.view.imgTx = activeWindow.imgView.tx;
+        e.view.imgTy = activeWindow.imgView.ty;
     } else if (e.type === "csv") {
-        e.view.csvMode = csvView.mode;
+        e.view.csvMode = activeWindow.csvView.mode;
     }
     // editable text family: remember the edit mode + buffer (the buffer is also
     // written through on every keystroke by setEditBuffer; this catches the mode).
     if (e.type === "code" || e.type === "markdown" || e.type === "html" || e.type === "csv") {
-        e.view.editMode = editView.mode;
-        e.view.editBuffer = editView.editBuffer;
+        e.view.editMode = activeWindow.editView.mode;
+        e.view.editBuffer = activeWindow.editView.editBuffer;
     }
 }
 
@@ -490,20 +592,20 @@ function snapshotActiveView() {
 let pendingScrollTop: number | null = null;
 function applyCachedView(e: CacheEntry) {
     if (e.type === "pdf") {
-        pdfView.zoom = e.view.pdfZoom ?? 1;
-        pdfView.fit = e.view.pdfFit ?? "width";
-        pdfView.page = e.view.pdfPage ?? 1;
-        pdfView.total = e.pdfPages ?? 0;
-        pdfView.dragMode = e.view.pdfDragMode ?? "text";
-        pdfView.findOpen = false;
-        pdfView.findQuery = "";
-        pdfView.findMatches = 0;
-        pdfView.findActive = 0;
-        pdfView.findCase = false;
+        activeWindow.pdfView.zoom = e.view.pdfZoom ?? 1;
+        activeWindow.pdfView.fit = e.view.pdfFit ?? "width";
+        activeWindow.pdfView.page = e.view.pdfPage ?? 1;
+        activeWindow.pdfView.total = e.pdfPages ?? 0;
+        activeWindow.pdfView.dragMode = e.view.pdfDragMode ?? "text";
+        activeWindow.pdfView.findOpen = false;
+        activeWindow.pdfView.findQuery = "";
+        activeWindow.pdfView.findMatches = 0;
+        activeWindow.pdfView.findActive = 0;
+        activeWindow.pdfView.findCase = false;
     } else if (e.type === "image") {
-        imgView.scale = e.view.imgScale ?? 1;
-        imgView.tx = e.view.imgTx ?? 0;
-        imgView.ty = e.view.imgTy ?? 0;
+        activeWindow.imgView.scale = e.view.imgScale ?? 1;
+        activeWindow.imgView.tx = e.view.imgTx ?? 0;
+        activeWindow.imgView.ty = e.view.imgTy ?? 0;
     } else if (e.type === "code") {
         // find never persists across files — a restored file opens with find closed.
         resetCodeView();
@@ -511,14 +613,14 @@ function applyCachedView(e: CacheEntry) {
         resetCodeView();
         // restore the grid/raw choice the user left this file on; the delimiter is
         // re-sniffed by the loader (it lives on csvView already at this point).
-        csvView.mode = e.view.csvMode ?? "grid";
+        activeWindow.csvView.mode = e.view.csvMode ?? "grid";
     }
     // Editable text family: restore the edit mode + temporary buffer the user left
     // this file on so a re-open keeps both. (CSV's view mode rides csvView above;
     // here we only restore its edit BUFFER, since raw editing shares the buffer.)
     if (e.type === "code" || e.type === "markdown" || e.type === "html" || e.type === "csv") {
-        editView.editBuffer = e.view.editBuffer ?? null;
-        editView.mode = e.type === "csv" ? "view" : (e.view.editMode ?? "view");
+        activeWindow.editView.editBuffer = e.view.editBuffer ?? null;
+        activeWindow.editView.mode = e.type === "csv" ? "view" : (e.view.editMode ?? "view");
     } else {
         resetEditView();
     }
@@ -540,28 +642,28 @@ function mountFromCache(e: CacheEntry): boolean {
     // Tear down the OUTGOING pdf doc only if it's not itself cached (cached docs
     // stay alive in their entry). resetPdf() would destroy content.pdf.doc; here
     // we just re-point, since the live doc belongs to its own cache entry.
-    content.name = e.name;
-    content.type = e.type;
-    content.url = e.url;
-    content.error = e.error ?? null;
-    content.loading = e.loading;
+    activeWindow.content.name = e.name;
+    activeWindow.content.type = e.type;
+    activeWindow.content.url = e.url;
+    activeWindow.content.error = e.error ?? null;
+    activeWindow.content.loading = e.loading;
     // payloads
-    content.html = e.html ?? null;
-    content.frameHtml = e.frameHtml ?? null;
-    content.code = e.code ?? null;
-    content.codeLang = e.codeLang ?? "plaintext";
-    content.binary = e.binary ?? false;
+    activeWindow.content.html = e.html ?? null;
+    activeWindow.content.frameHtml = e.frameHtml ?? null;
+    activeWindow.content.code = e.code ?? null;
+    activeWindow.content.codeLang = e.codeLang ?? "plaintext";
+    activeWindow.content.binary = e.binary ?? false;
     // pdf: re-point the live doc to the cached one (no destroy, no re-fetch).
-    content.pdf = {
+    activeWindow.content.pdf = {
         doc: e.pdfDoc ?? null,
         pages: e.pdfPages ?? 0,
-        renderToken: content.pdf.renderToken + 1
+        renderToken: activeWindow.content.pdf.renderToken + 1
     };
     applyCachedView(e);
     // CSV: the delimiter isn't persisted (cheap to re-derive) — re-sniff it from
     // the restored text so the grid parses identically on a cache return.
-    if (e.type === "csv") csvView.delimiter = csvDelimiterFor(e.name, e.url, e.code ?? "");
-    activeCacheKey = e.key;
+    if (e.type === "csv") activeWindow.csvView.delimiter = csvDelimiterFor(e.name, e.url, e.code ?? "");
+    activeWindow.activeCacheKey = e.key;
     cacheTouch(e);
     return true;
 }
@@ -584,11 +686,10 @@ const IMG_MAX_SCALE = 8;
 // over verbatim when entering/leaving fullscreen — the inline body and the
 // overlay drive one shared view-state, so the picture stays exactly where the
 // user left it across the transition.
-const imgView = { scale: 1, tx: 0, ty: 0, natW: 0, natH: 0, fullscreen: false };
 function resetImgView() {
-    imgView.scale = 1;
-    imgView.tx = 0;
-    imgView.ty = 0;
+    activeWindow.imgView.scale = 1;
+    activeWindow.imgView.tx = 0;
+    activeWindow.imgView.ty = 0;
 }
 interface ImgControls {
     zoomIn: () => void;
@@ -612,13 +713,6 @@ let imgControls: ImgControls | null = null;
 // extend it; the prev/next button DIMS (never vanishes — grammar rule 9) at a
 // true end (no more to fetch) and while a load-more is in flight.
 interface GalleryEntry { messageId: string; url: string; name: string; }
-const gallery = {
-    channelId: null as string | null,
-    items: [] as GalleryEntry[],
-    hasMoreBefore: false,
-    hasMoreAfter: false,
-    loading: false // a fetchMessages() is in flight (dim the stepping button)
-};
 
 /** Last-path-segment filename of a url (gallery fallback when an attachment has
  *  no `filename`). Decoded; query/hash dropped. */
@@ -666,22 +760,22 @@ function buildGallery(channelId: string): { items: GalleryEntry[]; hasMoreBefore
 /** Refresh `gallery` for the channel the panel is in (idempotent per call). */
 function refreshGallery() {
     const channelId = getCurrentChannelId();
-    if (!channelId) { gallery.channelId = null; gallery.items = []; gallery.hasMoreBefore = gallery.hasMoreAfter = false; return; }
+    if (!channelId) { activeWindow.gallery.channelId = null; activeWindow.gallery.items = []; activeWindow.gallery.hasMoreBefore = activeWindow.gallery.hasMoreAfter = false; return; }
     const built = buildGallery(channelId);
-    gallery.channelId = channelId;
-    gallery.items = built.items;
-    gallery.hasMoreBefore = built.hasMoreBefore;
-    gallery.hasMoreAfter = built.hasMoreAfter;
+    activeWindow.gallery.channelId = channelId;
+    activeWindow.gallery.items = built.items;
+    activeWindow.gallery.hasMoreBefore = built.hasMoreBefore;
+    activeWindow.gallery.hasMoreAfter = built.hasMoreAfter;
 }
 
 /** Index of the image CURRENTLY shown in the panel within the gallery list, or
  *  -1 if it isn't found (url mismatch / different channel). Matches on the
  *  normalised url the panel loaded. */
 function galleryCurrentIndex(): number {
-    if (content.type !== "image" || !content.url) return -1;
-    const cur = galleryFullResUrl(content.url);
-    for (let i = 0; i < gallery.items.length; i++) {
-        if (gallery.items[i].url === cur) return i;
+    if (activeWindow.content.type !== "image" || !activeWindow.content.url) return -1;
+    const cur = galleryFullResUrl(activeWindow.content.url);
+    for (let i = 0; i < activeWindow.gallery.items.length; i++) {
+        if (activeWindow.gallery.items[i].url === cur) return i;
     }
     return -1;
 }
@@ -691,7 +785,7 @@ function galleryCurrentIndex(): number {
  *  (e.g. first nav after opening an image). Returns the current index. */
 function ensureGallery(): number {
     const channelId = getCurrentChannelId();
-    if (channelId !== gallery.channelId || galleryCurrentIndex() < 0) refreshGallery();
+    if (channelId !== activeWindow.gallery.channelId || galleryCurrentIndex() < 0) refreshGallery();
     return galleryCurrentIndex();
 }
 
@@ -700,14 +794,14 @@ function ensureGallery(): number {
  *  After it resolves we re-read getMessages and step onto the neighbour that is
  *  now in range. Best-effort: a failure just clears the loading flag. */
 function galleryLoadMore(dir: -1 | 1) {
-    const channelId = gallery.channelId || getCurrentChannelId();
-    if (!channelId || gallery.loading) return;
-    if (dir < 0 && !gallery.hasMoreBefore) return;
-    if (dir > 0 && !gallery.hasMoreAfter) return;
-    const items = gallery.items;
+    const channelId = activeWindow.gallery.channelId || getCurrentChannelId();
+    if (!channelId || activeWindow.gallery.loading) return;
+    if (dir < 0 && !activeWindow.gallery.hasMoreBefore) return;
+    if (dir > 0 && !activeWindow.gallery.hasMoreAfter) return;
+    const items = activeWindow.gallery.items;
     if (!items.length) return;
     const anchor = dir < 0 ? items[0].messageId : items[items.length - 1].messageId;
-    gallery.loading = true;
+    activeWindow.gallery.loading = true;
     forceRender?.();
     const arg: any = { channelId, limit: 50 };
     if (dir < 0) arg.before = anchor; else arg.after = anchor;
@@ -715,21 +809,21 @@ function galleryLoadMore(dir: -1 | 1) {
     try {
         p = MessageActions.fetchMessages(arg);
     } catch {
-        gallery.loading = false;
+        activeWindow.gallery.loading = false;
         forceRender?.();
         return;
     }
     Promise.resolve(p)
         .catch(() => { /* ignore fetch error */ })
         .then(() => {
-            gallery.loading = false;
+            activeWindow.gallery.loading = false;
             refreshGallery();
             // Step onto the neighbour now that the page is loaded. The current
             // image kept its place in the rebuilt list; move one in `dir`.
             const idx = galleryCurrentIndex();
             const target = idx + dir;
-            if (idx >= 0 && target >= 0 && target < gallery.items.length) {
-                const next = gallery.items[target];
+            if (idx >= 0 && target >= 0 && target < activeWindow.gallery.items.length) {
+                const next = activeWindow.gallery.items[target];
                 load({ name: next.name, url: next.url, type: "image" });
             } else {
                 forceRender?.();
@@ -744,8 +838,8 @@ function galleryStep(dir: -1 | 1) {
     const idx = ensureGallery();
     if (idx < 0) return;
     const target = idx + dir;
-    if (target >= 0 && target < gallery.items.length) {
-        const next = gallery.items[target];
+    if (target >= 0 && target < activeWindow.gallery.items.length) {
+        const next = activeWindow.gallery.items[target];
         load({ name: next.name, url: next.url, type: "image" });
         return;
     }
@@ -757,12 +851,12 @@ function galleryStep(dir: -1 | 1) {
  *  OR the collection has more to fetch in that direction. While a load-more is in
  *  flight the button is disabled (dimmed) but kept in its slot (rule 9). */
 function galleryCanStep(dir: -1 | 1): boolean {
-    if (gallery.loading) return false;
+    if (activeWindow.gallery.loading) return false;
     const idx = galleryCurrentIndex();
     if (idx < 0) return false;
     const target = idx + dir;
-    if (target >= 0 && target < gallery.items.length) return true;
-    return dir < 0 ? gallery.hasMoreBefore : gallery.hasMoreAfter;
+    if (target >= 0 && target < activeWindow.gallery.items.length) return true;
+    return dir < 0 ? activeWindow.gallery.hasMoreBefore : activeWindow.gallery.hasMoreAfter;
 }
 
 // --- code viewer view-state (find), shared with the toolbar -----------------
@@ -772,19 +866,12 @@ function galleryCanStep(dir: -1 | 1): boolean {
 // regardless of viewport. Word-wrap is no longer a view-state toggle — the CM
 // editor always wraps (EditorView.lineWrapping), per the locked Discord grammar
 // that code never scrolls horizontally.
-const codeView = {
-    findOpen: false,
-    findQuery: "",
-    findMatches: 0,
-    findActive: 0, // 1-based index of the active match (0 = none)
-    findCase: false
-};
 function resetCodeView() {
-    codeView.findOpen = false;
-    codeView.findQuery = "";
-    codeView.findMatches = 0;
-    codeView.findActive = 0;
-    codeView.findCase = false;
+    activeWindow.codeView.findOpen = false;
+    activeWindow.codeView.findQuery = "";
+    activeWindow.codeView.findMatches = 0;
+    activeWindow.codeView.findActive = 0;
+    activeWindow.codeView.findCase = false;
 }
 
 // --- CSV viewer view-state (grid vs raw text), shared with the toolbar -------
@@ -793,13 +880,9 @@ function resetCodeView() {
 // viewer used for any text file (over content.code) — find, copy, wrap all work
 // there unchanged. `delimiter` is decided per file (extension, then a sniff).
 // Module-scope so the header toggle and the body renderer drive one state.
-const csvView = {
-    mode: "grid" as "grid" | "raw",
-    delimiter: "," // "," for csv, "\t" for tsv (decided at load)
-};
 function resetCsvView() {
-    csvView.mode = "grid"; // a fresh CSV always opens as a grid (per-file default)
-    csvView.delimiter = ",";
+    activeWindow.csvView.mode = "grid"; // a fresh CSV always opens as a grid (per-file default)
+    activeWindow.csvView.delimiter = ",";
 }
 
 // --- editable-mode view-state (view ↔ edit), shared with the toolbar (2b) -----
@@ -815,21 +898,17 @@ function resetCsvView() {
 //   mode toggles AND a cache return (re-open lands on the edited text). Inline
 //   artifacts (no cache key) keep the buffer here only, which is fine — they live
 //   exactly as long as the dock is open.
-const editView = {
-    mode: "view" as "view" | "edit",
-    editBuffer: null as string | null
-};
 function resetEditView() {
-    editView.mode = "view"; // a fresh file always opens in the view mode
-    editView.editBuffer = null; // and unedited (no buffer yet)
+    activeWindow.editView.mode = "view"; // a fresh file always opens in the view mode
+    activeWindow.editView.editBuffer = null; // and unedited (no buffer yet)
 }
 
 /** The ORIGINAL (unedited) source text for the current editable type. Code/CSV-raw
  *  edit content.code; markdown edits its raw source (stored in content.code by the
  *  markdown loader, NOT the rendered html); .artifact edits content.html. */
 function editSourceText(): string {
-    if (content.type === "html") return content.html || ""; // .artifact HTML source
-    return content.code || ""; // code / csv-raw / markdown-source
+    if (activeWindow.content.type === "html") return activeWindow.content.html || ""; // .artifact HTML source
+    return activeWindow.content.code || ""; // code / csv-raw / markdown-source
 }
 
 /** The current EDITABLE text = the buffer if the user has edited, else the
@@ -837,16 +916,16 @@ function editSourceText(): string {
  *  renderers (markdown re-render, artifact re-render, CSV grid re-parse) derive
  *  from on a toggle back to the view mode. */
 function editBufferText(): string {
-    return editView.editBuffer != null ? editView.editBuffer : editSourceText();
+    return activeWindow.editView.editBuffer != null ? activeWindow.editView.editBuffer : editSourceText();
 }
 
 /** Record a CM edit into the temporary buffer + mirror it into the active cache
  *  entry so it survives mode toggles and a cache return. Never touches the
  *  original source field (content.code / content.html stay the pristine file). */
 function setEditBuffer(text: string) {
-    editView.editBuffer = text;
-    if (activeCacheKey != null) {
-        const e = contentCache.get(activeCacheKey);
+    activeWindow.editView.editBuffer = text;
+    if (activeWindow.activeCacheKey != null) {
+        const e = contentCache.get(activeWindow.activeCacheKey);
         if (e) e.view.editBuffer = text;
     }
 }
@@ -866,30 +945,17 @@ type PdfFit = "width" | "page";
 type PdfDragMode = "text" | "pan";
 const PDF_MIN_ZOOM = 0.25;
 const PDF_MAX_ZOOM = 5;
-const pdfView = {
-    page: 1,
-    total: 0,
-    fit: "width" as PdfFit,
-    zoom: 1,
-    dragMode: "text" as PdfDragMode, // default = current text-select behaviour
-    // search state
-    findOpen: false,
-    findQuery: "",
-    findMatches: 0,
-    findActive: 0, // 1-based index of the active match (0 = none)
-    findCase: false // case-sensitive toggle (false = case-insensitive, the default)
-};
 function resetPdfView() {
-    pdfView.page = 1;
-    pdfView.total = 0;
-    pdfView.fit = "width";
-    pdfView.zoom = 1;
-    pdfView.dragMode = "text";
-    pdfView.findOpen = false;
-    pdfView.findQuery = "";
-    pdfView.findMatches = 0;
-    pdfView.findActive = 0;
-    pdfView.findCase = false;
+    activeWindow.pdfView.page = 1;
+    activeWindow.pdfView.total = 0;
+    activeWindow.pdfView.fit = "width";
+    activeWindow.pdfView.zoom = 1;
+    activeWindow.pdfView.dragMode = "text";
+    activeWindow.pdfView.findOpen = false;
+    activeWindow.pdfView.findQuery = "";
+    activeWindow.pdfView.findMatches = 0;
+    activeWindow.pdfView.findActive = 0;
+    activeWindow.pdfView.findCase = false;
 }
 interface PdfControls {
     goToPage: (n: number) => void;
@@ -932,8 +998,6 @@ interface ChannelMemory {
 }
 const channelStates = new Map<string, ChannelMemory>();
 let currentChannelId: string | null = null;
-// The descriptor currently shown in the panel (so we can save it on switch).
-let activeDescriptor: ChannelDescriptor | null = null;
 
 // Extension -> highlight.js language id.
 const CODE_LANG: Record<string, string> = {
@@ -1258,9 +1322,9 @@ function injectNonce(html: string, nonce: string): string {
 
 /** Set the body HTML + build the nonce-stamped srcdoc the iframe renders. */
 function setArtifactHtml(html: string) {
-    content.html = html;
+    activeWindow.content.html = html;
     const nonce = pageNonce();
-    content.frameHtml = nonce ? injectNonce(html, nonce) : html;
+    activeWindow.content.frameHtml = nonce ? injectNonce(html, nonce) : html;
 }
 
 /** Open a URL in the user's external browser (markdown / artifact links).
@@ -1323,25 +1387,25 @@ const VESKTOP_WINDOW_CSS =
  *  url the panel loaded + copy-link copies — correction-batch item (3)); text-ish
  *  types write their content directly. Returns null when there's nothing to show. */
 function vesktopWindowHtml(): string | null {
-    const type = content.type;
-    const url = content.url ? absUrl(content.url) : null;
+    const type = activeWindow.content.type;
+    const url = activeWindow.content.url ? absUrl(activeWindow.content.url) : null;
 
     // .artifact / inline HTML — the artifact document itself (today's popout). When
     // edited, show the edited buffer; else the original html.
     if (type === "html") {
-        const html = (editView.editBuffer != null) ? editBufferText() : content.html;
+        const html = (activeWindow.editView.editBuffer != null) ? editBufferText() : activeWindow.content.html;
         return html || null;
     }
     // Markdown — the SAME rendered dark document the viewer iframe shows (reuse the
     // render pipeline). Edited buffer when edited, else the raw source.
     if (type === "markdown") {
-        const md = (editView.editBuffer != null) ? editBufferText() : (content.code || "");
+        const md = (activeWindow.editView.editBuffer != null) ? editBufferText() : (activeWindow.content.code || "");
         return renderMarkdownDoc(md);
     }
     // Code / CSV-raw / unknown-as-text — the raw text in a <pre> (basic dark page).
     if (type === "code" || type === "csv" || type === "unknown") {
-        const text = (content.code != null)
-            ? ((editView.editBuffer != null) ? editBufferText() : content.code)
+        const text = (activeWindow.content.code != null)
+            ? ((activeWindow.editView.editBuffer != null) ? editBufferText() : activeWindow.content.code)
             : "";
         const pre = `<pre style="margin:0;padding:16px;white-space:pre-wrap;word-break:break-word;`
             + `font-family:Menlo,Consolas,'Courier New',monospace;font-size:13px;line-height:1.5;`
@@ -1386,17 +1450,17 @@ function openUrlInVesktopWindow(url: string, name: string) {
  *  there's a url but no renderable in-memory content (e.g. a still-loading file). */
 export function openInVesktopWindow() {
     const html = vesktopWindowHtml();
-    const name = (content.name as string | null) || "file";
+    const name = (activeWindow.content.name as string | null) || "file";
     if (html) { openVesktopWindow(html, name); return; }
-    if (content.url) openUrlInVesktopWindow(content.url, name);
+    if (activeWindow.content.url) openUrlInVesktopWindow(activeWindow.content.url, name);
 }
 
 /** Pop the current (or given) artifact out into a standalone in-app Vesktop
  *  window. Kept for the artifact-modal popout button + the debug surface; it now
  *  shares the one reliable empty-window+write path. */
 export function popoutArtifact(html?: string | null, name?: string | null) {
-    const h = html ?? content.html;
-    const n = name ?? content.name ?? "artifact";
+    const h = html ?? activeWindow.content.html;
+    const n = name ?? activeWindow.content.name ?? "artifact";
     if (!h) return;
     openVesktopWindow(h, n);
 }
@@ -1415,7 +1479,7 @@ function downloadUrl(url: string | null | undefined, name?: string | null) {
     if (!url) return;
     const a = document.createElement("a");
     a.href = absUrl(url);
-    a.download = name || content.name || "";
+    a.download = name || activeWindow.content.name || "";
     a.rel = "noopener";
     a.target = "_blank";
     document.body.appendChild(a);
@@ -1484,8 +1548,8 @@ function imageBlobToPng(blob: Blob): Promise<Blob | null> {
 
 /** Reset only the html/artifact-specific fields. */
 function resetHtml() {
-    content.html = null;
-    content.frameHtml = null;
+    activeWindow.content.html = null;
+    activeWindow.content.frameHtml = null;
     resetEditView(); // a fresh artifact/markdown opens rendered + unedited
 }
 /** Reset only the pdf-specific fields (and bump the render token to abort).
@@ -1493,13 +1557,13 @@ function resetHtml() {
  *  eviction (disposeCacheEntry) is the single place a doc is destroyed. We just
  *  drop our pointer + bump the token so the in-flight render aborts. */
 function resetPdf() {
-    content.pdf = { doc: null, pages: 0, renderToken: content.pdf.renderToken + 1 };
+    activeWindow.content.pdf = { doc: null, pages: 0, renderToken: activeWindow.content.pdf.renderToken + 1 };
     resetPdfView();
 }
 /** Reset only the code/text-specific fields. */
 function resetCode() {
-    content.code = null;
-    content.codeLang = "plaintext";
+    activeWindow.content.code = null;
+    activeWindow.content.codeLang = "plaintext";
     resetCodeView(); // a fresh code load opens with find closed
     resetEditView(); // and in read mode, unedited
 }
@@ -1519,10 +1583,10 @@ function loadHtml(opts: { name: string; html?: string | null; url?: string | nul
     resetCode();
     if (opts.html != null) {
         setArtifactHtml(opts.html);
-        content.loading = false;
+        activeWindow.content.loading = false;
     } else if (opts.url) {
         resetHtml();
-        content.loading = true;
+        activeWindow.content.loading = true;
         const reqUrl = opts.url;
         dvFetch(reqUrl, opts.noCache)
             .then(r => {
@@ -1533,21 +1597,21 @@ function loadHtml(opts: { name: string; html?: string | null; url?: string | nul
                 if (entry) { entry.html = text; const nonce = pageNonce(); entry.frameHtml = nonce ? injectNonce(text, nonce) : text; entry.loading = false; entry.error = null; }
                 if (token !== loadSeq) return;
                 setArtifactHtml(text);
-                content.loading = false;
-                content.error = null;
+                activeWindow.content.loading = false;
+                activeWindow.content.error = null;
                 forceRender?.();
             })
             .catch(e => {
                 if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
                 if (token !== loadSeq) return;
-                content.loading = false;
-                content.error = String(e?.message || e);
+                activeWindow.content.loading = false;
+                activeWindow.content.error = String(e?.message || e);
                 forceRender?.();
             });
     } else {
         resetHtml();
-        content.loading = false;
-        content.error = "No artifact source";
+        activeWindow.content.loading = false;
+        activeWindow.content.error = "No artifact source";
     }
 }
 
@@ -1559,11 +1623,11 @@ function loadPdf(opts: { name: string; url?: string | null; noCache?: boolean },
     resetPdf();
     resetCode();
     if (!opts.url) {
-        content.loading = false;
-        content.error = "No PDF source";
+        activeWindow.content.loading = false;
+        activeWindow.content.error = "No PDF source";
         return;
     }
-    content.loading = true;
+    activeWindow.content.loading = true;
     const reqUrl = opts.url;
     dvFetch(reqUrl, opts.noCache)
         .then(r => {
@@ -1585,20 +1649,20 @@ function loadPdf(opts: { name: string; url?: string | null; noCache?: boolean },
             if (live) { entry!.pdfDoc = doc; entry!.pdfPages = doc.numPages; entry!.loading = false; entry!.error = null; }
             else { destroyPdfDoc(doc); }
             if (token !== loadSeq) return; // superseded — don't touch content
-            content.pdf.doc = doc;
-            content.pdf.pages = doc.numPages;
-            pdfView.total = doc.numPages;
+            activeWindow.content.pdf.doc = doc;
+            activeWindow.content.pdf.pages = doc.numPages;
+            activeWindow.pdfView.total = doc.numPages;
             // keep the cached/restored page if any (applyCachedView set it); else 1.
-            content.pdf.renderToken += 1; // signal: a fresh doc is ready to render
-            content.loading = false;
-            content.error = null;
+            activeWindow.content.pdf.renderToken += 1; // signal: a fresh doc is ready to render
+            activeWindow.content.loading = false;
+            activeWindow.content.error = null;
             forceRender?.();
         })
         .catch(e => {
             if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
             if (token !== loadSeq) return;
-            content.loading = false;
-            content.error = String(e?.message || e);
+            activeWindow.content.loading = false;
+            activeWindow.content.error = String(e?.message || e);
             forceRender?.();
         });
 }
@@ -1701,14 +1765,14 @@ function loadCode(opts: { name: string; url?: string | null; noCache?: boolean }
     resetPdf();
     resetCode();
     if (!opts.url) {
-        content.loading = false;
-        content.error = "No source";
+        activeWindow.content.loading = false;
+        activeWindow.content.error = "No source";
         return;
     }
     const lang = codeLangFor(extOf(opts.url) || extOf(opts.name));
-    content.codeLang = lang;
+    activeWindow.content.codeLang = lang;
     if (entry) entry.codeLang = lang;
-    content.loading = true;
+    activeWindow.content.loading = true;
     const reqUrl = opts.url;
     dvFetch(reqUrl, opts.noCache)
         .then(r => {
@@ -1718,16 +1782,16 @@ function loadCode(opts: { name: string; url?: string | null; noCache?: boolean }
         .then(text => {
             if (entry) { entry.code = text; entry.loading = false; entry.error = null; }
             if (token !== loadSeq) return;
-            content.code = text;
-            content.loading = false;
-            content.error = null;
+            activeWindow.content.code = text;
+            activeWindow.content.loading = false;
+            activeWindow.content.error = null;
             forceRender?.();
         })
         .catch(e => {
             if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
             if (token !== loadSeq) return;
-            content.loading = false;
-            content.error = String(e?.message || e);
+            activeWindow.content.loading = false;
+            activeWindow.content.error = String(e?.message || e);
             forceRender?.();
         });
 }
@@ -1742,13 +1806,13 @@ function loadCsv(opts: { name: string; url?: string | null; noCache?: boolean },
     resetCode();
     resetCsvView(); // a fresh CSV always opens as a grid
     if (!opts.url) {
-        content.loading = false;
-        content.error = "No source";
+        activeWindow.content.loading = false;
+        activeWindow.content.error = "No source";
         return;
     }
-    content.codeLang = "plaintext"; // the raw view is plaintext (no hljs lang)
+    activeWindow.content.codeLang = "plaintext"; // the raw view is plaintext (no hljs lang)
     if (entry) entry.codeLang = "plaintext";
-    content.loading = true;
+    activeWindow.content.loading = true;
     const reqUrl = opts.url;
     dvFetch(reqUrl, opts.noCache)
         .then(r => {
@@ -1758,17 +1822,17 @@ function loadCsv(opts: { name: string; url?: string | null; noCache?: boolean },
         .then(text => {
             if (entry) { entry.code = text; entry.loading = false; entry.error = null; }
             if (token !== loadSeq) return;
-            content.code = text;
-            csvView.delimiter = csvDelimiterFor(opts.name, reqUrl, text);
-            content.loading = false;
-            content.error = null;
+            activeWindow.content.code = text;
+            activeWindow.csvView.delimiter = csvDelimiterFor(opts.name, reqUrl, text);
+            activeWindow.content.loading = false;
+            activeWindow.content.error = null;
             forceRender?.();
         })
         .catch(e => {
             if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
             if (token !== loadSeq) return;
-            content.loading = false;
-            content.error = String(e?.message || e);
+            activeWindow.content.loading = false;
+            activeWindow.content.error = String(e?.message || e);
             forceRender?.();
         });
 }
@@ -1805,11 +1869,11 @@ function loadUnknown(opts: { name: string; url?: string | null; noCache?: boolea
     resetPdf();
     resetCode();
     if (!opts.url) {
-        content.loading = false;
-        content.error = "No source";
+        activeWindow.content.loading = false;
+        activeWindow.content.error = "No source";
         return;
     }
-    content.loading = true;
+    activeWindow.content.loading = true;
     const reqUrl = opts.url;
     dvFetch(reqUrl, opts.noCache)
         .then(r => {
@@ -1831,27 +1895,27 @@ function loadUnknown(opts: { name: string; url?: string | null; noCache?: boolea
                     entry.error = null;
                 }
                 if (token !== loadSeq) return;
-                content.type = "code";
-                content.code = text;
-                content.codeLang = "plaintext";
-                content.binary = false;
-                content.loading = false;
-                content.error = null;
+                activeWindow.content.type = "code";
+                activeWindow.content.code = text;
+                activeWindow.content.codeLang = "plaintext";
+                activeWindow.content.binary = false;
+                activeWindow.content.loading = false;
+                activeWindow.content.error = null;
                 forceRender?.();
             } else {
                 if (entry) { entry.binary = true; entry.loading = false; entry.error = null; }
                 if (token !== loadSeq) return;
-                content.binary = true;
-                content.loading = false;
-                content.error = null;
+                activeWindow.content.binary = true;
+                activeWindow.content.loading = false;
+                activeWindow.content.error = null;
                 forceRender?.();
             }
         })
         .catch(e => {
             if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
             if (token !== loadSeq) return;
-            content.loading = false;
-            content.error = String(e?.message || e);
+            activeWindow.content.loading = false;
+            activeWindow.content.error = String(e?.message || e);
             forceRender?.();
         });
 }
@@ -1991,12 +2055,12 @@ function loadMarkdown(opts: { name: string; url?: string | null; noCache?: boole
     resetCode();
     if (!opts.url) {
         resetHtml();
-        content.loading = false;
-        content.error = "No source";
+        activeWindow.content.loading = false;
+        activeWindow.content.error = "No source";
         return;
     }
     resetHtml();
-    content.loading = true;
+    activeWindow.content.loading = true;
     const reqUrl = opts.url;
     dvFetch(reqUrl, opts.noCache)
         .then(r => {
@@ -2011,17 +2075,17 @@ function loadMarkdown(opts: { name: string; url?: string | null; noCache?: boole
             if (entry) { entry.html = fullHtml; const nonce = pageNonce(); entry.frameHtml = nonce ? injectNonce(fullHtml, nonce) : fullHtml; entry.code = md; entry.codeLang = "markdown"; entry.loading = false; entry.error = null; }
             if (token !== loadSeq) return;
             setArtifactHtml(fullHtml);
-            content.code = md;
-            content.codeLang = "markdown";
-            content.loading = false;
-            content.error = null;
+            activeWindow.content.code = md;
+            activeWindow.content.codeLang = "markdown";
+            activeWindow.content.loading = false;
+            activeWindow.content.error = null;
             forceRender?.();
         })
         .catch(e => {
             if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
             if (token !== loadSeq) return;
-            content.loading = false;
-            content.error = String(e?.message || e);
+            activeWindow.content.loading = false;
+            activeWindow.content.error = String(e?.message || e);
             forceRender?.();
         });
 }
@@ -2032,8 +2096,8 @@ function loadImage(opts: { name: string; url?: string | null }, _token: number, 
     resetPdf();
     resetCode();
     if (!opts.url) {
-        content.loading = false;
-        content.error = "No image source";
+        activeWindow.content.loading = false;
+        activeWindow.content.error = "No image source";
         return;
     }
     // The <img> tag streams the url itself; no manual fetch/decode needed. A
@@ -2041,8 +2105,8 @@ function loadImage(opts: { name: string; url?: string | null }, _token: number, 
     // (applyCachedView already populated imgView), so only reset on a fresh load.
     if (entry) entry.loading = false;
     resetImgView();
-    content.loading = false;
-    content.error = null;
+    activeWindow.content.loading = false;
+    activeWindow.content.error = null;
 }
 
 /** Post-process marked's output: highlight fenced code blocks. */
@@ -2115,9 +2179,9 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
 
     // --- same file already shown? -> no-op (keep DOM, scroll, zoom as-is) -----
     // A retry (noCache) skips the no-op shortcut so it actually re-fetches.
-    if (!opts.noCache && key != null && key === activeCacheKey && content.name != null && content.error == null) {
-        content.name = name;
-        activeDescriptor = { name, url: url as string, type };
+    if (!opts.noCache && key != null && key === activeWindow.activeCacheKey && activeWindow.content.name != null && activeWindow.content.error == null) {
+        activeWindow.content.name = name;
+        activeWindow.activeDescriptor = { name, url: url as string, type };
         return "noop";
     }
 
@@ -2126,28 +2190,28 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
     // The fullscreen lightbox is bound to whatever image was shown; switching to
     // a DIFFERENT file (we're past the no-op guard) must close it so we never
     // strand the overlay over the wrong / a non-image body.
-    imgView.fullscreen = false;
+    activeWindow.imgView.fullscreen = false;
 
     // --- cache hit on a DIFFERENT file -> instant restore (no fetch) ----------
     // A retry (noCache) skips the cache and always re-fetches.
     const hit = !opts.noCache && key != null ? contentCache.get(key) : null;
     if (hit && hit.error == null && !hit.loading) {
         loadSeq += 1; // supersede any in-flight loader
-        content.seq += 1; // new body identity (different file)
+        activeWindow.content.seq += 1; // new body identity (different file)
         hit.name = name; // honour the (possibly fresh) display name
         mountFromCache(hit);
-        activeDescriptor = { name, url: hit.url, type: hit.type };
+        activeWindow.activeDescriptor = { name, url: hit.url, type: hit.type };
         return "cache";
     }
 
     // --- miss (or inline html / errored entry) -> fetch + populate cache ------
     const token = ++loadSeq;
-    content.name = name;
-    content.url = url;
-    content.error = null;
-    content.binary = false;
-    content.seq += 1;
-    content.type = type;
+    activeWindow.content.name = name;
+    activeWindow.content.url = url;
+    activeWindow.content.error = null;
+    activeWindow.content.binary = false;
+    activeWindow.content.seq += 1;
+    activeWindow.content.type = type;
 
     // Build a fresh cache entry for url-backed files (inline html isn't cached).
     let entry: CacheEntry | null = null;
@@ -2159,10 +2223,10 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
         if (prior) { contentCache.delete(key); disposeCacheEntry(prior); }
         entry = { key, name, type, url, codeLang: "plaintext", loading: true, view: {} };
         contentCache.set(key, entry);
-        activeCacheKey = key;
+        activeWindow.activeCacheKey = key;
         cacheTouch(entry);
     } else {
-        activeCacheKey = null;
+        activeWindow.activeCacheKey = null;
     }
     // a brand-new load opens at the default view (no cached view to apply).
     pendingScrollTop = null;
@@ -2177,7 +2241,7 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
 
     // Inline-html artifacts (no url) can't be re-loaded by descriptor, so they
     // are NOT remembered per-channel (descriptor needs a url).
-    activeDescriptor = url ? { name, url, type } : null;
+    activeWindow.activeDescriptor = url ? { name, url, type } : null;
     return "fetch";
 }
 
@@ -2206,7 +2270,7 @@ export function load(opts: { name: string; html?: string | null; url?: string | 
  *  caller decides whether the body changed. */
 function openPanelChrome() {
     closeNativeChannelSidebar();
-    state.open = true;
+    activeWindow.state.open = true;
     lsSet(LS_OPEN, "1");
     saveCurrentChannelState();
     ensureHost();
@@ -2234,7 +2298,7 @@ export function onNewFile(channel: any | null) {
     // Leaving whatever was docked: snapshot its view-state so a later re-open of
     // that file is unaffected (mirrors showContent's switch-away bookkeeping).
     snapshotActiveView();
-    imgView.fullscreen = false;
+    activeWindow.imgView.fullscreen = false;
     loadSeq += 1; // supersede any in-flight loader
 
     isNewFile = true;
@@ -2245,24 +2309,24 @@ export function onNewFile(channel: any | null) {
     resetPdf();
     resetHtml();
     resetCode();
-    content.name = STRINGS.attach.defaultNewName; // header title = the default name
-    content.type = "markdown";
-    content.url = null;
-    content.html = null;
-    content.frameHtml = null;
-    content.code = "";
-    content.codeLang = "markdown";
-    content.loading = false;
-    content.error = null;
-    content.binary = false;
-    content.seq += 1;
-    activeCacheKey = null;
-    activeDescriptor = null;
+    activeWindow.content.name = STRINGS.attach.defaultNewName; // header title = the default name
+    activeWindow.content.type = "markdown";
+    activeWindow.content.url = null;
+    activeWindow.content.html = null;
+    activeWindow.content.frameHtml = null;
+    activeWindow.content.code = "";
+    activeWindow.content.codeLang = "markdown";
+    activeWindow.content.loading = false;
+    activeWindow.content.error = null;
+    activeWindow.content.binary = false;
+    activeWindow.content.seq += 1;
+    activeWindow.activeCacheKey = null;
+    activeWindow.activeDescriptor = null;
     pendingScrollTop = null;
     // open directly in edit mode (the decision: open default = view, but a NEW
     // file = edit) with an empty buffer.
-    editView.mode = "edit";
-    editView.editBuffer = "";
+    activeWindow.editView.mode = "edit";
+    activeWindow.editView.editBuffer = "";
 
     openPanelChrome();
     forceRender?.();
@@ -2295,7 +2359,7 @@ function editOriginalText(): string | null {
 export function attachActiveFile(nameOverride?: string | null) {
     const channel = resolveTargetChannel();
     if (!channel) return;
-    const baseName = (content.name as string | null) || "file";
+    const baseName = (activeWindow.content.name as string | null) || "file";
     const name = (nameOverride && nameOverride.trim()) ? nameOverride.trim() : baseName;
 
     const stage = (file: File) => {
@@ -2304,28 +2368,28 @@ export function attachActiveFile(nameOverride?: string | null) {
         if (isNewFile) { isNewFile = false; newFileChannel = null; }
     };
 
-    const hasEdits = editView.editBuffer != null;
+    const hasEdits = activeWindow.editView.editBuffer != null;
 
     // 1) Editable text family — attach the EDITED buffer (or the original text if
     //    unedited). Covers code / csv / unknown-as-text (content.code) AND a NEW
     //    file (empty content.code, buffer is the written text).
-    if (content.code != null && (content.type === "code" || content.type === "csv" || content.type === "unknown")) {
-        const text = hasEdits ? editBufferText() : content.code;
+    if (activeWindow.content.code != null && (activeWindow.content.type === "code" || activeWindow.content.type === "csv" || activeWindow.content.type === "unknown")) {
+        const text = hasEdits ? editBufferText() : activeWindow.content.code;
         stage(new File([text], name, { type: "text/plain" }));
         return;
     }
     // 2) Markdown — the raw md source lives in content.code; attach the edited
     //    buffer when edited, else the original source. (A new markdown file also
     //    lands here: content.code = "" + the buffer holds the written markdown.)
-    if (content.type === "markdown" && content.code != null) {
-        const text = hasEdits ? editBufferText() : content.code;
+    if (activeWindow.content.type === "markdown" && activeWindow.content.code != null) {
+        const text = hasEdits ? editBufferText() : activeWindow.content.code;
         stage(new File([text], name, { type: "text/markdown" }));
         return;
     }
     // 3) Inline artifact (no url) — the html source is in memory; attach the
     //    edited buffer when edited, else the original html.
-    if (content.type === "html" && content.html != null && !content.url) {
-        const text = hasEdits ? editBufferText() : content.html;
+    if (activeWindow.content.type === "html" && activeWindow.content.html != null && !activeWindow.content.url) {
+        const text = hasEdits ? editBufferText() : activeWindow.content.html;
         const base = /\.html?$/i.test(name) ? name : name + ".html";
         stage(new File([text], base, { type: "text/html" }));
         return;
@@ -2333,13 +2397,13 @@ export function attachActiveFile(nameOverride?: string | null) {
     // 4) Has a url (pdf / image / markdown-from-url / artifact-from-url): if the
     //    text family was edited (markdown/artifact have a buffer), attach the
     //    buffer; otherwise attach the source blob from the file's OWN url.
-    if (hasEdits && (content.type === "markdown" || content.type === "html")) {
-        const mime = content.type === "markdown" ? "text/markdown" : "text/html";
+    if (hasEdits && (activeWindow.content.type === "markdown" || activeWindow.content.type === "html")) {
+        const mime = activeWindow.content.type === "markdown" ? "text/markdown" : "text/html";
         stage(new File([editBufferText()], name, { type: mime }));
         return;
     }
-    if (content.url) {
-        const reqUrl = content.url;
+    if (activeWindow.content.url) {
+        const reqUrl = activeWindow.content.url;
         dvFetch(reqUrl)
             .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.blob(); })
             .then(blob => { stage(new File([blob], name, { type: blob.type || "application/octet-stream" })); })
@@ -2352,7 +2416,7 @@ export function attachActiveFile(nameOverride?: string | null) {
  *  descriptor (name/url/type) is re-loaded fresh so a transient/expired-link
  *  failure can recover without the user re-clicking the original chip. */
 export function retryActiveLoad() {
-    const d = activeDescriptor;
+    const d = activeWindow.activeDescriptor;
     if (!d || !d.url) return;
     load({ name: d.name || "file", url: d.url, type: d.type, noCache: true });
 }
@@ -2361,17 +2425,17 @@ export function retryActiveLoad() {
  *  kept in the cache (so reopening it is still instant); we just detach it. */
 export function clearArtifact() {
     snapshotActiveView();
-    imgView.fullscreen = false; // the body is going empty — drop the lightbox
-    content.name = null;
-    content.type = "html";
+    activeWindow.imgView.fullscreen = false; // the body is going empty — drop the lightbox
+    activeWindow.content.name = null;
+    activeWindow.content.type = "html";
     resetHtml();
     resetPdf();
     resetCode();
-    content.url = null;
-    content.loading = false;
-    content.error = null;
-    activeCacheKey = null;
-    activeDescriptor = null;
+    activeWindow.content.url = null;
+    activeWindow.content.loading = false;
+    activeWindow.content.error = null;
+    activeWindow.activeCacheKey = null;
+    activeWindow.activeDescriptor = null;
     saveCurrentChannelState();
     forceRender?.();
 }
@@ -2386,8 +2450,8 @@ export function clearArtifact() {
 function saveCurrentChannelState() {
     if (currentChannelId == null) return;
     channelStates.set(currentChannelId, {
-        open: state.open,
-        descriptor: activeDescriptor
+        open: activeWindow.state.open,
+        descriptor: activeWindow.activeDescriptor
     });
 }
 
@@ -2417,7 +2481,7 @@ export function onChannelSelect(newId: string | null) {
     if (mem && mem.open && mem.descriptor) {
         // restore: open + re-load the remembered file (cache makes this instant).
         closeNativeChannelSidebar();
-        state.open = true;
+        activeWindow.state.open = true;
         lsSet(LS_OPEN, "1");
         restoreDescriptor(mem.descriptor);
         ensureHost();
@@ -2434,12 +2498,12 @@ export function onChannelSelect(newId: string | null) {
         // the outgoing file's view first so returning to ITS channel restores it.
         snapshotActiveView();
         clearLoadedContent();
-        activeDescriptor = null;
-        state.open = mem ? mem.open : false;
-        lsSet(LS_OPEN, state.open ? "1" : "0");
+        activeWindow.activeDescriptor = null;
+        activeWindow.state.open = mem ? mem.open : false;
+        lsSet(LS_OPEN, activeWindow.state.open ? "1" : "0");
         applyOpenState();
-        syncNativeMemberList(state.open); // restore the member list if we're closing here
-        syncNativeProfileSidebar(state.open);
+        syncNativeMemberList(activeWindow.state.open); // restore the member list if we're closing here
+        syncNativeProfileSidebar(activeWindow.state.open);
         forceRender?.();
     }
 }
@@ -2447,15 +2511,15 @@ export function onChannelSelect(newId: string | null) {
 /** Clear only the loaded body (not the descriptor / channel bookkeeping). The
  *  file stays cached; we just detach the live pointer (no doc destroy here). */
 function clearLoadedContent() {
-    content.name = null;
-    content.type = "html";
+    activeWindow.content.name = null;
+    activeWindow.content.type = "html";
     resetHtml();
     resetPdf();
     resetCode();
-    content.url = null;
-    content.loading = false;
-    content.error = null;
-    activeCacheKey = null;
+    activeWindow.content.url = null;
+    activeWindow.content.loading = false;
+    activeWindow.content.error = null;
+    activeWindow.activeCacheKey = null;
 }
 
 function clampWidth(w: number): number {
@@ -2541,7 +2605,7 @@ function HtmlBody() {
     const iframe = React.createElement("iframe", {
         key: "frame",
         className: "dockview-frame",
-        srcDoc: content.frameHtml,
+        srcDoc: activeWindow.content.frameHtml,
         sandbox: "allow-scripts allow-same-origin",
         onLoad,
         onError,
@@ -2570,7 +2634,7 @@ function HtmlBody() {
 
 /** Body factory for the html/markdown iframe path (keeps the dispatcher tidy). */
 function renderHtmlBody() {
-    return React.createElement(HtmlBody, { key: content.seq });
+    return React.createElement(HtmlBody, { key: activeWindow.content.seq });
 }
 
 /** pdf.js's own pixel-quantization helpers (ported verbatim from the viewer's
@@ -2686,7 +2750,7 @@ function PdfBody() {
         };
         const availWidth = (): number => {
             const sc = scroller();
-            return Math.max(1, (sc?.clientWidth || host.clientWidth || state.width) - PDF_SIDE_INSET);
+            return Math.max(1, (sc?.clientWidth || host.clientWidth || activeWindow.state.width) - PDF_SIDE_INSET);
         };
 
         // Yield a fresh MACROTASK (not rAF). Under main-thread saturation the
@@ -2746,7 +2810,7 @@ function PdfBody() {
             // main-thread freeze mid-drag (measured ~5.8s long tasks on a heavy
             // 41-page doc). The crisp re-raster is deferred to drag-end settle.
             if (resizeDragging) return;
-            const docToken = content.pdf.renderToken;
+            const docToken = activeWindow.content.pdf.renderToken;
             const p = pagesRef.current[idx];
             if (!p) return;
             const docScale = renderScaleRef.current;
@@ -2755,11 +2819,11 @@ function PdfBody() {
             if (p.rendering) return;
             p.rendering = true;
             try {
-                const doc = content.pdf.doc;
+                const doc = activeWindow.content.pdf.doc;
                 if (!doc) return;
                 if (!p.page) {
                     try { p.page = await doc.getPage(p.n); } catch { return; }
-                    if (docToken !== content.pdf.renderToken) return;
+                    if (docToken !== activeWindow.content.pdf.renderToken) return;
                 }
                 const viewport = p.page.getViewport({ scale: docScale });
                 // canvas raster (crisp at docScale × dpr). Quantize the backing
@@ -2777,7 +2841,7 @@ function PdfBody() {
                             transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined
                         }).promise;
                     } catch { return; } // render cancelled
-                    if (docToken !== content.pdf.renderToken) return;
+                    if (docToken !== activeWindow.content.pdf.renderToken) return;
                     p.rasterScale = docScale;
                     // Let the just-painted crisp canvas COMMIT (and the thread
                     // breathe) before the text layer — which for a text-dense page
@@ -2786,7 +2850,7 @@ function PdfBody() {
                     // page; split, the page visibly sharpens a frame sooner and
                     // input stays responsive between the two halves.
                     await yieldTask();
-                    if (docToken !== content.pdf.renderToken) return;
+                    if (docToken !== activeWindow.content.pdf.renderToken) return;
                     if (resizeDragging) return; // a new drag started mid-raster
                 }
                 // text layer (selectable). rebuilt on scale change so span boxes
@@ -2797,10 +2861,10 @@ function PdfBody() {
                         // in-column build of a dense page is a ~1.5s host-freezing
                         // task; detached it is ~1ms.
                         await buildTextLayer(p.textDiv, p.page, viewport);
-                        if (docToken !== content.pdf.renderToken) return;
+                        if (docToken !== activeWindow.content.pdf.renderToken) return;
                         p.textScale = docScale;
                         // a live find must light up matches on a freshly-built page
-                        if (pdfView.findOpen && pdfView.findQuery) reapplyFindOnPage(idx);
+                        if (activeWindow.pdfView.findOpen && activeWindow.pdfView.findQuery) reapplyFindOnPage(idx);
                     } catch { /* text layer optional */ }
                 }
             } finally {
@@ -2824,11 +2888,11 @@ function PdfBody() {
         const pumpRaster = async () => {
             if (rasterPumping) return;
             rasterPumping = true;
-            const myToken = content.pdf.renderToken;
+            const myToken = activeWindow.content.pdf.renderToken;
             try {
                 while (rasterQueue.length) {
                     if (resizeDragging) break; // resume after the drag (endLiveScale re-pumps)
-                    if (myToken !== content.pdf.renderToken) { rasterQueue.length = 0; break; } // doc swapped
+                    if (myToken !== activeWindow.content.pdf.renderToken) { rasterQueue.length = 0; break; } // doc swapped
                     const idx = rasterQueue.shift()!;
                     await rasterPage(idx);
                     // yield a macrotask so one heavy page can't monopolize the thread
@@ -2898,7 +2962,7 @@ function PdfBody() {
         // measures visible (e.g. zero-height scroller mid-transition).
         const rasterViewportFirst = () => {
             const vis = visiblePageIdxs();
-            if (!vis.length) { rasterAround(pdfView.page || 1); return; }
+            if (!vis.length) { rasterAround(activeWindow.pdfView.page || 1); return; }
             for (let k = vis.length - 1; k >= 0; k--) enqueueRaster(vis[k], true); // first visible at head
             const lo = Math.max(0, vis[0] - RASTER_NEIGHBOURS);
             const hi = Math.min(pagesRef.current.length - 1, vis[vis.length - 1] + RASTER_NEIGHBOURS);
@@ -2910,10 +2974,10 @@ function PdfBody() {
         // here — that's lazy. This is the cheap pass that makes the first page
         // appear almost immediately regardless of page count.
         const buildLayout = async () => {
-            const doc = content.pdf.doc;
+            const doc = activeWindow.content.pdf.doc;
             if (!doc) return;
             const myPass = ++passRef.current;
-            const docToken = content.pdf.renderToken;
+            const docToken = activeWindow.content.pdf.renderToken;
 
             const sc = scroller();
             const availW = availWidth();
@@ -2926,17 +2990,17 @@ function PdfBody() {
             let refW = 0;
             let refH = 0;
             for (let n = 1; n <= doc.numPages; n++) {
-                if (myPass !== passRef.current || docToken !== content.pdf.renderToken) return;
+                if (myPass !== passRef.current || docToken !== activeWindow.content.pdf.renderToken) return;
                 let pg: any;
                 try { pg = await doc.getPage(n); } catch { return; }
                 const vp = pg.getViewport({ scale: 1 });
                 if (vp.width > refW) { refW = vp.width; refH = vp.height; }
             }
             if (!refW) return;
-            const fitScale = pdfView.fit === "page"
+            const fitScale = activeWindow.pdfView.fit === "page"
                 ? Math.min(availW / refW, availH / refH)
                 : availW / refW;
-            const docScale = fitScale * pdfView.zoom;
+            const docScale = fitScale * activeWindow.pdfView.zoom;
             renderScaleRef.current = docScale;
             applyScaleRound();
             host.style.setProperty("--scale-factor", String(docScale));
@@ -2947,7 +3011,7 @@ function PdfBody() {
             const built: typeof pagesRef.current = [];
             const frag = document.createDocumentFragment();
             for (let n = 1; n <= doc.numPages; n++) {
-                if (myPass !== passRef.current || docToken !== content.pdf.renderToken) return;
+                if (myPass !== passRef.current || docToken !== activeWindow.content.pdf.renderToken) return;
                 let page: any;
                 try { page = await doc.getPage(n); } catch { return; }
                 const base = page.getViewport({ scale: 1 });
@@ -2970,7 +3034,7 @@ function PdfBody() {
                 frag.appendChild(wrap);
                 built.push({ n, wrap, canvas, textDiv, baseW: base.width, baseH: base.height, page, rasterScale: 0, textScale: 0, rendering: false });
             }
-            if (myPass !== passRef.current || docToken !== content.pdf.renderToken) return;
+            if (myPass !== passRef.current || docToken !== activeWindow.content.pdf.renderToken) return;
             host.replaceChildren(frag);
             pagesRef.current = built;
 
@@ -2998,12 +3062,12 @@ function PdfBody() {
             // first visible page paints without waiting on the observer.
             if (pendingScrollTop != null) {
                 consumePendingScroll();
-            } else if (pdfView.page > 1) {
-                const p = built[Math.min(built.length, pdfView.page) - 1];
+            } else if (activeWindow.pdfView.page > 1) {
+                const p = built[Math.min(built.length, activeWindow.pdfView.page) - 1];
                 if (sc && p) sc.scrollTop = Math.max(0, p.wrap.offsetTop - 8);
             }
             updateCurrentPage();
-            rasterAround(pdfView.page || 1);
+            rasterAround(activeWindow.pdfView.page || 1);
         };
 
         // Re-scale the EXISTING column to a new fit×zoom WITHOUT rebuilding the
@@ -3018,7 +3082,7 @@ function PdfBody() {
         const rescale = async (): Promise<boolean> => {
             const pages = pagesRef.current;
             if (!pages.length) return false;
-            const docToken = content.pdf.renderToken;
+            const docToken = activeWindow.content.pdf.renderToken;
             const sc = scroller();
             const availW = availWidth();
             const availH = Math.max(1, (sc?.clientHeight || 600) - PDF_SIDE_INSET);
@@ -3026,8 +3090,8 @@ function PdfBody() {
             let refW = 0, refH = 0;
             for (const p of pages) if (p.baseW > refW) { refW = p.baseW; refH = p.baseH; }
             if (!refW) return false;
-            const fitScale = pdfView.fit === "page" ? Math.min(availW / refW, availH / refH) : availW / refW;
-            const docScale = fitScale * pdfView.zoom;
+            const fitScale = activeWindow.pdfView.fit === "page" ? Math.min(availW / refW, availH / refH) : availW / refW;
+            const docScale = fitScale * activeWindow.pdfView.zoom;
             const prevScale = renderScaleRef.current || docScale;
             const ratio = docScale / prevScale;
             // anchor: keep the user looking at the same content across the rescale.
@@ -3038,7 +3102,7 @@ function PdfBody() {
             const live = liveAnchorRef.current;
             const anchorIdx = live
                 ? Math.min(pages.length - 1, Math.max(0, live.idx))
-                : Math.max(0, (pdfView.page || 1) - 1);
+                : Math.max(0, (activeWindow.pdfView.page || 1) - 1);
             const anchor = pages[anchorIdx];
             const beforeTop = anchor ? anchor.wrap.offsetTop : 0;
             const scrollBefore = sc ? sc.scrollTop : 0;
@@ -3065,8 +3129,8 @@ function PdfBody() {
             // re-raster: visible pages first (fast re-sharpen), neighbours trickle.
             rasterViewportFirst();
             // if a find is active, re-light it (text layers were invalidated).
-            if (pdfView.findOpen && pdfView.findQuery) runFind(pdfView.findQuery, false);
-            if (docToken !== content.pdf.renderToken) return true;
+            if (activeWindow.pdfView.findOpen && activeWindow.pdfView.findQuery) runFind(activeWindow.pdfView.findQuery, false);
+            if (docToken !== activeWindow.content.pdf.renderToken) return true;
             return true;
         };
 
@@ -3087,8 +3151,8 @@ function PdfBody() {
                 if (mid >= top && mid < bot) { best = i + 1; break; }
                 if (mid >= bot) best = i + 1;
             }
-            if (best !== pdfView.page) {
-                pdfView.page = best;
+            if (best !== activeWindow.pdfView.page) {
+                activeWindow.pdfView.page = best;
                 forceRender?.();
             }
         };
@@ -3124,7 +3188,7 @@ function PdfBody() {
             if (!hlSupported) return;
             hlAll.clear();
             hlActive.clear();
-            const activeIdx = pdfView.findActive - 1;
+            const activeIdx = activeWindow.pdfView.findActive - 1;
             for (let i = 0; i < matchesRef.current.length; i++) {
                 const r = matchesRef.current[i].range;
                 if (i === activeIdx) hlActive.add(r);
@@ -3139,21 +3203,21 @@ function PdfBody() {
         // the spans; getTextContent is raster-free). Used so find covers pages
         // that have never been scrolled to. Returns once the spans exist.
         const ensureTextLayer = async (idx: number) => {
-            const docToken = content.pdf.renderToken;
+            const docToken = activeWindow.content.pdf.renderToken;
             const p = pagesRef.current[idx];
             if (!p || p.textScale === renderScaleRef.current) return;
-            const doc = content.pdf.doc;
+            const doc = activeWindow.content.pdf.doc;
             if (!doc) return;
             if (!p.page) {
                 try { p.page = await doc.getPage(p.n); } catch { return; }
-                if (docToken !== content.pdf.renderToken) return;
+                if (docToken !== activeWindow.content.pdf.renderToken) return;
             }
             try {
                 const viewport = p.page.getViewport({ scale: renderScaleRef.current });
                 // detached build (see buildTextLayer) — keeps a whole-document
                 // find from freezing the host one page at a time.
                 await buildTextLayer(p.textDiv, p.page, viewport);
-                if (docToken !== content.pdf.renderToken) return;
+                if (docToken !== activeWindow.content.pdf.renderToken) return;
                 p.textScale = renderScaleRef.current;
             } catch { /* optional */ }
         };
@@ -3209,8 +3273,8 @@ function PdfBody() {
             if (!p) return [];
             const { text, nodes, offs } = buildPageText(p.textDiv);
             if (!text) return [];
-            const cmp = pdfView.findCase ? q : q.toLowerCase();
-            const hay = pdfView.findCase ? text : text.toLowerCase();
+            const cmp = activeWindow.pdfView.findCase ? q : q.toLowerCase();
+            const hay = activeWindow.pdfView.findCase ? text : text.toLowerCase();
             const out: Range[] = [];
             let from = 0;
             for (;;) {
@@ -3235,11 +3299,11 @@ function PdfBody() {
         // ordered match list, preserving the active occurrence's identity when
         // possible so next/prev don't jump around under the user.
         const reapplyFindOnPage = (idx: number) => {
-            const q = pdfView.findQuery.trim();
+            const q = activeWindow.pdfView.findQuery.trim();
             if (!q || !hlSupported) return;
             const page = idx + 1;
             // remember which match was active (so we can re-aim at the same page)
-            const activeWasOnPage = matchesRef.current[pdfView.findActive - 1]?.page === page;
+            const activeWasOnPage = matchesRef.current[activeWindow.pdfView.findActive - 1]?.page === page;
             const fresh = collectPageMatches(idx, q).map(range => ({ page, range }));
             // rebuild the ordered list: drop this page's old entries, splice fresh
             // ones in at the page-ordered position. Matches are kept in page order;
@@ -3247,24 +3311,24 @@ function PdfBody() {
             const before = matchesRef.current.filter(m => m.page < page);
             const after = matchesRef.current.filter(m => m.page > page);
             matchesRef.current = [...before, ...fresh, ...after];
-            pdfView.findMatches = matchesRef.current.length;
+            activeWindow.pdfView.findMatches = matchesRef.current.length;
             // keep a sane active index: if it was on this page, re-point at this
             // page's first fresh hit; otherwise leave it (clamped) where it was.
-            if (pdfView.findMatches === 0) pdfView.findActive = 0;
-            else if (activeWasOnPage && fresh.length) pdfView.findActive = before.length + 1;
-            else if (pdfView.findActive === 0) pdfView.findActive = 1;
-            else if (pdfView.findActive > pdfView.findMatches) pdfView.findActive = pdfView.findMatches;
+            if (activeWindow.pdfView.findMatches === 0) activeWindow.pdfView.findActive = 0;
+            else if (activeWasOnPage && fresh.length) activeWindow.pdfView.findActive = before.length + 1;
+            else if (activeWindow.pdfView.findActive === 0) activeWindow.pdfView.findActive = 1;
+            else if (activeWindow.pdfView.findActive > activeWindow.pdfView.findMatches) activeWindow.pdfView.findActive = activeWindow.pdfView.findMatches;
             repaintHighlights();
             forceRender?.();
         };
         const runFind = async (query: string, jump: boolean) => {
             clearHighlights();
-            pdfView.findMatches = 0;
-            pdfView.findActive = 0;
+            activeWindow.pdfView.findMatches = 0;
+            activeWindow.pdfView.findActive = 0;
             const q = query.trim();
             if (!q) { forceRender?.(); return; }
             if (!hlSupported) { forceRender?.(); return; }
-            const myToken = content.pdf.renderToken;
+            const myToken = activeWindow.content.pdf.renderToken;
             const pages = pagesRef.current;
             // Build text layers for every page (raster-free) so find sees the
             // WHOLE document, not just the pages that happen to be rastered. Each
@@ -3274,16 +3338,16 @@ function PdfBody() {
             for (let i = 0; i < pages.length; i++) {
                 if (i > 0) await yieldTask();
                 await ensureTextLayer(i);
-                if (myToken !== content.pdf.renderToken || pdfView.findQuery.trim() !== q) return;
+                if (myToken !== activeWindow.content.pdf.renderToken || activeWindow.pdfView.findQuery.trim() !== q) return;
             }
             const all: typeof matchesRef.current = [];
             for (let i = 0; i < pages.length; i++) {
                 for (const range of collectPageMatches(i, q)) all.push({ page: i + 1, range });
             }
             matchesRef.current = all;
-            pdfView.findMatches = all.length;
+            activeWindow.pdfView.findMatches = all.length;
             if (all.length > 0) {
-                pdfView.findActive = 1;
+                activeWindow.pdfView.findActive = 1;
                 if (jump) focusMatch(0);
                 else { repaintHighlights(); forceRender?.(); }
             } else {
@@ -3294,7 +3358,7 @@ function PdfBody() {
         const focusMatch = (idx: number) => {
             const m = matchesRef.current[idx];
             if (!m) return;
-            pdfView.findActive = idx + 1;
+            activeWindow.pdfView.findActive = idx + 1;
             repaintHighlights();
             // ensure the match's page (+ neighbours) are crisp before we land.
             rasterAround(m.page);
@@ -3318,7 +3382,7 @@ function PdfBody() {
             rasterAround(idx + 1);
             const far = Math.abs(p.wrap.offsetTop - sc.scrollTop) > sc.clientHeight * 3;
             sc.scrollTo({ top: Math.max(0, p.wrap.offsetTop - 8), behavior: far ? "auto" : "smooth" });
-            pdfView.page = idx + 1;
+            activeWindow.pdfView.page = idx + 1;
             forceRender?.();
         };
 
@@ -3333,8 +3397,8 @@ function PdfBody() {
         // resize anchoring. It only manipulates scrollLeft/scrollTop, the same
         // numbers the scroll listener already reads.
         const syncPanClass = () => {
-            host.classList.toggle("dockview-pdf-pan", pdfView.dragMode === "pan");
-            if (pdfView.dragMode !== "pan") host.classList.remove("dockview-pdf-panning");
+            host.classList.toggle("dockview-pdf-pan", activeWindow.pdfView.dragMode === "pan");
+            if (activeWindow.pdfView.dragMode !== "pan") host.classList.remove("dockview-pdf-panning");
         };
         // active drag bookkeeping (null = not panning). Captured at mousedown.
         let panState: { x: number; y: number; left: number; top: number } | null = null;
@@ -3356,7 +3420,7 @@ function PdfBody() {
         };
         const onPanDown = (e: MouseEvent) => {
             // only the primary button, and only in pan mode.
-            if (pdfView.dragMode !== "pan" || e.button !== 0) return;
+            if (activeWindow.pdfView.dragMode !== "pan" || e.button !== 0) return;
             const sc = scroller();
             if (!sc) return;
             panState = { x: e.clientX, y: e.clientY, left: sc.scrollLeft, top: sc.scrollTop };
@@ -3372,18 +3436,18 @@ function PdfBody() {
         // Expose controls to the toolbar + keyboard while this PDF is mounted.
         const ctrls: PdfControls = {
             goToPage: (n: number) => scrollToPage(n),
-            prevPage: () => scrollToPage(pdfView.page - 1),
-            nextPage: () => scrollToPage(pdfView.page + 1),
-            zoomIn: () => { pdfView.zoom = Math.min(PDF_MAX_ZOOM, pdfView.zoom * 1.25); scheduleRerender(); forceRender?.(); },
-            zoomOut: () => { pdfView.zoom = Math.max(PDF_MIN_ZOOM, pdfView.zoom / 1.25); scheduleRerender(); forceRender?.(); },
-            setFit: (f: PdfFit) => { if (pdfView.fit !== f) { pdfView.fit = f; pdfView.zoom = 1; scheduleRerender(); forceRender?.(); } },
-            fitWidth: () => { if (pdfView.fit !== "width" || pdfView.zoom !== 1) { pdfView.fit = "width"; pdfView.zoom = 1; scheduleRerender(); forceRender?.(); } },
-            toggleDragMode: () => { pdfView.dragMode = pdfView.dragMode === "pan" ? "text" : "pan"; endPan(); syncPanClass(); forceRender?.(); },
-            toggleFind: () => { pdfView.findOpen = !pdfView.findOpen; if (!pdfView.findOpen) { clearHighlights(); pdfView.findMatches = 0; pdfView.findActive = 0; pdfView.findQuery = ""; } forceRender?.(); },
-            toggleFindCase: () => { pdfView.findCase = !pdfView.findCase; runFind(pdfView.findQuery, false); forceRender?.(); },
-            setFindQuery: (qq: string) => { pdfView.findQuery = qq; runFind(qq, true); },
-            findNext: () => { if (!pdfView.findMatches) return; focusMatch(pdfView.findActive % pdfView.findMatches); },
-            findPrev: () => { if (!pdfView.findMatches) return; focusMatch((pdfView.findActive - 2 + pdfView.findMatches) % pdfView.findMatches); },
+            prevPage: () => scrollToPage(activeWindow.pdfView.page - 1),
+            nextPage: () => scrollToPage(activeWindow.pdfView.page + 1),
+            zoomIn: () => { activeWindow.pdfView.zoom = Math.min(PDF_MAX_ZOOM, activeWindow.pdfView.zoom * 1.25); scheduleRerender(); forceRender?.(); },
+            zoomOut: () => { activeWindow.pdfView.zoom = Math.max(PDF_MIN_ZOOM, activeWindow.pdfView.zoom / 1.25); scheduleRerender(); forceRender?.(); },
+            setFit: (f: PdfFit) => { if (activeWindow.pdfView.fit !== f) { activeWindow.pdfView.fit = f; activeWindow.pdfView.zoom = 1; scheduleRerender(); forceRender?.(); } },
+            fitWidth: () => { if (activeWindow.pdfView.fit !== "width" || activeWindow.pdfView.zoom !== 1) { activeWindow.pdfView.fit = "width"; activeWindow.pdfView.zoom = 1; scheduleRerender(); forceRender?.(); } },
+            toggleDragMode: () => { activeWindow.pdfView.dragMode = activeWindow.pdfView.dragMode === "pan" ? "text" : "pan"; endPan(); syncPanClass(); forceRender?.(); },
+            toggleFind: () => { activeWindow.pdfView.findOpen = !activeWindow.pdfView.findOpen; if (!activeWindow.pdfView.findOpen) { clearHighlights(); activeWindow.pdfView.findMatches = 0; activeWindow.pdfView.findActive = 0; activeWindow.pdfView.findQuery = ""; } forceRender?.(); },
+            toggleFindCase: () => { activeWindow.pdfView.findCase = !activeWindow.pdfView.findCase; runFind(activeWindow.pdfView.findQuery, false); forceRender?.(); },
+            setFindQuery: (qq: string) => { activeWindow.pdfView.findQuery = qq; runFind(qq, true); },
+            findNext: () => { if (!activeWindow.pdfView.findMatches) return; focusMatch(activeWindow.pdfView.findActive % activeWindow.pdfView.findMatches); },
+            findPrev: () => { if (!activeWindow.pdfView.findMatches) return; focusMatch((activeWindow.pdfView.findActive - 2 + activeWindow.pdfView.findMatches) % activeWindow.pdfView.findMatches); },
             // Capture the scroll anchor at the START of a width drag, BEFORE any
             // scale change. The page boxes are sized off --scale-factor; the 8px
             // inter-page gaps are NOT (they're a constant flex gap), so a whole-
@@ -3433,7 +3497,7 @@ function PdfBody() {
                 if (!Number.isFinite(ratio) || ratio <= 0) return;
                 const host = containerRef.current;
                 if (!host) return;
-                const r = pdfView.fit === "page" ? 1 : ratio;
+                const r = activeWindow.pdfView.fit === "page" ? 1 : ratio;
                 host.style.setProperty("--scale-factor", String(renderScaleRef.current * r));
                 // hold the anchored content stationary in the viewport.
                 const anchor = liveAnchorRef.current;
@@ -3457,7 +3521,7 @@ function PdfBody() {
                 // rescale() re-derives scrollTop from liveAnchorRef (the same
                 // page+fraction we held throughout the drag) so the crisp re-raster
                 // lands on exactly the content the preview was showing — no snap.
-                if (content.pdf.doc) renderAll();
+                if (activeWindow.content.pdf.doc) renderAll();
                 liveAnchorRef.current = null;
             }
         };
@@ -3467,7 +3531,7 @@ function PdfBody() {
         let zoomDebounce: any = null;
         const scheduleRerender = () => {
             clearTimeout(zoomDebounce);
-            zoomDebounce = setTimeout(() => { if (content.pdf.doc) renderAll(); }, 120);
+            zoomDebounce = setTimeout(() => { if (activeWindow.content.pdf.doc) renderAll(); }, 120);
         };
 
         renderAll();
@@ -3485,7 +3549,7 @@ function PdfBody() {
         const ro = new ResizeObserver(() => {
             clearTimeout(roDebounce);
             roDebounce = setTimeout(() => {
-                if (!content.pdf.doc) return;
+                if (!activeWindow.content.pdf.doc) return;
                 // A resize DRAG drives its own live preview + drag-end re-raster
                 // (endLiveScale); re-rastering here mid-drag would fight that and
                 // jump. Only handle width changes from OTHER sources (zoom in the
@@ -3516,10 +3580,10 @@ function PdfBody() {
             if (hlSupported) { CSSwithHL.highlights.delete(HL_ALL); CSSwithHL.highlights.delete(HL_ACTIVE); }
             if (pdfControls === ctrls) pdfControls = null;
         };
-    }, [content.pdf.renderToken, content.seq]);
+    }, [activeWindow.content.pdf.renderToken, activeWindow.content.seq]);
 
     return React.createElement("div", {
-        key: content.seq,
+        key: activeWindow.content.seq,
         ref: containerRef,
         className: "dockview-pdf-container",
         // Focusable so a click into the PDF body gives the panel keyboard focus;
@@ -3622,10 +3686,10 @@ function FindBar({ model }: { model: FindBarModel }) {
 function PdfFindBar() {
     return React.createElement(FindBar, {
         model: {
-            query: pdfView.findQuery,
-            matches: pdfView.findMatches,
-            active: pdfView.findActive,
-            caseSensitive: pdfView.findCase,
+            query: activeWindow.pdfView.findQuery,
+            matches: activeWindow.pdfView.findMatches,
+            active: activeWindow.pdfView.findActive,
+            caseSensitive: activeWindow.pdfView.findCase,
             placeholder: STRINGS.find.placeholder,
             setQuery: (q: string) => pdfControls?.setFindQuery(q),
             next: () => pdfControls?.findNext(),
@@ -3659,23 +3723,23 @@ function useImageInteraction(
     // Clamp pan so the (scaled) image can't be dragged entirely out of view.
     const clampPan = () => {
         const wrap = wrapRef.current;
-        if (!wrap || !imgView.natW || !imgView.natH) return;
+        if (!wrap || !activeWindow.imgView.natW || !activeWindow.imgView.natH) return;
         const cw = wrap.clientWidth;
         const ch = wrap.clientHeight;
         if (!cw || !ch) return;
         // fitted (scale 1) display size with object-fit: contain.
-        const fitScale = Math.min(cw / imgView.natW, ch / imgView.natH, 1);
-        const dispW = imgView.natW * fitScale * imgView.scale;
-        const dispH = imgView.natH * fitScale * imgView.scale;
+        const fitScale = Math.min(cw / activeWindow.imgView.natW, ch / activeWindow.imgView.natH, 1);
+        const dispW = activeWindow.imgView.natW * fitScale * activeWindow.imgView.scale;
+        const dispH = activeWindow.imgView.natH * fitScale * activeWindow.imgView.scale;
         const maxX = Math.max(0, (dispW - cw) / 2);
         const maxY = Math.max(0, (dispH - ch) / 2);
-        imgView.tx = Math.max(-maxX, Math.min(maxX, imgView.tx));
-        imgView.ty = Math.max(-maxY, Math.min(maxY, imgView.ty));
+        activeWindow.imgView.tx = Math.max(-maxX, Math.min(maxX, activeWindow.imgView.tx));
+        activeWindow.imgView.ty = Math.max(-maxY, Math.min(maxY, activeWindow.imgView.ty));
     };
 
     const applyScale = (next: number, originX?: number, originY?: number) => {
         const wrap = wrapRef.current;
-        const prev = imgView.scale;
+        const prev = activeWindow.imgView.scale;
         next = Math.max(IMG_MIN_SCALE, Math.min(IMG_MAX_SCALE, next));
         if (next === prev) return;
         // Zoom toward a focal point (cursor) so the pixel under the cursor stays
@@ -3686,13 +3750,13 @@ function useImageInteraction(
             const ox = originX - cw / 2;
             const oy = originY - ch / 2;
             const ratio = next / prev;
-            imgView.tx = ox - (ox - imgView.tx) * ratio;
-            imgView.ty = oy - (oy - imgView.ty) * ratio;
+            activeWindow.imgView.tx = ox - (ox - activeWindow.imgView.tx) * ratio;
+            activeWindow.imgView.ty = oy - (oy - activeWindow.imgView.ty) * ratio;
         }
-        imgView.scale = next;
+        activeWindow.imgView.scale = next;
         if (next === 1) {
-            imgView.tx = 0;
-            imgView.ty = 0;
+            activeWindow.imgView.tx = 0;
+            activeWindow.imgView.ty = 0;
         }
         clampPan();
         rerender();
@@ -3709,11 +3773,11 @@ function useImageInteraction(
     useEffect(() => {
         if (!registerControls) return;
         const ctrls: ImgControls = {
-            zoomIn: () => applyScale(imgView.scale * 1.3),
-            zoomOut: () => applyScale(imgView.scale / 1.3),
+            zoomIn: () => applyScale(activeWindow.imgView.scale * 1.3),
+            zoomOut: () => applyScale(activeWindow.imgView.scale / 1.3),
             reset: () => { resetImgView(); rerender(); },
-            getScale: () => imgView.scale,
-            toggleFullscreen: () => { imgView.fullscreen = !imgView.fullscreen; forceRender?.(); }
+            getScale: () => activeWindow.imgView.scale,
+            toggleFullscreen: () => { activeWindow.imgView.fullscreen = !activeWindow.imgView.fullscreen; forceRender?.(); }
         };
         imgControls = ctrls;
         return () => {
@@ -3731,7 +3795,7 @@ function useImageInteraction(
             e.preventDefault();
             const rect = wrap.getBoundingClientRect();
             const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-            applyScale(imgView.scale * factor, e.clientX - rect.left, e.clientY - rect.top);
+            applyScale(activeWindow.imgView.scale * factor, e.clientX - rect.left, e.clientY - rect.top);
         };
         wrap.addEventListener("wheel", onWheel, { passive: false });
         return () => wrap.removeEventListener("wheel", onWheel);
@@ -3741,15 +3805,15 @@ function useImageInteraction(
     // Drag to pan (only meaningful when zoomed past fit).
     const drag = useRef({ on: false, x: 0, y: 0, tx: 0, ty: 0 });
     const onPointerDown = (e: any) => {
-        if (imgView.scale <= 1) return;
+        if (activeWindow.imgView.scale <= 1) return;
         if (e.button != null && e.button !== 0) return;
-        drag.current = { on: true, x: e.clientX, y: e.clientY, tx: imgView.tx, ty: imgView.ty };
+        drag.current = { on: true, x: e.clientX, y: e.clientY, tx: activeWindow.imgView.tx, ty: activeWindow.imgView.ty };
         try { e.currentTarget.setPointerCapture?.(e.pointerId); } catch { /* ignore */ }
     };
     const onPointerMove = (e: any) => {
         if (!drag.current.on) return;
-        imgView.tx = drag.current.tx + (e.clientX - drag.current.x);
-        imgView.ty = drag.current.ty + (e.clientY - drag.current.y);
+        activeWindow.imgView.tx = drag.current.tx + (e.clientX - drag.current.x);
+        activeWindow.imgView.ty = drag.current.ty + (e.clientY - drag.current.y);
         clampPan();
         rerender();
     };
@@ -3762,12 +3826,12 @@ function useImageInteraction(
     // Double-click toggles fit <-> 100% (real pixels) at the cursor.
     const onDoubleClick = (e: any) => {
         const wrap = wrapRef.current;
-        if (imgView.scale === 1) {
+        if (activeWindow.imgView.scale === 1) {
             // go to 100% real pixels: scale relative to the current fit scale.
-            if (wrap && imgView.natW && imgView.natH) {
+            if (wrap && activeWindow.imgView.natW && activeWindow.imgView.natH) {
                 const cw = wrap.clientWidth;
                 const ch = wrap.clientHeight;
-                const fitScale = Math.min(cw / imgView.natW, ch / imgView.natH, 1);
+                const fitScale = Math.min(cw / activeWindow.imgView.natW, ch / activeWindow.imgView.natH, 1);
                 const target = fitScale > 0 ? 1 / fitScale : 1;
                 const rect = wrap.getBoundingClientRect();
                 applyScale(target, e.clientX - rect.left, e.clientY - rect.top);
@@ -3783,8 +3847,8 @@ function useImageInteraction(
     const onImgLoad = () => {
         const img = imgRef.current;
         if (img) {
-            imgView.natW = img.naturalWidth;
-            imgView.natH = img.naturalHeight;
+            activeWindow.imgView.natW = img.naturalWidth;
+            activeWindow.imgView.natH = img.naturalHeight;
         }
         clampPan();
         rerender();
@@ -3824,14 +3888,14 @@ function ImageBody() {
 
     const { wrapProps, onImgLoad } = useImageInteraction(wrapRef, imgRef, rerender);
 
-    const zoomed = imgView.scale > 1;
+    const zoomed = activeWindow.imgView.scale > 1;
     return React.createElement(
         React.Fragment,
         null,
         React.createElement(
             "div",
             {
-                key: content.seq,
+                key: activeWindow.content.seq,
                 ref: wrapRef,
                 className: "dockview-img-wrap" + (zoomed ? " dockview-img-zoomed" : ""),
                 tabIndex: 0,
@@ -3840,16 +3904,16 @@ function ImageBody() {
             React.createElement("img", {
                 ref: imgRef,
                 className: "dockview-img",
-                src: content.url || "",
-                alt: content.name || "image",
+                src: activeWindow.content.url || "",
+                alt: activeWindow.content.name || "image",
                 draggable: false,
                 onLoad: onImgLoad,
                 style: {
-                    transform: `translate(${imgView.tx}px, ${imgView.ty}px) scale(${imgView.scale})`
+                    transform: `translate(${activeWindow.imgView.tx}px, ${activeWindow.imgView.ty}px) scale(${activeWindow.imgView.scale})`
                 }
             })
         ),
-        imgView.fullscreen ? React.createElement(ImageLightbox, null) : null
+        activeWindow.imgView.fullscreen ? React.createElement(ImageLightbox, null) : null
     );
 }
 
@@ -3877,7 +3941,7 @@ function ImageLightbox() {
     // must not touch that slot (see the param note in useImageInteraction).
     const { reflow, wrapProps, onImgLoad } = useImageInteraction(wrapRef, imgRef, rerender, false);
 
-    const close = () => { imgView.fullscreen = false; (forceRender ? forceRender() : bump((n: number) => n + 1)); };
+    const close = () => { activeWindow.imgView.fullscreen = false; (forceRender ? forceRender() : bump((n: number) => n + 1)); };
 
     // Esc closes the lightbox; ←/→ step prev/next through the channel gallery
     // (Discord-lightbox parity). Bound at capture on window so it fires even
@@ -3905,7 +3969,7 @@ function ImageLightbox() {
     // limits differ from the inline body's, so re-clamp + repaint.
     useEffect(() => { reflow(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
-    const zoomed = imgView.scale > 1;
+    const zoomed = activeWindow.imgView.scale > 1;
     return React.createElement(
         "div",
         {
@@ -3946,12 +4010,12 @@ function ImageLightbox() {
             React.createElement("img", {
                 ref: imgRef,
                 className: "dockview-lightbox-img",
-                src: content.url || "",
-                alt: content.name || "image",
+                src: activeWindow.content.url || "",
+                alt: activeWindow.content.name || "image",
                 draggable: false,
                 onLoad: onImgLoad,
                 style: {
-                    transform: `translate(${imgView.tx}px, ${imgView.ty}px) scale(${imgView.scale})`
+                    transform: `translate(${activeWindow.imgView.tx}px, ${activeWindow.imgView.ty}px) scale(${activeWindow.imgView.scale})`
                 }
             })
         )
@@ -4266,10 +4330,10 @@ let codeCtrl: CodeController | null = null;
 /** Whether the CURRENT body is a CodeMirror editor (so find / Ctrl+F apply). True
  *  for plain code, a CSV in raw mode, and markdown / .artifact in edit mode. */
 function cmBodyShown(): boolean {
-    if (content.code == null && content.type !== "html") return false;
-    if (content.type === "code") return true;
-    if (content.type === "csv") return csvView.mode === "raw";
-    if (content.type === "markdown" || content.type === "html") return editView.mode === "edit";
+    if (activeWindow.content.code == null && activeWindow.content.type !== "html") return false;
+    if (activeWindow.content.type === "code") return true;
+    if (activeWindow.content.type === "csv") return activeWindow.csvView.mode === "raw";
+    if (activeWindow.content.type === "markdown" || activeWindow.content.type === "html") return activeWindow.editView.mode === "edit";
     return false;
 }
 
@@ -4280,10 +4344,10 @@ function cmBodyShown(): boolean {
  *  In every case the doc is seeded from editBufferText() (the buffer if edited,
  *  else the pristine source) so a re-mount in either mode shows your edits. */
 function cmEditableForContent(): boolean {
-    if (content.type === "csv") return csvView.mode === "raw"; // raw = edit surface
-    if (content.type === "code") return editView.mode === "edit";
+    if (activeWindow.content.type === "csv") return activeWindow.csvView.mode === "raw"; // raw = edit surface
+    if (activeWindow.content.type === "code") return activeWindow.editView.mode === "edit";
     // markdown / artifact: the CM body only exists in edit mode.
-    return editView.mode === "edit";
+    return activeWindow.editView.mode === "edit";
 }
 
 /** Build a CM EditorView for the current text file and wire it to the shared find
@@ -4298,7 +4362,7 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
     const code = editBufferText();
     // The highlight gate uses the file's natural language. Markdown source edits
     // get the markdown grammar; .artifact html source gets the html grammar.
-    const lang = content.type === "html" ? "html" : content.codeLang;
+    const lang = activeWindow.content.type === "html" ? "html" : activeWindow.content.codeLang;
     const startEditable = cmEditableForContent();
     // Line count for the highlight gate (same trailing-newline convention as the
     // old viewer: a single trailing newline is not its own line).
@@ -4382,7 +4446,7 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
     const view = new mods.EditorView({ state, parent: host });
 
     const ctrl: CodeController = {
-        seq: content.seq,
+        seq: activeWindow.content.seq,
         matches: [],
         rebuildFind: () => { /* set below */ },
         focusMatch: () => { /* set below */ },
@@ -4401,26 +4465,26 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
     };
 
     const pushDeco = () => {
-        const activeIdx = codeView.findActive - 1;
+        const activeIdx = activeWindow.codeView.findActive - 1;
         const ranges = ctrl.matches.map((m, i) => ({ from: m.from, to: m.to, active: i === activeIdx }));
         view.dispatch({ effects: mods.setFindEffect.of(ranges) });
     };
 
     ctrl.rebuildFind = (query: string) => {
         ctrl.matches = [];
-        codeView.findMatches = 0;
-        codeView.findActive = 0;
+        activeWindow.codeView.findMatches = 0;
+        activeWindow.codeView.findActive = 0;
         if (!query) { pushDeco(); forceRender?.(); return; }
         // SearchCursor over the whole doc. caseInsensitive normalises both sides.
-        const cur = codeView.findCase
+        const cur = activeWindow.codeView.findCase
             ? new mods.SearchCursor(view.state.doc, query)
             : new mods.SearchCursor(view.state.doc, query, 0, view.state.doc.length,
                 (s: string) => s.toLowerCase());
         while (!cur.next().done) {
             ctrl.matches.push({ from: cur.value.from, to: cur.value.to });
         }
-        codeView.findMatches = ctrl.matches.length;
-        codeView.findActive = ctrl.matches.length ? 1 : 0;
+        activeWindow.codeView.findMatches = ctrl.matches.length;
+        activeWindow.codeView.findActive = ctrl.matches.length ? 1 : 0;
         pushDeco();
         if (ctrl.matches.length) ctrl.focusMatch(0);
         else forceRender?.();
@@ -4429,7 +4493,7 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
     ctrl.focusMatch = (idx: number) => {
         const m = ctrl.matches[idx];
         if (!m) return;
-        codeView.findActive = idx + 1;
+        activeWindow.codeView.findActive = idx + 1;
         pushDeco();
         // scroll the active match into the centre of the viewport.
         view.dispatch({
@@ -4464,7 +4528,7 @@ function CodeBody() {
             ctrl = buildCmController(host, mods);
             // restore find if it was open for this file (e.g. cache return), else
             // restore the saved scroll once the editor exists.
-            if (codeView.findOpen && codeView.findQuery) ctrl.rebuildFind(codeView.findQuery);
+            if (activeWindow.codeView.findOpen && activeWindow.codeView.findQuery) ctrl.rebuildFind(activeWindow.codeView.findQuery);
             else consumePendingScroll();
         });
         return () => {
@@ -4472,9 +4536,9 @@ function CodeBody() {
             ctrl?.teardown();
             if (ctrl && codeCtrl === ctrl) codeCtrl = null;
         };
-    }, [content.seq]);
+    }, [activeWindow.content.seq]);
     return React.createElement("div", {
-        key: content.seq,
+        key: activeWindow.content.seq,
         ref: hostRef,
         className: "dockview-cm",
         // focusable so a click into the code body gives the panel keyboard focus —
@@ -4488,21 +4552,21 @@ function CodeBody() {
 function CodeFindBar() {
     return React.createElement(FindBar, {
         model: {
-            query: codeView.findQuery,
-            matches: codeView.findMatches,
-            active: codeView.findActive,
-            caseSensitive: codeView.findCase,
+            query: activeWindow.codeView.findQuery,
+            matches: activeWindow.codeView.findMatches,
+            active: activeWindow.codeView.findActive,
+            caseSensitive: activeWindow.codeView.findCase,
             placeholder: STRINGS.find.placeholder,
-            setQuery: (q: string) => { codeView.findQuery = q; codeCtrl?.rebuildFind(q); },
+            setQuery: (q: string) => { activeWindow.codeView.findQuery = q; codeCtrl?.rebuildFind(q); },
             next: () => {
-                if (!codeView.findMatches) return;
-                codeCtrl?.focusMatch(codeView.findActive % codeView.findMatches);
+                if (!activeWindow.codeView.findMatches) return;
+                codeCtrl?.focusMatch(activeWindow.codeView.findActive % activeWindow.codeView.findMatches);
             },
             prev: () => {
-                if (!codeView.findMatches) return;
-                codeCtrl?.focusMatch((codeView.findActive - 2 + codeView.findMatches) % codeView.findMatches);
+                if (!activeWindow.codeView.findMatches) return;
+                codeCtrl?.focusMatch((activeWindow.codeView.findActive - 2 + activeWindow.codeView.findMatches) % activeWindow.codeView.findMatches);
             },
-            toggleCase: () => { codeView.findCase = !codeView.findCase; codeCtrl?.rebuildFind(codeView.findQuery); forceRender?.(); },
+            toggleCase: () => { activeWindow.codeView.findCase = !activeWindow.codeView.findCase; codeCtrl?.rebuildFind(activeWindow.codeView.findQuery); forceRender?.(); },
             close: () => toggleCodeFind()
         }
     });
@@ -4518,11 +4582,11 @@ function focusFindBox() {
 
 /** Toggle the code find bar. Closing clears the query + highlights. */
 function toggleCodeFind() {
-    codeView.findOpen = !codeView.findOpen;
-    if (!codeView.findOpen) {
-        codeView.findQuery = "";
-        codeView.findMatches = 0;
-        codeView.findActive = 0;
+    activeWindow.codeView.findOpen = !activeWindow.codeView.findOpen;
+    if (!activeWindow.codeView.findOpen) {
+        activeWindow.codeView.findQuery = "";
+        activeWindow.codeView.findMatches = 0;
+        activeWindow.codeView.findActive = 0;
         if (codeCtrl) { codeCtrl.matches = []; codeCtrl.rebuildFind(""); }
     }
     forceRender?.();
@@ -4562,7 +4626,7 @@ let csvCtrl: CsvController | null = null;
 function buildCsvController(mount: HTMLElement): CsvController {
     // Parse the edited BUFFER (so a Raw edit shows up in the grid on toggle-back),
     // falling back to the original text when the file is unedited.
-    const rows = parseDelimited(editBufferText(), csvView.delimiter);
+    const rows = parseDelimited(editBufferText(), activeWindow.csvView.delimiter);
     const header = rows.length ? rows[0] : [];
     // Column count = the widest of the header / a sample of data rows, so ragged
     // rows still get enough columns; capped so a runaway row can't explode the DOM.
@@ -4597,7 +4661,7 @@ function buildCsvController(mount: HTMLElement): CsvController {
     mount.appendChild(table);
 
     const ctrl: CsvController = {
-        seq: content.seq,
+        seq: activeWindow.content.seq,
         cancelled: false,
         rafId: 0,
         rowsBuilt: 0,
@@ -4673,11 +4737,11 @@ function CsvBody() {
             ctrl.teardown();
             if (csvCtrl === ctrl) csvCtrl = null;
         };
-    }, [content.seq]);
+    }, [activeWindow.content.seq]);
     return React.createElement(
         "div",
         {
-            key: content.seq,
+            key: activeWindow.content.seq,
             className: "dockview-csv-scroll",
             // focusable so a click into the grid gives the panel keyboard focus.
             tabIndex: 0
@@ -4691,11 +4755,11 @@ function CsvBody() {
  *  the edited buffer so a Raw edit shows up in the grid on toggle-back. Each view
  *  re-mounts fresh (a new content.seq) and opens at its own top. */
 function toggleCsvMode() {
-    if (content.type !== "csv") return;
-    csvView.mode = csvView.mode === "grid" ? "raw" : "grid";
+    if (activeWindow.content.type !== "csv") return;
+    activeWindow.csvView.mode = activeWindow.csvView.mode === "grid" ? "raw" : "grid";
     // leaving the raw view: close its find bar so it doesn't linger over the grid.
-    if (csvView.mode === "grid" && codeView.findOpen) toggleCodeFind();
-    content.seq += 1; // new body identity -> CodeBody/CsvBody remount fresh
+    if (activeWindow.csvView.mode === "grid" && activeWindow.codeView.findOpen) toggleCodeFind();
+    activeWindow.content.seq += 1; // new body identity -> CodeBody/CsvBody remount fresh
     pendingScrollTop = null; // each view opens at its own top (no cross-bleed)
     forceRender?.();
 }
@@ -4709,11 +4773,11 @@ function toggleCsvMode() {
  *     the source). Toggling back to VIEW RE-RENDERS from the edited buffer (md
  *     re-marked, html re-stamped) so your edits are reflected in the render. */
 function toggleEditMode() {
-    if (content.type !== "code" && content.type !== "markdown" && content.type !== "html") return;
-    const entering = editView.mode === "view";
-    editView.mode = entering ? "edit" : "view";
+    if (activeWindow.content.type !== "code" && activeWindow.content.type !== "markdown" && activeWindow.content.type !== "html") return;
+    const entering = activeWindow.editView.mode === "view";
+    activeWindow.editView.mode = entering ? "edit" : "view";
 
-    if (content.type === "code") {
+    if (activeWindow.content.type === "code") {
         // Same CM instance: just reconfigure editability. No seq bump, no remount.
         codeCtrl?.setEditable(entering);
         forceRender?.(); // repaint the toggle's active state (row 2)
@@ -4724,17 +4788,17 @@ function toggleEditMode() {
     // the rendered doc from the edited buffer so the render reflects the edits.
     if (!entering) {
         const src = editBufferText();
-        const fullHtml = content.type === "markdown" ? renderMarkdownDoc(src) : src;
+        const fullHtml = activeWindow.content.type === "markdown" ? renderMarkdownDoc(src) : src;
         setArtifactHtml(fullHtml);
         // keep the cache entry's rendered payload in sync so a re-open shows edits.
-        if (activeCacheKey != null) {
-            const e = contentCache.get(activeCacheKey);
-            if (e) { e.html = content.html; e.frameHtml = content.frameHtml; }
+        if (activeWindow.activeCacheKey != null) {
+            const e = contentCache.get(activeWindow.activeCacheKey);
+            if (e) { e.html = activeWindow.content.html; e.frameHtml = activeWindow.content.frameHtml; }
         }
     }
     // close any find bar from the edit CM so it doesn't linger over the render.
-    if (!entering && codeView.findOpen) toggleCodeFind();
-    content.seq += 1; // new body identity -> iframe/CM remount fresh
+    if (!entering && activeWindow.codeView.findOpen) toggleCodeFind();
+    activeWindow.content.seq += 1; // new body identity -> iframe/CM remount fresh
     pendingScrollTop = null; // each mode opens at its own top
     forceRender?.();
 }
@@ -4764,8 +4828,8 @@ function humanizeError(raw: string): { title: string; sub: string } {
  *  cache; the other two reuse the existing ⋯-menu handlers. */
 function renderErrorBody(raw: string) {
     const { title, sub } = humanizeError(raw);
-    const url = content.url;
-    const name = content.name || "file";
+    const url = activeWindow.content.url;
+    const name = activeWindow.content.name || "file";
     const actions: any[] = [];
     // Retry only makes sense when there's a url to re-fetch (inline-html
     // artifacts have none, but they don't take the fetch path anyway).
@@ -4806,7 +4870,7 @@ function renderErrorBody(raw: string) {
     }
     return React.createElement(
         "div",
-        { className: "dockview-unsupported dockview-error-card", key: content.seq },
+        { className: "dockview-unsupported dockview-error-card", key: activeWindow.content.seq },
         React.createElement(
             "svg",
             { className: "dockview-unsupported-icon dockview-error-icon", width: 48, height: 48, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
@@ -4827,12 +4891,12 @@ function renderErrorBody(raw: string) {
  *  preview, with Download + Open-in-new-window actions (no raw-byte iframe dump).
  *  Reached for an "unknown"-extension file that sniffed as binary. */
 function renderUnsupportedBody() {
-    const url = content.url;
-    const name = content.name || "file";
+    const url = activeWindow.content.url;
+    const name = activeWindow.content.name || "file";
     const ext = extOf(name) || extOf(url);
     return React.createElement(
         "div",
-        { className: "dockview-unsupported", key: content.seq },
+        { className: "dockview-unsupported", key: activeWindow.content.seq },
         React.createElement(
             "svg",
             { className: "dockview-unsupported-icon", width: 48, height: 48, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
@@ -4908,7 +4972,7 @@ function LoadingBody() {
 
 /** Body dispatcher: shared loading / error / placeholder, then route. */
 function renderBody() {
-    if (content.name == null) {
+    if (activeWindow.content.name == null) {
         // Native empty-state pattern: a centred muted glyph + one restrained line
         // of guidance (no illustration, no long copy). Reuses the unsupported-card
         // layout for the same centred icon/title rhythm.
@@ -4926,38 +4990,38 @@ function renderBody() {
             React.createElement("div", { className: "dockview-empty-text" }, STRINGS.empty.text)
         );
     }
-    if (content.error != null) {
-        return renderErrorBody(content.error);
+    if (activeWindow.content.error != null) {
+        return renderErrorBody(activeWindow.content.error);
     }
-    if (content.type === "pdf") {
-        if (content.loading || content.pdf.doc == null) {
+    if (activeWindow.content.type === "pdf") {
+        if (activeWindow.content.loading || activeWindow.content.pdf.doc == null) {
             return React.createElement(LoadingBody, null);
         }
         return React.createElement(PdfBody, null);
     }
-    if (content.type === "image") {
+    if (activeWindow.content.type === "image") {
         return React.createElement(ImageBody, null);
     }
-    if (content.type === "code") {
-        if (content.loading || content.code == null) {
+    if (activeWindow.content.type === "code") {
+        if (activeWindow.content.loading || activeWindow.content.code == null) {
             return React.createElement(LoadingBody, null);
         }
         return React.createElement(CodeBody, null);
     }
-    if (content.type === "csv") {
-        if (content.loading || content.code == null) {
+    if (activeWindow.content.type === "csv") {
+        if (activeWindow.content.loading || activeWindow.content.code == null) {
             return React.createElement(LoadingBody, null);
         }
         // Grid by default; the header's Table/Raw toggle flips to the code viewer
         // over the SAME content.code (so raw is the literal file text).
-        return csvView.mode === "raw"
+        return activeWindow.csvView.mode === "raw"
             ? React.createElement(CodeBody, null)
             : React.createElement(CsvBody, null);
     }
-    if (content.type === "unknown") {
+    if (activeWindow.content.type === "unknown") {
         // Still sniffing (a text file gets retyped to "code" on resolve, so the
         // only "unknown" left after load is a sniffed-binary file).
-        if (content.loading) {
+        if (activeWindow.content.loading) {
             return React.createElement(LoadingBody, null);
         }
         return renderUnsupportedBody();
@@ -4966,13 +5030,13 @@ function renderBody() {
     // the body SWITCHES to an editable CM over the source (raw md / html source) —
     // mirroring the CSV Grid↔Raw body swap (toggleEditMode re-renders on the way
     // back). The CM seeds from editBufferText() and writes edits to the buffer.
-    if (content.loading) {
+    if (activeWindow.content.loading) {
         return React.createElement(LoadingBody, null);
     }
-    if (editView.mode === "edit") {
+    if (activeWindow.editView.mode === "edit") {
         return React.createElement(CodeBody, null);
     }
-    if (content.frameHtml == null) {
+    if (activeWindow.content.frameHtml == null) {
         return React.createElement(LoadingBody, null);
     }
     return renderHtmlBody();
@@ -5046,8 +5110,8 @@ function zoomGroup(keyPrefix: string, pct: number, onOut: () => void, onIn: () =
 function PdfHeaderControls() {
     const { useState } = React;
     const [pageInput, setPageInput] = useState("");
-    if (content.loading || content.error || content.pdf.doc == null) return null;
-    const pct = Math.round(pdfView.zoom * 100);
+    if (activeWindow.content.loading || activeWindow.content.error || activeWindow.content.pdf.doc == null) return null;
+    const pct = Math.round(activeWindow.pdfView.zoom * 100);
     const commitPage = () => {
         const n = parseInt(pageInput, 10);
         if (!isNaN(n)) pdfControls?.goToPage(n);
@@ -5080,7 +5144,7 @@ function PdfHeaderControls() {
                     "aria-label": STRINGS.pdf.goToPage,
                     title: STRINGS.pdf.goToPageHint,
                     value: pageInput,
-                    placeholder: String(pdfView.page),
+                    placeholder: String(activeWindow.pdfView.page),
                     onChange: (e: any) => setPageInput(e.target.value.replace(/[^0-9]/g, "")),
                     onKeyDown: (e: any) => {
                         if (e.key === "Enter") { e.preventDefault(); commitPage(); }
@@ -5088,7 +5152,7 @@ function PdfHeaderControls() {
                     },
                     onBlur: () => { if (pageInput) commitPage(); }
                 }),
-                React.createElement("span", { className: "dockview-tool-pagetotal" }, " / " + pdfView.total)
+                React.createElement("span", { className: "dockview-tool-pagetotal" }, " / " + activeWindow.pdfView.total)
             ),
             React.createElement(
                 "span",
@@ -5110,9 +5174,9 @@ function PdfHeaderControls() {
             "div",
             { className: "dockview-tool-group dockview-collapse-mid" },
             toolBtn("pdf-dragmode",
-                pdfView.dragMode === "pan" ? STRINGS.pdf.dragSelect : STRINGS.pdf.dragPan,
+                activeWindow.pdfView.dragMode === "pan" ? STRINGS.pdf.dragSelect : STRINGS.pdf.dragPan,
                 PAN_HAND_PATH,
-                () => pdfControls?.toggleDragMode(), pdfView.dragMode === "pan")
+                () => pdfControls?.toggleDragMode(), activeWindow.pdfView.dragMode === "pan")
         ),
         // find toggle (the only header toggle for PDF; fit-width is in ⋯).
         // Mid priority: collapses before the zoom group but after the arrows.
@@ -5121,7 +5185,7 @@ function PdfHeaderControls() {
             { className: "dockview-tool-group dockview-collapse-mid" },
             toolBtn("pdf-find", STRINGS.pdf.find,
                 "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
-                () => pdfControls?.toggleFind(), pdfView.findOpen)
+                () => pdfControls?.toggleFind(), activeWindow.pdfView.findOpen)
         )
     );
 }
@@ -5136,8 +5200,8 @@ const IMG_NEXT_PATH = "M8.7 5.3a1 1 0 0 1 1.4 0l6 6a1 1 0 0 1 0 1.4l-6 6a1 1 0 1
  *  (no more to fetch) or while a load-more is in flight the button DIMS rather
  *  than vanishing (grammar rule 9). */
 function ImageHeaderControls() {
-    if (content.loading || content.error || !content.url) return null;
-    const pct = Math.round(imgView.scale * 100);
+    if (activeWindow.content.loading || activeWindow.content.error || !activeWindow.content.url) return null;
+    const pct = Math.round(activeWindow.imgView.scale * 100);
     return React.createElement(
         React.Fragment,
         null,
@@ -5161,10 +5225,10 @@ function ImageHeaderControls() {
             // Fullscreen toggle (IMG-2): the active state reflects whether the
             // lightbox is currently open, so the button reads as a toggle.
             toolBtn("img-fullscreen",
-                imgView.fullscreen ? STRINGS.image.exitFullscreen : STRINGS.image.enterFullscreen,
+                activeWindow.imgView.fullscreen ? STRINGS.image.exitFullscreen : STRINGS.image.enterFullscreen,
                 "M5 5h5a1 1 0 0 1 0 2H7v3a1 1 0 1 1-2 0V5Zm9 0h5v5a1 1 0 1 1-2 0V7h-3a1 1 0 1 1 0-2ZM6 14a1 1 0 0 1 1 1v3h3a1 1 0 1 1 0 2H5v-5a1 1 0 0 1 1-1Zm12 0a1 1 0 0 1 1 1v5h-5a1 1 0 1 1 0-2h3v-3a1 1 0 0 1 1-1Z",
                 () => imgControls?.toggleFullscreen(),
-                imgView.fullscreen)
+                activeWindow.imgView.fullscreen)
         )
     );
 }
@@ -5174,7 +5238,7 @@ function ImageHeaderControls() {
 function CodeHeaderControls() {
     const { useState } = React;
     const [copied, setCopied] = useState(false);
-    if (content.loading || content.error || content.code == null) return null;
+    if (activeWindow.content.loading || activeWindow.content.error || activeWindow.content.code == null) return null;
     const copy = () => {
         // copy what's SHOWN: the edited buffer in edit mode, else the original.
         const text = editBufferText();
@@ -5192,19 +5256,19 @@ function CodeHeaderControls() {
             fallbackCopy(text, done);
         }
     };
-    const editing = editView.mode === "edit";
+    const editing = activeWindow.editView.mode === "edit";
     return React.createElement(
         React.Fragment,
         null,
         // language label = lowest priority (informational); collapses first.
-        React.createElement("span", { className: "dockview-tool-lang dockview-collapse-low", title: STRINGS.code.detectedLanguage }, content.codeLang),
+        React.createElement("span", { className: "dockview-tool-lang dockview-collapse-low", title: STRINGS.code.detectedLanguage }, activeWindow.content.codeLang),
         // find toggle (mirrors PDF). Mid priority: collapses before wrap/copy.
         React.createElement(
             "div",
             { className: "dockview-tool-group dockview-collapse-mid" },
             toolBtn("code-find", STRINGS.code.find,
                 "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
-                () => toggleCodeFind(), codeView.findOpen)
+                () => toggleCodeFind(), activeWindow.codeView.findOpen)
         ),
         copyBtn("code-copy", STRINGS.code.copy, copied, copy),
         // Edit toggle (2b): one pencil button that highlights when EDIT is on
@@ -5253,8 +5317,8 @@ function copyBtn(key: string, label: string, copied: boolean, onClick: () => voi
 function CsvHeaderControls() {
     const { useState } = React;
     const [copied, setCopied] = useState(false);
-    if (content.loading || content.error || content.code == null) return null;
-    const raw = csvView.mode === "raw";
+    if (activeWindow.content.loading || activeWindow.content.error || activeWindow.content.code == null) return null;
+    const raw = activeWindow.csvView.mode === "raw";
     const copy = () => {
         // raw mode may hold an edited buffer; grid mode = the original text.
         const text = editBufferText();
@@ -5274,7 +5338,7 @@ function CsvHeaderControls() {
         { key: "csv-find-grp", className: "dockview-tool-group dockview-collapse-mid" },
         toolBtn("csv-find", STRINGS.code.find,
             "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
-            () => toggleCodeFind(), codeView.findOpen, !raw)
+            () => toggleCodeFind(), activeWindow.codeView.findOpen, !raw)
     ));
     // Always: the Raw state-colour toggle (icon highlights when active) + copy.
     children.push(React.createElement(
@@ -5298,8 +5362,8 @@ function CsvHeaderControls() {
 function EditTextHeaderControls(props: { mdMode: boolean }) {
     const { useState } = React;
     const [copied, setCopied] = useState(false);
-    if (content.loading || content.error) return null;
-    const editing = editView.mode === "edit";
+    if (activeWindow.content.loading || activeWindow.content.error) return null;
+    const editing = activeWindow.editView.mode === "edit";
     const copy = () => {
         const text = editBufferText();
         const done = () => { setCopied(true); setTimeout(() => setCopied(false), 1200); };
@@ -5318,7 +5382,7 @@ function EditTextHeaderControls(props: { mdMode: boolean }) {
         { key: "edit-find-grp", className: "dockview-tool-group dockview-collapse-mid" },
         toolBtn("edit-find", STRINGS.code.find,
             "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
-            () => toggleCodeFind(), codeView.findOpen, !editing)
+            () => toggleCodeFind(), activeWindow.codeView.findOpen, !editing)
     ));
     // Copy stays in its slot in both modes (it copies the source/buffer either way),
     // so it never vanishes — no need to disable it by mode.
@@ -5339,22 +5403,22 @@ function EditTextHeaderControls(props: { mdMode: boolean }) {
  *  SECOND header row (below the icon/name/⋯/X top row). Markdown + .artifact get
  *  the edit toggle (2b); unknown has no row 2 (see hasViewerControls). */
 function HeaderControls() {
-    if (content.type === "pdf") return React.createElement(PdfHeaderControls, null);
-    if (content.type === "image") return React.createElement(ImageHeaderControls, null);
-    if (content.type === "code") return React.createElement(CodeHeaderControls, null);
-    if (content.type === "csv") return React.createElement(CsvHeaderControls, null);
-    if (content.type === "markdown") return React.createElement(EditTextHeaderControls, { mdMode: true });
-    if (content.type === "html") return React.createElement(EditTextHeaderControls, { mdMode: false });
+    if (activeWindow.content.type === "pdf") return React.createElement(PdfHeaderControls, null);
+    if (activeWindow.content.type === "image") return React.createElement(ImageHeaderControls, null);
+    if (activeWindow.content.type === "code") return React.createElement(CodeHeaderControls, null);
+    if (activeWindow.content.type === "csv") return React.createElement(CsvHeaderControls, null);
+    if (activeWindow.content.type === "markdown") return React.createElement(EditTextHeaderControls, { mdMode: true });
+    if (activeWindow.content.type === "html") return React.createElement(EditTextHeaderControls, { mdMode: false });
     return null;
 }
 
 /** True when the current content has row-2 controls (so the second header row is
  *  rendered). Markdown + .artifact now carry the edit toggle; only unknown has none. */
 function hasViewerControls(): boolean {
-    if (content.loading || content.error) return false;
-    return content.type === "pdf" || content.type === "image"
-        || content.type === "code" || content.type === "csv"
-        || content.type === "markdown" || content.type === "html";
+    if (activeWindow.content.loading || activeWindow.content.error) return false;
+    return activeWindow.content.type === "pdf" || activeWindow.content.type === "image"
+        || activeWindow.content.type === "code" || activeWindow.content.type === "csv"
+        || activeWindow.content.type === "markdown" || activeWindow.content.type === "html";
 }
 
 /** Clipboard fallback for environments where navigator.clipboard is blocked. */
@@ -5399,9 +5463,9 @@ const MENU_ICON = {
 // only SECONDARY actions; the per-type toolbar already exposes zoom/page/etc.
 // ---------------------------------------------------------------------------
 function DockMoreMenu() {
-    const url = content.url;
-    const name = content.name as string | null;
-    const type = content.type;
+    const url = activeWindow.content.url;
+    const name = activeWindow.content.name as string | null;
+    const type = activeWindow.content.type;
     const isHtml = type === "html";
     const isImage = type === "image";
     const isPdf = type === "pdf";
@@ -5412,8 +5476,8 @@ function DockMoreMenu() {
     // active channel (the native attachment chip). Shown whenever there's a file to
     // attach — text in memory (code/csv/unknown), inline artifact html, or a url
     // (pdf/image/markdown/artifact-from-url). attachActiveFile() picks the source.
-    const canAttach = !content.loading && !content.error && content.name != null
-        && (content.code != null || (isHtml && content.html != null) || url != null);
+    const canAttach = !activeWindow.content.loading && !activeWindow.content.error && activeWindow.content.name != null
+        && (activeWindow.content.code != null || (isHtml && activeWindow.content.html != null) || url != null);
     if (canAttach) {
         items.push(React.createElement(Menu.MenuItem, {
             id: "dockview-more-attach",
@@ -5429,7 +5493,7 @@ function DockMoreMenu() {
     // PDF-only: "Fit to width" (reset zoom to 100%). A secondary control moved
     // off the header (spec §2.1 PDF "fit-width → ⋯"). Shown only when zoomed away
     // from fit, since at 100% it's a no-op. The header keeps the zoom group +/-.
-    if (isPdf && content.pdf.doc != null && Math.round(pdfView.zoom * 100) !== 100) {
+    if (isPdf && activeWindow.content.pdf.doc != null && Math.round(activeWindow.pdfView.zoom * 100) !== 100) {
         items.push(React.createElement(Menu.MenuItem, {
             id: "dockview-more-fit-width",
             label: STRINGS.menu.fitToWidth,
@@ -5542,7 +5606,7 @@ function confirmAttachBar() {
 /** The placeholder for the attach filename input: the file's own name, or the
  *  new-file default (`message.md`) when there is none. */
 function attachPlaceholderName(): string {
-    return (content.name as string | null) || STRINGS.attach.defaultNewName;
+    return (activeWindow.content.name as string | null) || STRINGS.attach.defaultNewName;
 }
 
 /** The attach filename sub-toolbar (second header row): a native filename input
@@ -5554,7 +5618,7 @@ function attachToolbar() {
         "div",
         { className: "dockview-attach-toolbar" },
         React.createElement("input", {
-            key: "attach-name-" + content.seq,
+            key: "attach-name-" + activeWindow.content.seq,
             className: "dockview-attach-name",
             type: "text",
             placeholder,
@@ -5611,11 +5675,11 @@ function DockPanel() {
         };
     }, [rerender]);
 
-    const [width, setWidth] = useState(state.width);
+    const [width, setWidth] = useState(activeWindow.state.width);
     const resizing = useRef(false);
 
     useEffect(() => {
-        state.width = width;
+        activeWindow.state.width = width;
         lsSet(LS_WIDTH, String(Math.round(width)));
         applyOpenState();
     }, [width]);
@@ -5625,7 +5689,7 @@ function DockPanel() {
     // OWN scroll after its lazy page boxes are built (it needs the column height
     // to exist first), so we skip it here.
     useEffect(() => {
-        if (content.type !== "pdf") consumePendingScroll();
+        if (activeWindow.content.type !== "pdf") consumePendingScroll();
     });
 
     const onResizeStart = useCallback((e: any) => {
@@ -5634,7 +5698,7 @@ function DockPanel() {
         resizing.current = true;
         resizeDragging = true;
         const startX = e.clientX;
-        const startWidth = state.width;
+        const startWidth = activeWindow.state.width;
         // Width the rendered content currently assumes; the live PDF preview
         // scales by (newWidth / this). Use the clamped start width as the base.
         const baseWidth = clampWidth(startWidth);
@@ -5668,8 +5732,8 @@ function DockPanel() {
             if (!resizing.current) return;
             const delta = startX - pendingX; // drag left edge: leftward = wider
             const next = clampWidth(startWidth + delta);
-            if (next !== state.width) {
-                state.width = next;
+            if (next !== activeWindow.state.width) {
+                activeWindow.state.width = next;
                 applyHostWidth(); // direct inline-style write, no React
             }
             // Instant feedback for the (debounced-re-raster) PDF view: scale the
@@ -5696,7 +5760,7 @@ function DockPanel() {
             // React's width state ONCE (its [width] effect persists to LS).
             const delta = startX - pendingX;
             const final = clampWidth(startWidth + delta);
-            state.width = final;
+            activeWindow.state.width = final;
             applyHostWidth();
             setWidth(final);
             // Drag ended: re-raster the PDF crisply at the final width (replaces
@@ -5715,17 +5779,17 @@ function DockPanel() {
         closePanel();
     }, []);
 
-    const hasContent = content.name != null;
+    const hasContent = activeWindow.content.name != null;
     // The TOP row is pure Discord grammar — the file-type glyph + the filename
     // title. A new file shows its default name (message.md) like any other file;
     // the rename/Attach controls live in the SECOND row, never up here.
-    const title = hasContent ? (content.name as string) : "DockView";
+    const title = hasContent ? (activeWindow.content.name as string) : "DockView";
 
     // Leading file-type glyph (mirrors a real thread header's [thread glyph] +
     // title structure). One muted, single-colour, document-framed icon per
     // content type so the header reads as "a file is docked here" at a glance.
     // Paths are built lazily here (React is ready now) from the plain-data map.
-    const iconType = content.type;
+    const iconType = activeWindow.content.type;
     const leadingIcon = hasContent
         ? React.createElement(
             "svg",
@@ -5868,11 +5932,11 @@ function DockPanel() {
                 // scrolling body the way the old in-header find dropdown did. PDF and
                 // every CM surface share the same FindBar component, each wired to its
                 // viewer. The box sits last inside the (position:relative) body-wrap.
-                const pdfFind = hasContent && content.type === "pdf" && pdfView.findOpen && content.pdf.doc;
+                const pdfFind = hasContent && activeWindow.content.type === "pdf" && activeWindow.pdfView.findOpen && activeWindow.content.pdf.doc;
                 // Code find applies to plain code, a CSV viewed in RAW mode, and a
                 // markdown / .artifact in EDIT mode — every case whose body is the
                 // editable/read CM. The grid + rendered iframe views have no find.
-                const codeFind = hasContent && codeView.findOpen && cmBodyShown();
+                const codeFind = hasContent && activeWindow.codeView.findOpen && cmBodyShown();
                 return React.createElement(
                     "div",
                     { className: "dockview-body-wrap" },
@@ -5883,7 +5947,7 @@ function DockPanel() {
                             // (a zoomed page overflows the width and must be pannable);
                             // every other viewer keeps overflow-x hidden (no h-scroll).
                             className: "dockview-body"
-                                + (hasContent && content.type === "pdf" ? " dockview-body-pdf" : "")
+                                + (hasContent && activeWindow.content.type === "pdf" ? " dockview-body-pdf" : "")
                         },
                         renderBody()
                     ),
@@ -6109,15 +6173,15 @@ function syncNativeProfileSidebar(open: boolean) {
  *  the user just asked for that sidebar, so we must NOT re-collapse it. We clear
  *  memberListRestorePending so the normal close machinery can't undo their choice. */
 function closeForExclusiveTakeover() {
-    if (!state.open) return;
+    if (!activeWindow.state.open) return;
     // We owe no restore: the user explicitly wants the sidebar now. Clearing this
     // BEFORE closing stops syncNativeMemberList/restoreHiddenMembers from fighting
     // them by re-hiding the list they just opened.
     memberListRestorePending = false;
     profileSidebarRestorePending = false;
-    state.open = false;
+    activeWindow.state.open = false;
     lsSet(LS_OPEN, "0");
-    imgView.fullscreen = false; // closing the panel drops the lightbox
+    activeWindow.imgView.fullscreen = false; // closing the panel drops the lightbox
     saveCurrentChannelState();
     applyOpenState(); // drops html.dockview-open → the sidebar is no longer CSS-hidden
     forceRender?.();
@@ -6133,7 +6197,7 @@ function closeForExclusiveTakeover() {
  *  against any spurious toggle that would hide rather than show. */
 export function onMemberSectionToggle() {
     if (selfMemberToggle) return;       // our own collapse/restore — ignore
-    if (!state.open) return;            // nothing of ours to evict
+    if (!activeWindow.state.open) return;            // nothing of ours to evict
     // The aside isn't in the DOM yet at dispatch time; let Discord's store + render
     // settle, then confirm the member list is now shown before we yield the slot.
     // The mount lands ~a macrotask later, but the exact ordering vs. our timer is
@@ -6141,7 +6205,7 @@ export function onMemberSectionToggle() {
     // it on a single setTimeout(0) (a false negative = the panel wouldn't close).
     let tries = 0;
     const check = () => {
-        if (!state.open) return;        // closed meanwhile
+        if (!activeWindow.state.open) return;        // closed meanwhile
         if (isMemberListShown()) { closeForExclusiveTakeover(); return; }
         if (++tries < 4) setTimeout(check, 24);
     };
@@ -6156,14 +6220,14 @@ export function onMemberSectionToggle() {
  *  profile sidebar, but without this the panel would otherwise just stay put.) */
 export function onUserProfileSidebarToggle() {
     if (selfProfileToggle) return;
-    if (!state.open) return;
+    if (!activeWindow.state.open) return;
     closeForExclusiveTakeover();
 }
 
 /** Native thread/channel sidebar opened while DockView owns the right slot:
  *  vacate the slot and do not restore DockView when that sidebar later closes. */
 export function onChannelSidebarView() {
-    if (!state.open) return;
+    if (!activeWindow.state.open) return;
     closeForExclusiveTakeover();
 }
 
@@ -6174,7 +6238,7 @@ function clearExclusiveRightSlotHidden(root: ParentNode = document) {
 
 function hideExclusiveRightSlot(inner: HTMLElement | null = findPageInner()) {
     clearExclusiveRightSlotHidden();
-    if (!state.open || !inner) return;
+    if (!activeWindow.state.open || !inner) return;
 
     const host = document.getElementById(HOST_ID);
     const mark = (el: Element | null) => {
@@ -6222,15 +6286,15 @@ function applyOpenState() {
     // depends on this class because Discord may rewrite className while typing.
     if (inner) inner.classList.add("dockview-page-inner");
 
-    if (state.open) {
+    if (activeWindow.state.open) {
         if (host) {
             // Drive open/closed via a class (display:block !important) instead of
             // inline display — Discord's layout code intermittently resets our
             // injected sibling's inline `display` to none, but it never beats the
             // class rule. width/flex stay inline (Discord leaves those alone).
             host.classList.add("dockview-open");
-            host.style.flex = `0 0 ${state.width}px`;
-            host.style.width = `${state.width}px`;
+            host.style.flex = `0 0 ${activeWindow.state.width}px`;
+            host.style.width = `${activeWindow.state.width}px`;
         }
         // Kept for compatibility with any older debug CSS; the current sidebar
         // exclusion is the targeted data attribute set by hideExclusiveRightSlot.
@@ -6248,8 +6312,8 @@ function applyOpenState() {
 function applyHostWidth() {
     const host = document.getElementById(HOST_ID);
     if (!host) return;
-    host.style.flex = `0 0 ${state.width}px`;
-    host.style.width = `${state.width}px`;
+    host.style.flex = `0 0 ${activeWindow.state.width}px`;
+    host.style.width = `${activeWindow.state.width}px`;
 }
 
 /** Drop the document state class (restoring any preemptively-hidden DM profile /
@@ -6268,8 +6332,8 @@ function restoreHiddenMembers() {
  *  Persists open:false, restores the native sidebars/member list we collapsed,
  *  and re-renders. */
 function closePanel() {
-    state.open = false;
-    imgView.fullscreen = false; // never strand the lightbox over a closed panel
+    activeWindow.state.open = false;
+    activeWindow.imgView.fullscreen = false; // never strand the lightbox over a closed panel
     lsSet(LS_OPEN, "0");
     saveCurrentChannelState();
     applyOpenState();
@@ -6279,16 +6343,16 @@ function closePanel() {
 }
 
 function toggle() {
-    const open = !state.open;
+    const open = !activeWindow.state.open;
     if (open) closeNativeChannelSidebar();
-    state.open = open;
-    lsSet(LS_OPEN, state.open ? "1" : "0");
-    if (!state.open) imgView.fullscreen = false; // closing the panel drops the lightbox
-    if (state.open) ensureHost();
+    activeWindow.state.open = open;
+    lsSet(LS_OPEN, activeWindow.state.open ? "1" : "0");
+    if (!activeWindow.state.open) activeWindow.imgView.fullscreen = false; // closing the panel drops the lightbox
+    if (activeWindow.state.open) ensureHost();
     saveCurrentChannelState();
     applyOpenState();
-    syncNativeMemberList(state.open); // collapse the member list like a thread / restore on close
-    syncNativeProfileSidebar(state.open);
+    syncNativeMemberList(activeWindow.state.open); // collapse the member list like a thread / restore on close
+    syncNativeProfileSidebar(activeWindow.state.open);
     forceRender?.();
 }
 
@@ -6307,7 +6371,7 @@ function attachObserver() {
     observer?.disconnect();
     observedParent = inner;
     observer = new MutationObserver(records => {
-        if (state.open && records.some(r =>
+        if (activeWindow.state.open && records.some(r =>
             r.target === observedParent
             || Array.from(r.addedNodes).some(nodeMayContainExclusiveRightSlot)
         )) {
@@ -6370,7 +6434,7 @@ export function startPanel() {
             toggle();
             return;
         }
-        if (!state.open) return;
+        if (!activeWindow.state.open) return;
         const host = document.getElementById(HOST_ID);
         if (!host) return;
         // The dock panel must hold keyboard focus (the user clicked/tabbed into
@@ -6390,16 +6454,16 @@ export function startPanel() {
         // Ctrl+F, so we own it whenever the dock holds focus. (Esc/Enter/Shift+Enter
         // are handled by the find input itself once it's focused.)
         if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
-            if (content.type === "pdf" && pdfControls && content.pdf?.doc) {
+            if (activeWindow.content.type === "pdf" && pdfControls && activeWindow.content.pdf?.doc) {
                 e.preventDefault();
-                if (!pdfView.findOpen) pdfControls.toggleFind();
+                if (!activeWindow.pdfView.findOpen) pdfControls.toggleFind();
                 else pdfControls.findNext();
                 return;
             }
             if (cmBodyShown()) {
                 e.preventDefault();
-                if (!codeView.findOpen) toggleCodeFind();
-                else if (codeView.findMatches) codeCtrl?.focusMatch(codeView.findActive % codeView.findMatches);
+                if (!activeWindow.codeView.findOpen) toggleCodeFind();
+                else if (activeWindow.codeView.findMatches) codeCtrl?.focusMatch(activeWindow.codeView.findActive % activeWindow.codeView.findMatches);
                 else focusFindBox();
                 return;
             }
@@ -6415,7 +6479,7 @@ export function startPanel() {
         // PDF branch: with NO modifier, ←/→ or PageUp/PageDown for page nav, +/-
         // zoom. (Ctrl+F find is handled by the shared block above, before the
         // editable bail, so it works whatever the dock-internal focus is.)
-        if (content.type === "pdf" && pdfControls) {
+        if (activeWindow.content.type === "pdf" && pdfControls) {
             if (e.ctrlKey || e.altKey || e.metaKey) return;
             if (e.key === "ArrowRight" || e.key === "PageDown") {
                 e.preventDefault(); pdfControls.nextPage();
@@ -6435,7 +6499,7 @@ export function startPanel() {
 
         // Image zoom keys — only when no modifier.
         if (e.ctrlKey || e.altKey || e.metaKey) return;
-        if (content.type !== "image" || !imgControls) return;
+        if (activeWindow.content.type !== "image" || !imgControls) return;
         if (e.key === "+" || e.key === "=") {
             e.preventDefault();
             imgControls.zoomIn();
@@ -6463,9 +6527,9 @@ export function startPanel() {
 
     // re-clamp width if the window shrinks
     onResize = () => {
-        const w = clampWidth(state.width);
-        if (w !== state.width) {
-            state.width = w;
+        const w = clampWidth(activeWindow.state.width);
+        if (w !== activeWindow.state.width) {
+            activeWindow.state.width = w;
             applyOpenState();
             forceRender?.();
         }
@@ -6516,7 +6580,7 @@ export function stopPanel() {
     clearTimeout(debounce);
     debounce = null;
     // 4. close panel state + restore the member list (mutual-exclusion undo)
-    state.open = false;
+    activeWindow.state.open = false;
     restoreHiddenMembers();
     // 5. unmount React + remove the host DOM node. React 18's root.unmount()
     //    may defer; remove the host(s) in a microtask AFTER unmount settles so
@@ -6543,7 +6607,7 @@ export function stopPanel() {
     // 7. drop per-channel memory (in-memory only).
     channelStates.clear();
     currentChannelId = null;
-    activeDescriptor = null;
+    activeWindow.activeDescriptor = null;
     // 8. reset the persistence latch so a re-start re-loads from DataStore. The
     //    mirror itself is kept (already-correct values) but writes are paused
     //    until the next loadPersistedState resolves.
@@ -6554,16 +6618,19 @@ export function stopPanel() {
 // still works. Removed again on stop().
 export function exposeDebug() {
     (window as any).__dockView = {
-        toggle, ensureHost, applyOpenState, state, DockPanel, CLS, findPageInner,
+        // The DockWindow itself, plus the per-window fields mapped back onto it so
+        // the historical debug getters (state/content/*View) still read correctly.
+        activeWindow,
+        toggle, ensureHost, applyOpenState, state: activeWindow.state, DockPanel, CLS, findPageInner,
         onChannelSelect, getCurrentChannelId, channelStates,
-        load, retry: retryActiveLoad, clear: clearArtifact, popout: popoutArtifact, content, detectType,
+        load, retry: retryActiveLoad, clear: clearArtifact, popout: popoutArtifact, content: activeWindow.content, detectType,
         // "Open in browser" (in-app Vesktop window) debug surface.
         openInVesktopWindow, vesktopWindowHtml,
-        contentCache, get loadSeq() { return loadSeq; }, get activeCacheKey() { return activeCacheKey; },
-        pdfView, get pdfControls() { return pdfControls; },
-        imgView, get imgControls() { return imgControls; },
+        contentCache, get loadSeq() { return loadSeq; }, get activeCacheKey() { return activeWindow.activeCacheKey; },
+        pdfView: activeWindow.pdfView, get pdfControls() { return pdfControls; },
+        imgView: activeWindow.imgView, get imgControls() { return imgControls; },
         // image gallery (prev/next) debug surface: drive + assert the nav.
-        gallery, refreshGallery, galleryStep, galleryCanStep,
+        gallery: activeWindow.gallery, refreshGallery, galleryStep, galleryCanStep,
         get galleryIndex() { return galleryCurrentIndex(); },
         get memberListShown() { return isMemberListShown(); },
         get memberListRestorePending() { return memberListRestorePending; },
@@ -6581,7 +6648,7 @@ export function exposeDebug() {
         get isNewFile() { return isNewFile; },
         // 2b editable-surface debug surface: the mode toggles + the buffer so CDP
         // can drive edit-mode + assert the temporary buffer / re-render loop.
-        editView, csvView, toggleEditMode, toggleCsvMode, toggleCodeFind,
+        editView: activeWindow.editView, csvView: activeWindow.csvView, toggleEditMode, toggleCsvMode, toggleCodeFind,
         get editBuffer() { return editBufferText(); }, get codeCtrl() { return codeCtrl; }
     };
 }
