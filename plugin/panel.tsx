@@ -1143,12 +1143,17 @@ function resetEditView() {
     activeWindow.editView.editBuffer = null; // and unedited (no buffer yet)
 }
 
-/** The ORIGINAL (unedited) source text for the current editable type. Code/CSV-raw
- *  edit content.code; markdown edits its raw source (stored in content.code by the
- *  markdown loader, NOT the rendered html); .artifact edits content.html. */
+/** The PRISTINE (unedited) source text for the current editable type — also the
+ *  merge-diff baseline. Every editable type keeps its original source in
+ *  `content.code`, SEPARATE from the rendered/view payload (`content.html`), so it
+ *  is immutable across view↔edit toggles:
+ *   - code / csv-raw: content.code is the file text;
+ *   - markdown: content.code is the raw md source (NOT the rendered html);
+ *   - .artifact: content.code is the original html source. Leaving edit overwrites
+ *     content.html (the rendered view) via setArtifactHtml but NEVER content.code,
+ *     so re-entering edit still diffs against the true original. */
 function editSourceText(w: DockWindow = activeWindow): string {
-    if (w.content.type === "html") return w.content.html || ""; // .artifact HTML source
-    return w.content.code || ""; // code / csv-raw / markdown-source
+    return w.content.code || ""; // code / csv-raw / markdown-source / artifact-html
 }
 
 /** The current EDITABLE text = the buffer if the user has edited, else the
@@ -1824,6 +1829,11 @@ function loadHtml(opts: { name: string; html?: string | null; url?: string | nul
     resetCode();
     if (opts.html != null) {
         setArtifactHtml(opts.html);
+        // Keep the PRISTINE html source in content.code (the immutable merge-diff
+        // baseline + edit source), separate from the rendered content.html that
+        // leaving edit overwrites — mirrors how markdown keeps its raw source.
+        activeWindow.content.code = opts.html;
+        activeWindow.content.codeLang = "html";
         activeWindow.content.loading = false;
     } else if (opts.url) {
         resetHtml();
@@ -1835,9 +1845,13 @@ function loadHtml(opts: { name: string; html?: string | null; url?: string | nul
                 return r.text();
             })
             .then(text => {
-                if (entry) { entry.html = text; const nonce = pageNonce(); entry.frameHtml = nonce ? injectNonce(text, nonce) : text; entry.loading = false; entry.error = null; }
+                // Stash the PRISTINE html source in code/codeLang (immutable merge
+                // baseline + edit source), separate from the rendered html payload.
+                if (entry) { entry.html = text; const nonce = pageNonce(); entry.frameHtml = nonce ? injectNonce(text, nonce) : text; entry.code = text; entry.codeLang = "html"; entry.loading = false; entry.error = null; }
                 if (token !== loadSeq) return;
                 setArtifactHtml(text);
+                activeWindow.content.code = text;
+                activeWindow.content.codeLang = "html";
                 activeWindow.content.loading = false;
                 activeWindow.content.error = null;
                 forceRender?.();
