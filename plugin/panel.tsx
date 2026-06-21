@@ -2850,20 +2850,6 @@ export function onChannelSelect(newId: string | null) {
     forceRender?.();
 }
 
-/** Clear only the loaded body (not the descriptor / channel bookkeeping). The
- *  file stays cached; we just detach the live pointer (no doc destroy here). */
-function clearLoadedContent() {
-    activeWindow.content.name = null;
-    activeWindow.content.type = "html";
-    resetHtml();
-    resetPdf();
-    resetCode();
-    activeWindow.content.url = null;
-    activeWindow.content.loading = false;
-    activeWindow.content.error = null;
-    activeWindow.activeCacheKey = null;
-}
-
 function clampWidth(w: number): number {
     return clampWidthRaw(w);
 }
@@ -5773,9 +5759,13 @@ function HeaderControls() {
 }
 
 /** True when the current content has row-2 controls (so the second header row is
- *  rendered). Markdown + .artifact now carry the edit toggle; only unknown has none. */
+ *  rendered). Markdown + .artifact now carry the edit toggle; only unknown has none.
+ *  An EMPTY dock (after clearArtifact: type stays "html" but content.name is null)
+ *  has no file, so it must NOT render a controls row — otherwise the header shows a
+ *  spurious second strip over an empty body. */
 function hasViewerControls(): boolean {
     if (activeWindow.content.loading || activeWindow.content.error) return false;
+    if (activeWindow.content.name == null) return false;
     return activeWindow.content.type === "pdf" || activeWindow.content.type === "image"
         || activeWindow.content.type === "code" || activeWindow.content.type === "csv"
         || activeWindow.content.type === "markdown" || activeWindow.content.type === "html";
