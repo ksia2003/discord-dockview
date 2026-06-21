@@ -5931,13 +5931,23 @@ function attachToolbar() {
 // Tabs (pin-driven multi-window). The tabs live INSIDE the existing header TOP
 // row — they ARE its icon/name slot — and are shown ONLY when ≥2 windows exist
 // (the lone transient renders the plain icon+title instead, so the single-window
-// case is byte-identical to before the multi-window work). Each tab = file-type
-// glyph + truncated name + a ✕. The active tab is highlighted with the member-list
-// state-colour grammar. Styled from Discord's existing tab/thread-strip patterns
-// (ghost icon buttons, hover bg) — no invented chrome. The tab row scrolls
-// horizontally on overflow within its slot, while ⋯/X stay pinned to the right.
+// case is byte-identical to before the multi-window work).
+//
+// "header = tab" model: each tab carries its OWN ⋯ + ✕ — there is NO shared
+// far-right cluster when tabs are showing.
+//   - ACTIVE tab: file glyph + name + inline ⋯ (opens THIS window's ⋯ menu, which
+//     is `activeWindow`'s menu since the active tab IS the active window) + ✕
+//     (closes the active window → a neighbour activates).
+//   - INACTIVE tab: file glyph + name + a ✕ revealed on hover only (no ⋯); the ✕
+//     closes THAT window directly WITHOUT switching to it first (closeTab leaves
+//     the active binding alone for a non-active tab).
+// Switching tabs moves the visible ⋯ to the new active tab — per-window, never
+// shared. Tabs are FLAT (icon + name), not boxed: the active tab gets a subtle
+// rounded selected-item highlight (Discord's --background-modifier-selected, the
+// channel/DM/member-list selected look), NOT a bordered pill. No invented chrome.
 // ---------------------------------------------------------------------------
 const TAB_CLOSE_PATH = "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z";
+const TAB_MORE_PATH = "M7 12.001C7 13.105 6.105 14 5 14C3.895 14 3 13.105 3 12.001C3 10.896 3.895 10.001 5 10.001C6.105 10.001 7 10.896 7 12.001ZM14 12.001C14 13.105 13.105 14 12 14C10.895 14 10 13.105 10 12.001C10 10.896 10.895 10.001 12 10.001C13.105 10.001 14 10.896 14 12.001ZM19 14C20.105 14 21 13.105 21 12.001C21 10.896 20.105 10.001 19 10.001C17.895 10.001 17 10.896 17 12.001C17 13.105 17.895 14 19 14Z";
 
 /** A small file-type glyph for a tab (mirrors the header leading icon, 16px). */
 function tabIcon(type: ContentType) {
@@ -5951,7 +5961,32 @@ function tabIcon(type: ContentType) {
     );
 }
 
-function DockTabs() {
+/** A per-tab ghost icon control (⋯ / ✕) — a flat, borderless icon button that
+ *  lives at a tab's right edge. Distinct from the tab body so its click never
+ *  bubbles into a tab switch. */
+function tabCtrlBtn(opts: { key: string; cls: string; label: string; path: string; onClick: (e: any) => void; }) {
+    return React.createElement(
+        "button",
+        {
+            key: opts.key,
+            type: "button",
+            className: "dockview-tab-ctrl " + opts.cls,
+            "aria-label": opts.label,
+            title: opts.label,
+            onClick: opts.onClick
+        },
+        React.createElement(
+            "svg",
+            { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+            React.createElement("path", { fill: "currentColor", d: opts.path })
+        )
+    );
+}
+
+/** Tabs row. `onMore`/`onCloseActive` drive the ACTIVE tab's inline ⋯/✕ (the same
+ *  handlers the lone-window far-right cluster uses, so behaviour is unchanged —
+ *  only WHERE the buttons render moved from a shared cluster to per-tab). */
+function DockTabs({ onMore, onCloseActive }: { onMore: (e: any) => void; onCloseActive: (e: any) => void; }) {
     return React.createElement(
         "div",
         { className: "dockview-tabs", role: "tablist" },
@@ -5970,29 +6005,36 @@ function DockTabs() {
                 },
                 tabIcon(w.content.type),
                 React.createElement("span", { className: "dockview-tab-name" }, label),
-                // ONE close path per window: the ACTIVE tab has NO inline ✕ — it is
-                // closed via the far-right ✕ (which always acts on the active window),
-                // so there's never a double-close. INACTIVE tabs carry a small ✕ that
-                // CSS reveals only on hover; clicking it closes THAT window directly
-                // (closeTab leaves the active binding alone for a non-active tab, so
-                // it never switches to the tab first).
+                // Per-tab controls (never a shared cluster):
+                //   ACTIVE → inline ⋯ (this window's menu) + ✕ (close active, a
+                //     neighbour activates). Both always visible on the active tab.
+                //   INACTIVE → just a ✕ revealed on hover; closes THAT window
+                //     directly (closeTab leaves the active binding alone for a
+                //     non-active tab, so it never switches to it first).
                 isActive
-                    ? null
-                    : React.createElement(
-                        "button",
-                        {
-                            type: "button",
-                            className: "dockview-tab-close",
-                            "aria-label": STRINGS.tabs.close,
-                            title: STRINGS.tabs.close,
-                            onClick: (e: any) => { e.stopPropagation(); closeTab(w.id); }
-                        },
-                        React.createElement(
-                            "svg",
-                            { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
-                            React.createElement("path", { fill: "currentColor", d: TAB_CLOSE_PATH })
-                        )
-                    )
+                    ? tabCtrlBtn({
+                        key: "more",
+                        cls: "dockview-tab-more",
+                        label: STRINGS.header.more,
+                        path: TAB_MORE_PATH,
+                        onClick: (e: any) => { e.stopPropagation(); onMore(e); }
+                    })
+                    : null,
+                isActive
+                    ? tabCtrlBtn({
+                        key: "close",
+                        cls: "dockview-tab-close",
+                        label: STRINGS.header.close,
+                        path: TAB_CLOSE_PATH,
+                        onClick: (e: any) => { e.stopPropagation(); onCloseActive(e); }
+                    })
+                    : tabCtrlBtn({
+                        key: "close",
+                        cls: "dockview-tab-close",
+                        label: STRINGS.header.close,
+                        path: TAB_CLOSE_PATH,
+                        onClick: (e: any) => { e.stopPropagation(); closeTab(w.id); }
+                    })
             );
         })
     );
@@ -6244,11 +6286,15 @@ function DockPanel() {
                         },
                         // The icon/name slot of the LOCKED top row. With a lone window
                         // it is the plain [file-type glyph] + title (byte-identical to
-                        // before the multi-window work — no tab chrome). With ≥2 windows
-                        // the SAME slot holds the scrollable tab pills; ⋯/X stay pinned
-                        // at the right in .dockview-header-actions, never scrolled.
+                        // before the multi-window work — no tab chrome, no highlight).
+                        // With ≥2 windows the SAME slot holds the flat tabs; each tab
+                        // carries its OWN ⋯/✕ (the active tab's inline, an inactive
+                        // tab's ✕ on hover), so there is NO shared far-right cluster.
                         ...(windows.length >= 2
-                            ? [React.createElement(DockTabs, null)]
+                            ? [React.createElement(DockTabs, {
+                                onMore: (e: any) => ContextMenuApi.openContextMenu(e, () => React.createElement(DockMoreMenu)),
+                                onCloseActive: close
+                            })]
                             : [
                                 leadingIcon,
                                 React.createElement(
@@ -6258,13 +6304,18 @@ function DockPanel() {
                                 )
                             ])
                     ),
-                    React.createElement(
-                        "div",
-                        { className: `${CLS.toolbar} dockview-header-actions` },
-                        // The top row is LOCKED to icon / name / ⋯ / X for every viewer.
-                        moreBtn,
-                        closeBtn
-                    )
+                    // The shared far-right ⋯/✕ cluster exists ONLY for the lone window
+                    // (its plain header). With ≥2 tabs the ⋯/✕ live PER-TAB inside
+                    // DockTabs (the active tab's), never shared — so we omit it.
+                    windows.length >= 2
+                        ? null
+                        : React.createElement(
+                            "div",
+                            { className: `${CLS.toolbar} dockview-header-actions` },
+                            // The top row is LOCKED to icon / name / ⋯ / X.
+                            moreBtn,
+                            closeBtn
+                        )
                 ),
                 // SECOND ROW. Attach bar (when open): the filename input + Attach +
                 // Cancel. Otherwise viewers (pdf/image/code/csv/md/artifact): the
