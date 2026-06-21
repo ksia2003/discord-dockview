@@ -5928,13 +5928,14 @@ function attachToolbar() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab strip (pin-driven multi-window). A browser-style strip ABOVE the per-window
-// header, shown ONLY when ≥2 windows exist (the lone transient → no strip, so the
-// single-window case is byte-identical to before). Each tab = file-type glyph +
-// truncated name + a ✕. The active tab is highlighted with the member-list
+// Tabs (pin-driven multi-window). The tabs live INSIDE the existing header TOP
+// row — they ARE its icon/name slot — and are shown ONLY when ≥2 windows exist
+// (the lone transient renders the plain icon+title instead, so the single-window
+// case is byte-identical to before the multi-window work). Each tab = file-type
+// glyph + truncated name + a ✕. The active tab is highlighted with the member-list
 // state-colour grammar. Styled from Discord's existing tab/thread-strip patterns
-// (ghost icon buttons, hover bg) — no invented chrome. Compact + horizontally
-// scrollable for the narrow ~765px dock.
+// (ghost icon buttons, hover bg) — no invented chrome. The tab row scrolls
+// horizontally on overflow within its slot, while ⋯/X stay pinned to the right.
 // ---------------------------------------------------------------------------
 const TAB_CLOSE_PATH = "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z";
 
@@ -5950,10 +5951,10 @@ function tabIcon(type: ContentType) {
     );
 }
 
-function DockTabStrip() {
+function DockTabs() {
     return React.createElement(
         "div",
-        { className: "dockview-tab-strip", role: "tablist" },
+        { className: "dockview-tabs", role: "tablist" },
         ...windows.map(w => {
             const isActive = w.id === activeWindowId;
             const label = (w.content.name as string | null) || STRINGS.empty.text;
@@ -6205,11 +6206,8 @@ function DockPanel() {
         React.createElement(
             "div",
             { className: `${CLS.card} dockview-card` },
-            // Tab strip ABOVE the header (browser-like): tabs on top → then the
-            // active window's icon/name/⋯/X top row → row2 → body. Shown only with
-            // ≥2 windows; the lone transient renders no strip (single-window =
-            // identical to before).
-            windows.length >= 2 ? React.createElement(DockTabStrip, null) : null,
+            // No separate tab-strip row: the tabs live INSIDE the existing top row
+            // (the icon/name slot). The card's first child is the header section.
             React.createElement(
                 "section",
                 {
@@ -6227,14 +6225,25 @@ function DockPanel() {
                     { className: `${CLS.upper} dockview-header-upper` },
                     React.createElement(
                         "div",
-                        { className: `${CLS.headerChildren} dockview-header-children` },
-                        // Top row is pure Discord grammar: [file-type glyph] + title.
-                        leadingIcon,
-                        React.createElement(
-                            "h2",
-                            { className: `${CLS.title} dockview-title`, title },
-                            title
-                        )
+                        {
+                            className: `${CLS.headerChildren} dockview-header-children`
+                                + (windows.length >= 2 ? " dockview-header-children--tabs" : "")
+                        },
+                        // The icon/name slot of the LOCKED top row. With a lone window
+                        // it is the plain [file-type glyph] + title (byte-identical to
+                        // before the multi-window work — no tab chrome). With ≥2 windows
+                        // the SAME slot holds the scrollable tab pills; ⋯/X stay pinned
+                        // at the right in .dockview-header-actions, never scrolled.
+                        ...(windows.length >= 2
+                            ? [React.createElement(DockTabs, null)]
+                            : [
+                                leadingIcon,
+                                React.createElement(
+                                    "h2",
+                                    { className: `${CLS.title} dockview-title`, title },
+                                    title
+                                )
+                            ])
                     ),
                     React.createElement(
                         "div",

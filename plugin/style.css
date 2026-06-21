@@ -160,25 +160,32 @@
     cursor: ew-resize;
 }
 
-/* TAB STRIP (pin-driven multi-window). A browser-style row of tabs ABOVE the
-   per-window header, shown ONLY when ≥2 windows exist. Built from Discord's tab
-   grammar: a flush strip on the chat surface, ghost-fill inactive tabs, a darker
-   "selected" fill for the active tab (the member-list state-colour language), and
-   a faint divider below. Compact + horizontally scrollable for the narrow dock —
-   tabs shrink to a sane min then the strip scrolls. No invented chrome. */
-.dockview-tab-strip {
-    flex: 0 0 auto;
+/* TABS (pin-driven multi-window). The tabs are NOT a separate row: they live
+   INSIDE the existing header top row, occupying its icon/name slot, shown ONLY
+   when ≥2 windows exist (a lone window renders the plain icon+title instead, so
+   the single-window top row is byte-identical to before). Built from Discord's
+   tab grammar: ghost-fill inactive tabs, a state-colour "selected" fill for the
+   active tab (the member-list state-colour language). The row scrolls
+   horizontally on overflow within the slot; ⋯/X stay pinned at the right edge of
+   the top row (they are siblings in .dockview-header-actions, never scrolled).
+   No invented chrome. */
+.dockview-tabs {
+    flex: 1 1 auto;
+    min-width: 0;
     display: flex;
-    align-items: stretch;
+    align-items: center;
     gap: 2px;
-    padding: 4px 6px 0;
     overflow-x: auto;
     overflow-y: hidden;
-    scrollbar-width: none; /* the strip itself never shows a bar (it's chrome) */
-    background: var(--background-base-lower, #1a1a1e);
-    border-bottom: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+    scrollbar-width: none; /* the tab row never shows a bar (it's chrome) */
 }
-.dockview-tab-strip::-webkit-scrollbar { height: 0; width: 0; }
+.dockview-tabs::-webkit-scrollbar { height: 0; width: 0; }
+/* When the slot carries tabs (not the plain icon+title), it must NOT impose the
+   centred icon/title layout — let the scrollable tab row own the full slot. */
+.dockview-header .dockview-header-children--tabs {
+    align-items: stretch;
+    overflow: hidden;
+}
 .dockview-tab {
     flex: 0 1 auto;
     display: flex;
@@ -186,9 +193,9 @@
     gap: 6px;
     min-width: 64px;
     max-width: 180px;
-    height: 32px;
+    height: 30px;
     padding: 0 6px 0 10px;
-    border-radius: 6px 6px 0 0;
+    border-radius: 6px;
     color: var(--interactive-normal, #b5bac1);
     background: transparent;
     cursor: pointer;

@@ -197,9 +197,9 @@ export const STRINGS = {
         unpin: "Unpin tab"
     },
 
-    // --- tab strip (pin-driven multi-window) --------------------------------
-    // The browser-style tab strip above the per-window header, shown only when ≥2
-    // windows exist. Each tab carries a file-type icon + name + a close ✕.
+    // --- tabs (pin-driven multi-window) -------------------------------------
+    // The tabs that live in the header top row (the icon/name slot), shown only
+    // when ≥2 windows exist. Each tab carries a file-type icon + name + a close ✕.
     tabs: {
         // {name} -> the file name shown in the tab.
         select: (name: string) => `Switch to ${name}`,
