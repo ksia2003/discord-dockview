@@ -4655,6 +4655,21 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
     // A new file (original==null) never gets the diff. unifiedMergeView highlights
     // ranges where the editor doc differs from `original`; when they're equal (no
     // edits yet) it shows nothing — a clean editor.
+    // unifiedMergeView's change-gutter (the colored per-line stripe) adds a SECOND
+    // gutter inside .cm-gutters, ~3px wide. It only exists in EDIT mode (and only
+    // when there's an original to diff against), so without compensation the total
+    // .cm-gutters width — and therefore the divider line between the line-number
+    // gutter and the code body — would JUMP RIGHT by that ~3px when toggling
+    // read→edit (선인: "그 흰 줄이 움직여"). To keep the divider PERFECTLY still
+    // (the same "no shift on interaction" principle as the tabs), we RESERVE the
+    // change-gutter's footprint as right-padding on .cm-gutters whenever the real
+    // change-gutter is ABSENT (read mode, or a new file's edit mode with no
+    // original). The reserve == CM merge's change-gutter box (width 3px); padding
+    // sits inside the border-right, so the divider x is identical in both modes.
+    const CHANGE_GUTTER_RESERVE = "3px";
+    const reserveGutterTheme = mods.EditorView.theme({
+        ".cm-gutters": { paddingRight: CHANGE_GUTTER_RESERVE }
+    });
     const editableExt = (on: boolean) => {
         const base = [
             mods.EditorView.editable.of(true),
@@ -4675,6 +4690,10 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
                 // editor language; off is safer + lighter.
                 syntaxHighlightDeletions: false
             }));
+        } else {
+            // No real change-gutter here → reserve its width so the gutter/body
+            // divider stays at the SAME x as edit mode (no shift on toggle).
+            base.push(reserveGutterTheme);
         }
         return base;
     };
@@ -5964,11 +5983,13 @@ function attachToolbar() {
 const TAB_CLOSE_PATH = "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z";
 const TAB_MORE_PATH = "M7 12.001C7 13.105 6.105 14 5 14C3.895 14 3 13.105 3 12.001C3 10.896 3.895 10.001 5 10.001C6.105 10.001 7 10.896 7 12.001ZM14 12.001C14 13.105 13.105 14 12 14C10.895 14 10 13.105 10 12.001C10 10.896 10.895 10.001 12 10.001C13.105 10.001 14 10.896 14 12.001ZM19 14C20.105 14 21 13.105 21 12.001C21 10.896 20.105 10.001 19 10.001C17.895 10.001 17 10.896 17 12.001C17 13.105 17.895 14 19 14Z";
 
-/** A small file-type glyph for a tab (mirrors the header leading icon, 16px). */
+/** A file-type glyph for a tab. SIZE PARITY with the single-window header's
+ *  leading glyph (.dockview-header-icon = 20px): a tab must never shrink any
+ *  element vs the pre-tab header — same 20px glyph, not a smaller 16px one. */
 function tabIcon(type: ContentType) {
     return React.createElement(
         "svg",
-        { className: "dockview-tab-icon", width: 16, height: 16, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+        { className: "dockview-tab-icon", width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
         ...(FILE_TYPE_ICON[type] || FILE_TYPE_ICON.unknown).map(
             ([d, extra]: IconPath, i: number) =>
                 React.createElement("path", { key: i, fill: "currentColor", d, ...(extra || {}) })
@@ -5991,8 +6012,11 @@ function tabCtrlBtn(opts: { key: string; cls: string; label: string; path: strin
             onClick: opts.onClick
         },
         React.createElement(
+            // SIZE PARITY with the single-window header's ⋯/✕ icons (20px SVG in a
+            // 32px iconWrapper). The tab control's SVG matches that 20px exactly — a
+            // tab's ⋯/✕ must never read smaller than the pre-tab header's.
             "svg",
-            { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+            { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
             React.createElement("path", { fill: "currentColor", d: opts.path })
         )
     );

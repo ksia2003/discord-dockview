@@ -272,8 +272,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
-    height: 18px;
+    /* SIZE PARITY with the single-window header's ⋯/✕ buttons: those use Discord's
+       32px iconWrapper hover target around a 20px SVG. The tab control matches that
+       32x32 box + 20px SVG exactly — a tab's ⋯/✕ must never be smaller than the
+       pre-tab header's (선인's locked "never shrink" principle). The bigger controls
+       widen tabs; that is accepted (the strip h-scrolls — a separate concern). */
+    width: 32px;
+    height: 32px;
     padding: 0;
     border: none;
     border-radius: 4px;
