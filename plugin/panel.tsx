@@ -435,13 +435,20 @@ function bodyScroller(): HTMLElement | null {
 }
 
 /** The scroller that actually owns vertical scroll for the CURRENT view. Almost
- *  always .dockview-body — EXCEPT the CSV grid, which fills the body and scrolls
- *  internally (it owns both axes so its sticky header resolves correctly), so the
- *  grid's scroll lives on .dockview-csv-scroll. The scroll snapshot/restore reads
- *  through here so a CSV grid reopens at the same row. */
+ *  always .dockview-body — EXCEPT two cases that scroll internally:
+ *   - the CSV grid fills the body and owns both axes (so its sticky header
+ *     resolves correctly) → its scroll lives on .dockview-csv-scroll;
+ *   - the code/CSV-raw view is a CodeMirror editor that owns its own scroller
+ *     (.cm-scroller) → that's where the px scroll position lives.
+ *  The scroll snapshot/restore reads through here so a file reopens at the same
+ *  spot. */
 function viewScroller(): HTMLElement | null {
     if (content.type === "csv" && csvView.mode === "grid") {
         return document.querySelector<HTMLElement>(`#${HOST_ID} .dockview-csv-scroll`) || bodyScroller();
+    }
+    const cmCode = content.type === "code" || (content.type === "csv" && csvView.mode === "raw");
+    if (cmCode) {
+        return document.querySelector<HTMLElement>(`#${HOST_ID} .dockview-cm .cm-scroller`) || bodyScroller();
     }
     return bodyScroller();
 }
@@ -574,13 +581,12 @@ let imgControls: ImgControls | null = null;
 
 // --- code viewer view-state (find), shared with the toolbar -----------------
 // The find fields mirror pdfView's: the bar/keyboard drive them, the controller
-// (codeCtrl) reads them to repaint matches. Matching is against the ORIGINAL
-// source so it's independent of how far progressive highlighting has reached.
-// `wrap` is now permanently TRUE — code (and CSV raw) always wraps, never scrolls
-// horizontally (locked Discord grammar). The field is kept as a const-true so the
-// body renderer's `dockview-code-wrap` class stays driven from one place.
+// (codeCtrl) reads them to drive the CodeMirror find decorations. Matching runs
+// over the CM document (SearchCursor), so a match anywhere in the file is found
+// regardless of viewport. Word-wrap is no longer a view-state toggle — the CM
+// editor always wraps (EditorView.lineWrapping), per the locked Discord grammar
+// that code never scrolls horizontally.
 const codeView = {
-    wrap: true,
     findOpen: false,
     findQuery: "",
     findMatches: 0,
@@ -729,7 +735,7 @@ html, body { margin: 0; padding: 0; background: #1e1f22; }
    thumb to FILL the full bar width like the old default scroller did. So: an 8px
    track, a rounded thumb painted edge-to-edge (no border, no padding-box clip),
    transparent track. Same fade-on-hover as Discord's .fade scrollers. Keep this in
-   sync with the .dockview-body/.dockview-code-scroll rules in style.css. */
+   sync with the .dockview-body/.dockview-cm .cm-scroller rules in style.css. */
 html::-webkit-scrollbar, body::-webkit-scrollbar,
 pre::-webkit-scrollbar, table::-webkit-scrollbar { width: 8px; height: 8px; }
 html::-webkit-scrollbar-track, body::-webkit-scrollbar-track,
@@ -3499,275 +3505,303 @@ function ImageLightbox() {
 }
 
 // ---------------------------------------------------------------------------
-// CODE viewer — line DOM + progressive (chunked) highlight + in-panel find.
+// CODE / TEXT viewer — CodeMirror 6, read-only, always wrapping.
 // ---------------------------------------------------------------------------
-// A 50k-line file used to highlight + build the whole <pre> in ONE synchronous
-// pass inside React render: ~4–6 s of main-thread block, a hard UI freeze, with
-// no incremental paint at all (measured: a single 4.2 s longtask). We replace
-// that with a line-addressable DOM filled progressively:
-//   1. First paint is PLAIN TEXT — every line is escaped (no hljs) and written
-//      in ONE shot. That's the only blocking step and it's cheap (a string
-//      build + innerHTML), so the file shows instantly; nothing is ever blank.
-//   2. hljs then runs in CHUNKS scheduled across rAF/idle ticks (~CHUNK_LINES
-//      lines per tick). Each highlighted chunk's HTML is split back into its
-//      lines and patched into the already-painted plain rows. The parser's
-//      `top` state is threaded chunk→chunk so a block comment / template literal
-//      that straddles a chunk boundary stays correctly coloured.
-//   3. Find matches the ORIGINAL source string, so a match in a not-yet-
-//      highlighted region still counts and can be scrolled to (the highlight
-//      progress and the find index are independent).
-// No virtualisation: the full line DOM keeps native selection, "copy whole
-// file", gutter alignment, and "scroll to a match anywhere" all trivially
-// correct — and progressive highlight already removes the freeze (the reason
-// virtualisation was on the table). The gutter is a parallel per-line column so
-// rows stay aligned in BOTH nowrap and word-wrap modes.
+// The hand-rolled progressive-hljs line-DOM viewer was replaced by CodeMirror 6
+// (the unified text engine: read-only here, editable + merge-diff in later
+// steps). Two hard rules from the feasibility spike drive this code:
+//   1. CM is loaded behind a LAZY dynamic import() (loadCM). A static top-level
+//      `@codemirror/*` import THROWS at plugin module-eval and silently kills the
+//      whole DockView plugin (window.__dockView never appears — same failure
+//      class as calling React.createElement at module top-level). The dynamic
+//      import defers CM's module evaluation to the first text-file open.
+//   2. Syntax highlighting is GATED on file size. CM's editing/scroll/selection/
+//      find are all cheap and host-safe even at 50k lines; the SOLE source of the
+//      mount/scroll long-tasks the spike measured was the Lezer parser. So under
+//      HIGHLIGHT_MAX_LINES we attach a CM language + syntaxHighlighting; at/above
+//      it we drop the parser entirely (plain text in CM) to match the old
+//      viewer's 0-long-task profile on huge files.
+// CM owns its OWN scroller (.cm-scroller); for code/CSV-raw the scroll snapshot/
+// restore (viewScroller) reads through to that element. lineWrapping is always on
+// (locked Discord grammar: code never h-scrolls).
 
-// Tuning for the progressive code renderer (chosen by measurement on a 50k-line
-// file): FIRST_BATCH rows paint synchronously (instant top-of-file), then rows
-// stream in ROW_BATCH at a time and highlight CHUNK_LINES at a time — each tick
-// kept well under a frame so the main thread never stalls.
-// Tuning for the progressive code renderer, picked by measurement on a 50k-line
-// file. FIRST_BATCH rows paint synchronously (instant top-of-file, <150 ms).
-// Rows then stream in ROW_BATCH at a time. Highlighting is viewport-driven: the
-// frontier advances CHUNK_LINES at a time, only as far as the visible band needs
-// (plus a buffer) on mount/scroll, then idles ahead. Each highlight step is a
-// short task — the whole file is never bulk-highlighted in one burst.
-const FIRST_BATCH = 200;  // rows painted synchronously on mount (one screenful+)
-const ROW_BATCH = 1500;   // plain-text rows appended per scheduled tick
-const CHUNK_LINES = 250;  // source lines highlighted per frontier step
+// Highlight gating threshold. Files with FEWER than this many lines get the Lezer
+// parser-based highlighter; files at/above it render as plain text in CM (no
+// parser → no parse long-tasks), matching the old CodeBody's 0-long-task 50k
+// profile. 5000 chosen from the spike: the parser stays comfortably short-task
+// well below this, while real source files needing colour are almost always
+// under it. (Tunable; logged in the redesign doc.)
+const HIGHLIGHT_MAX_LINES = 5000;
 
-/** Split ONE chunk of hljs HTML (which may contain spans crossing `\n`) into an
- *  array of per-line HTML strings, re-balancing open <span> tags at each line
- *  break: a span still open at a line's end is closed there and re-opened at the
- *  next line's start, so every line is independently valid markup. `expected`
- *  is how many source lines this chunk held (so a chunk ending in a newline
- *  yields the right count). Standard hljs-line-numbers technique. */
-function splitHighlightLines(html: string, expected: number): string[] {
-    const lines: string[] = [];
-    const openStack: string[] = []; // the literal <span ...> open tags currently open
-    let buf = "";
-    let i = 0;
-    const n = html.length;
-    const pushLine = () => {
-        // close every still-open span for THIS line, deepest first
-        let tail = "";
-        for (let k = openStack.length - 1; k >= 0; k--) tail += "</span>";
-        lines.push(buf + tail);
-        // re-open them at the start of the NEXT line, outermost first
-        buf = openStack.join("");
-    };
-    while (i < n) {
-        const ch = html[i];
-        if (ch === "\n") {
-            pushLine();
-            i++;
-            continue;
-        }
-        if (ch === "<") {
-            // a tag: either <span ...>, </span>, or (rare) other markup we keep verbatim
-            const gt = html.indexOf(">", i);
-            const tag = gt < 0 ? html.slice(i) : html.slice(i, gt + 1);
-            if (/^<\/span/i.test(tag)) {
-                openStack.pop();
-            } else if (/^<span/i.test(tag)) {
-                openStack.push(tag);
-            }
-            buf += tag;
-            i = gt < 0 ? n : gt + 1;
-            continue;
-        }
-        buf += ch;
-        i++;
-    }
-    // final line (no trailing newline consumed)
-    pushLine();
-    // hljs may emit a trailing empty segment when the source ended in "\n";
-    // normalise to exactly `expected` lines.
-    while (lines.length < expected) lines.push("");
-    if (lines.length > expected) lines.length = expected;
-    return lines;
+// The lazily-loaded CM module surface (resolved once, then cached). Holds the
+// pieces we assemble an EditorView/EditorState from plus the language resolver.
+interface CMModules {
+    EditorState: any;
+    EditorView: any;
+    lineNumbers: any;
+    Compartment: any;
+    syntaxHighlighting: any;
+    HighlightStyle: any;
+    tags: any;
+    Decoration: any;
+    SearchCursor: any;
+    RangeSetBuilder: any;
+    StateField: any;
+    StateEffect: any;
+    // hljs-lang-id -> a freshly built CM LanguageSupport (or null for plaintext).
+    languageFor: (hljsLang: string) => any | null;
+    // our Discord-tuned theme + highlight style (built once from the modules).
+    theme: any;
+    highlightStyle: any;
+    // find decoration plumbing (built once from the modules).
+    setFindEffect: any;
+    findField: any;
 }
 
-/** The live code-render controller: owns the line DOM, the progressive-highlight
- *  scheduler, and the find state for the currently-mounted code file. Recreated
- *  per file (keyed on content.seq); torn down by CodeBody's effect cleanup. */
+let cmModulesPromise: Promise<CMModules> | null = null;
+
+/** Resolve every CM module behind a single dynamic import() and assemble the
+ *  reusable surface (theme, highlight style, language resolver, find field).
+ *  Cached: only the FIRST text-file open pays the import; the modules are then
+ *  evaluated and the Discord theme/highlight-style/find-field are built once. */
+function loadCM(): Promise<CMModules> {
+    if (cmModulesPromise) return cmModulesPromise;
+    cmModulesPromise = (async () => {
+        // Dynamic imports — MUST NOT be hoisted to top-level (see rule 1 above).
+        const stateMod = await import("@codemirror/state");
+        const viewMod = await import("@codemirror/view");
+        const langMod = await import("@codemirror/language");
+        const searchMod = await import("@codemirror/search");
+        const lezerHl = await import("@lezer/highlight");
+
+        const { EditorState, Compartment, StateField, StateEffect, RangeSetBuilder } = stateMod as any;
+        const { EditorView, Decoration, lineNumbers } = viewMod as any;
+        const { syntaxHighlighting, HighlightStyle } = langMod as any;
+        const { SearchCursor } = searchMod as any;
+        const { tags } = lezerHl as any;
+
+        // --- Discord-tuned theme. Background/foreground match the in-panel code
+        // surface (--background-base-lower / #dbdee1) so the editor reads at the
+        // same tone as a real thread. Selection + active line use Discord vars
+        // where they exist, with literal fallbacks for themes that lack them. The
+        // gutter (line numbers) matches the old ::before gutter colours.
+        const theme = EditorView.theme({
+            "&": {
+                color: "#dbdee1",
+                backgroundColor: "var(--background-base-lower, #1a1a1e)",
+                height: "100%",
+                fontSize: "13px"
+            },
+            ".cm-scroller": {
+                fontFamily: 'Consolas, "Andale Mono WT", "Andale Mono", "Lucida Console", monospace',
+                lineHeight: "1.5",
+                overflow: "auto"
+            },
+            ".cm-content": { caretColor: "#dbdee1" },
+            "&.cm-focused": { outline: "none" },
+            ".cm-gutters": {
+                backgroundColor: "var(--background-base-lower, #1a1a1e)",
+                color: "var(--text-muted, #6b7280)",
+                border: "none",
+                borderRight: "1px solid var(--background-modifier-accent, #2b2d31)"
+            },
+            ".cm-lineNumbers .cm-gutterElement": { padding: "0 8px 0 12px" },
+            ".cm-activeLineGutter": { backgroundColor: "transparent" },
+            ".cm-activeLine": { backgroundColor: "transparent" },
+            "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
+                backgroundColor: "var(--text-selection, rgba(56,109,211,0.4))"
+            },
+            // find decorations (decoration-driven, not the @codemirror/search panel)
+            ".cm-dockview-find": { backgroundColor: "rgba(255, 213, 0, 0.32)" },
+            ".cm-dockview-find-active": { backgroundColor: "rgba(255, 145, 0, 0.6)" }
+        }, { dark: true });
+
+        // --- Highlight style tuned to the existing hljs dark theme (the same
+        // github-dark-dimmed-ish palette used by the markdown iframe + the old
+        // CodeBody) so colours stay consistent across both renderers.
+        const highlightStyle = HighlightStyle.define([
+            { tag: [tags.comment, tags.lineComment, tags.blockComment, tags.docComment], color: "#768390", fontStyle: "italic" },
+            { tag: [tags.keyword, tags.modifier, tags.operatorKeyword, tags.controlKeyword], color: "#f47067" },
+            { tag: [tags.string, tags.special(tags.string), tags.regexp], color: "#96d0ff" },
+            { tag: [tags.number, tags.bool, tags.atom, tags.literal], color: "#6cb6ff" },
+            { tag: [tags.variableName, tags.propertyName], color: "#dbdee1" },
+            { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: "#dcbdfb" },
+            { tag: [tags.className, tags.typeName, tags.namespace], color: "#f69d50" },
+            { tag: [tags.definition(tags.variableName)], color: "#dbdee1" },
+            { tag: [tags.tagName], color: "#f47067" },
+            { tag: [tags.attributeName], color: "#6cb6ff" },
+            { tag: [tags.attributeValue], color: "#96d0ff" },
+            { tag: [tags.heading], color: "#dcbdfb", fontWeight: "700" },
+            { tag: [tags.link, tags.url], color: "#6cb6ff", textDecoration: "underline" },
+            { tag: [tags.emphasis], fontStyle: "italic" },
+            { tag: [tags.strong], fontWeight: "700" },
+            { tag: [tags.meta, tags.processingInstruction], color: "#6cb6ff" },
+            { tag: [tags.deleted], color: "#ff938a" },
+            { tag: [tags.inserted], color: "#96d0ff" },
+            { tag: [tags.invalid], color: "#ff938a" }
+        ]);
+
+        // --- find decoration field. A StateField holds a DecorationSet rebuilt
+        // from a list of {from,to,active} match ranges (dispatched via an effect),
+        // so the same codeView find model (all matches dim / active match strong)
+        // works over CM without the @codemirror/search FLOATING panel (that's a
+        // later step). Marks target document offsets, so they survive scroll.
+        const setFindEffect = StateEffect.define();
+        const allMark = Decoration.mark({ class: "cm-dockview-find" });
+        const activeMark = Decoration.mark({ class: "cm-dockview-find-active" });
+        const findField = StateField.define({
+            create: () => Decoration.none,
+            update(deco: any, tr: any) {
+                deco = deco.map(tr.changes);
+                for (const e of tr.effects) {
+                    if (e.is(setFindEffect)) {
+                        const ranges: { from: number; to: number; active: boolean }[] = e.value;
+                        const b = new RangeSetBuilder();
+                        for (const r of ranges) {
+                            if (r.from >= r.to) continue;
+                            b.add(r.from, r.to, r.active ? activeMark : allMark);
+                        }
+                        deco = b.finish();
+                    }
+                }
+                return deco;
+            },
+            provide: (f: any) => EditorView.decorations.from(f)
+        });
+
+        // --- language resolver. Maps the hljs language id we already derive per
+        // file (content.codeLang) to a CM LanguageSupport, loaded from the lang
+        // packs bundled into the renderer. A miss returns null → plain text in CM
+        // (still themed/wrapped/findable, just no syntax colour). Each call builds
+        // a fresh LanguageSupport (cheap) so two open files never share parser
+        // state. Lang packs are imported lazily alongside CM (same dynamic chunk).
+        const [
+            jsMod, jsonMod, pyMod, cssMod, htmlMod, xmlMod, mdMod,
+            rustMod, cppMod, javaMod, yamlMod, sqlMod, phpMod, goMod
+        ] = await Promise.all([
+            import("@codemirror/lang-javascript"),
+            import("@codemirror/lang-json"),
+            import("@codemirror/lang-python"),
+            import("@codemirror/lang-css"),
+            import("@codemirror/lang-html"),
+            import("@codemirror/lang-xml"),
+            import("@codemirror/lang-markdown"),
+            import("@codemirror/lang-rust"),
+            import("@codemirror/lang-cpp"),
+            import("@codemirror/lang-java"),
+            import("@codemirror/lang-yaml"),
+            import("@codemirror/lang-sql"),
+            import("@codemirror/lang-php"),
+            import("@codemirror/lang-go")
+        ]);
+
+        const languageFor = (hljsLang: string): any | null => {
+            switch (hljsLang) {
+                case "javascript": return (jsMod as any).javascript();
+                case "typescript": return (jsMod as any).javascript({ typescript: true });
+                // jsx/tsx share the js pack with the jsx flag; our CODE_LANG maps
+                // both .jsx and .tsx onto javascript/typescript already.
+                case "json": return (jsonMod as any).json();
+                case "python": return (pyMod as any).python();
+                case "css": case "scss": case "less": return (cssMod as any).css();
+                case "xml": case "svg": case "plist": return (xmlMod as any).xml();
+                case "yaml": return (yamlMod as any).yaml();
+                case "rust": return (rustMod as any).rust();
+                case "c": case "cpp": return (cppMod as any).cpp();
+                case "java": return (javaMod as any).java();
+                case "sql": return (sqlMod as any).sql();
+                case "php": return (phpMod as any).php();
+                case "go": return (goMod as any).go();
+                case "markdown": return (mdMod as any).markdown();
+                // html only when explicitly typed html (our viewer routes .md/.svg
+                // elsewhere); covers inline css/js. Reuse the html pack id.
+                case "html": return (htmlMod as any).html();
+                default: return null; // plaintext / unmapped → no language
+            }
+        };
+
+        return {
+            EditorState, EditorView, lineNumbers, Compartment, syntaxHighlighting, HighlightStyle,
+            tags, Decoration, SearchCursor, RangeSetBuilder,
+            StateField, StateEffect, languageFor, theme, highlightStyle,
+            setFindEffect, findField
+        } as CMModules;
+    })();
+    return cmModulesPromise;
+}
+
+/** The live code controller, now backed by a CodeMirror EditorView. Keeps the
+ *  SAME public surface the find bar / keyboard handler already call (seq /
+ *  matches / rebuildFind / focusMatch / teardown) so those call sites are
+ *  unchanged — only the body is CM now. */
 interface CodeController {
     seq: number;
-    lineEls: HTMLElement[]; // body line rows, 1:1 with source lines (sparse until built)
-    lines: string[]; // ORIGINAL source lines (for find — never escaped)
-    lang: string;
-    rowsBuilt: number; // how many plain-text rows have been appended so far
-    highlighted: boolean[]; // per-line: has hljs HTML been patched in yet?
-    cancelled: boolean;
-    rafId: number;
-    // find
-    findHl: any; // Highlight (all matches)
-    findActiveHl: any; // Highlight (current match)
-    matches: { line: number; start: number; end: number }[]; // offsets within a line
-    pump: () => void; // the rAF pump (append rows / advance highlight frontier)
-    ensureHighlighted: (target: number) => void; // catch the frontier up to a line
-    onScroll: (() => void) | null; // scroll listener (drives the frontier)
-    scroller: HTMLElement | null; // the .dockview-body element onScroll is bound to
+    matches: { from: number; to: number }[]; // document offsets per match
     rebuildFind: (query: string) => void;
     focusMatch: (idx: number) => void;
     teardown: () => void;
 }
 let codeCtrl: CodeController | null = null;
 
-/** CSS Custom Highlight API registries for code find (separate from the PDF
- *  ones). `dockview-code-find` = every match (dim), `…-active` = the current
- *  one (strong). Painted over Ranges into the line text nodes — works whether
- *  or not the line has been highlighted yet (Ranges target text, not spans). */
-const HL_CODE_ALL = "dockview-code-find";
-const HL_CODE_ACTIVE = "dockview-code-find-active";
-
-/** Build the per-line code DOM + start progressive highlighting. Returns the
- *  controller (also stored in `codeCtrl`). Called once per code file mount. */
-function buildCodeController(bodyEl: HTMLElement): CodeController {
+/** Build a read-only CM EditorView for the current code file and wire it to the
+ *  shared find model. Called from CmBody once the CM modules have loaded. */
+function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
     const code = content.code || "";
     const lang = content.codeLang;
-    // Split into lines. A single trailing newline is NOT its own line (matches
-    // the old gutter count + how editors show files).
+    // Line count for the highlight gate (same trailing-newline convention as the
+    // old viewer: a single trailing newline is not its own line).
     const bodyText = code.endsWith("\n") ? code.slice(0, -1) : code;
-    const lines = bodyText.length ? bodyText.split("\n") : [""];
-    const lineCount = lines.length;
+    const lineCount = bodyText.length ? (bodyText.split("\n").length) : 1;
 
-    // The line NUMBER is a CSS ::before on each row (the `data-n` attribute), not
-    // a second DOM column — that halves the node count (one element per line, not
-    // two), keeps numbers perfectly aligned in both wrap modes, makes them non-
-    // selectable for free (pseudo-elements never copy), and lets the gutter stick
-    // during h-scroll via `position:sticky` on the ::before. So 50k lines = 50k
-    // <div> rows, not 100k.
+    const langSupport = lineCount < HIGHLIGHT_MAX_LINES ? mods.languageFor(lang) : null;
 
-    // Build one row's markup. `inner` is the row's HTML (escaped plain text at
-    // first, hljs HTML later); the line number rides on data-n.
-    const ROW_OPEN = '<div class="dockview-code-line" data-n="';
-    const rowHtml = (n: number, inner: string) =>
-        ROW_OPEN + n + '">' + (inner.length ? inner : "​") + "</div>";
-
-    const lineEls: HTMLElement[] = new Array(lineCount);
-
-    const CSSwithHL = (CSS as any);
-    const HighlightCtor = (window as any).Highlight;
-    const hlSupported = typeof HighlightCtor === "function" && !!CSSwithHL?.highlights;
-    const findHl: any = hlSupported ? new HighlightCtor() : null;
-    const findActiveHl: any = hlSupported ? new HighlightCtor() : null;
-    if (hlSupported) {
-        CSSwithHL.highlights.set(HL_CODE_ALL, findHl);
-        CSSwithHL.highlights.set(HL_CODE_ACTIVE, findActiveHl);
+    const extensions: any[] = [
+        mods.lineNumbers(), // GitHub/VS-Code-style line-number gutter
+        mods.EditorView.editable.of(false), // not editable (2a is read-only)
+        mods.EditorState.readOnly.of(true), // and read-only (no edits via API)
+        mods.EditorView.lineWrapping, // always wrap — never horizontal scroll
+        mods.theme,
+        mods.findField
+    ];
+    if (langSupport) {
+        // gated ON: parser-based syntax highlighting (Lezer). The parser is the
+        // SOLE long-task source on huge files, so it's only added under the gate.
+        extensions.push(langSupport, mods.syntaxHighlighting(mods.highlightStyle));
     }
+
+    const state = mods.EditorState.create({ doc: code, extensions });
+    const view = new mods.EditorView({ state, parent: host });
 
     const ctrl: CodeController = {
         seq: content.seq,
-        lineEls,
-        lines,
-        lang,
-        rowsBuilt: 0,
-        highlighted: new Array(lineCount).fill(false),
-        cancelled: false,
-        rafId: 0,
-        findHl,
-        findActiveHl,
         matches: [],
-        pump: () => { /* set below */ },
-        ensureHighlighted: () => { /* set below */ },
-        onScroll: null,
-        scroller: null,
         rebuildFind: () => { /* set below */ },
         focusMatch: () => { /* set below */ },
         teardown: () => { /* set below */ }
     };
 
-    // --- phase 1: build PLAIN-TEXT rows, batched across rAF ticks --------------
-    // Laying out 50k rows in one shot costs ~1.4 s. We instead append rows in
-    // batches: the FIRST batch (one screenful + buffer) goes in synchronously so
-    // the top of the file paints instantly (<300 ms), and the rest stream in over
-    // the next few ticks, each batch a sub-100ms layout. Until a row exists it
-    // can't be scrolled to, but the whole file finishes appending in well under a
-    // second, before any find/scroll-to a far row would realistically happen.
-    const appendRows = (from: number, to: number) => {
-        let s = "";
-        for (let i = from; i < to; i++) s += rowHtml(i + 1, escapeHtml(lines[i]));
-        // parse into a fragment off-DOM, then attach once (one reflow per batch).
-        const tmp = document.createElement("template");
-        tmp.innerHTML = s;
-        const frag = tmp.content;
-        const kids = frag.children;
-        for (let i = 0; i < kids.length; i++) lineEls[from + i] = kids[i] as HTMLElement;
-        bodyEl.appendChild(frag);
-        ctrl.rowsBuilt = to;
-    };
-
-    // --- find ----------------------------------------------------------------
-    // Locate the text node inside a line row that holds character offset
-    // [start,end). With highlighting on, a row may be several text nodes (one per
-    // hljs span); we walk them accumulating length until the offset lands.
-    const rangeForMatch = (lineIdx: number, start: number, end: number): Range | null => {
-        const row = lineEls[lineIdx];
-        if (!row) return null;
-        const range = document.createRange();
-        const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
-        let acc = 0;
-        let startSet = false;
-        let node: Node | null;
-        // The empty-line filler (​) has length 1 but the source line length
-        // is 0 — a zero-width match can't land there, so such lines never match.
-        while ((node = walker.nextNode())) {
-            const text = node.textContent || "";
-            // skip the zero-width filler so its phantom char doesn't shift offsets
-            const len = (text === "​") ? 0 : text.length;
-            if (!startSet && start <= acc + len) {
-                range.setStart(node, Math.max(0, start - acc));
-                startSet = true;
-            }
-            if (startSet && end <= acc + len) {
-                range.setEnd(node, Math.max(0, end - acc));
-                return range;
-            }
-            acc += len;
-        }
-        return null;
-    };
-
-    const repaintCodeMatches = () => {
-        if (!hlSupported) return;
-        findHl.clear();
-        findActiveHl.clear();
+    const pushDeco = () => {
         const activeIdx = codeView.findActive - 1;
-        for (let i = 0; i < ctrl.matches.length; i++) {
-            const m = ctrl.matches[i];
-            const r = rangeForMatch(m.line, m.start, m.end);
-            if (!r) continue;
-            if (i === activeIdx) findActiveHl.add(r);
-            else findHl.add(r);
-        }
+        const ranges = ctrl.matches.map((m, i) => ({ from: m.from, to: m.to, active: i === activeIdx }));
+        view.dispatch({ effects: mods.setFindEffect.of(ranges) });
     };
 
     ctrl.rebuildFind = (query: string) => {
         ctrl.matches = [];
-        const q = query;
         codeView.findMatches = 0;
         codeView.findActive = 0;
-        if (!q || !hlSupported) { repaintCodeMatches(); forceRender?.(); return; }
-        const cmp = codeView.findCase ? q : q.toLowerCase();
-        const qlen = q.length;
-        // Match against the ORIGINAL source lines (highlight-independent), one
-        // line at a time so a Range maps to exactly one row.
-        for (let li = 0; li < lines.length; li++) {
-            const raw = lines[li];
-            if (!raw) continue;
-            const hay = codeView.findCase ? raw : raw.toLowerCase();
-            let from = 0;
-            for (;;) {
-                const at = hay.indexOf(cmp, from);
-                if (at < 0) break;
-                ctrl.matches.push({ line: li, start: at, end: at + qlen });
-                from = at + qlen; // non-overlapping, like browser find
-            }
+        if (!query) { pushDeco(); forceRender?.(); return; }
+        // SearchCursor over the whole doc. caseInsensitive normalises both sides.
+        const cur = codeView.findCase
+            ? new mods.SearchCursor(view.state.doc, query)
+            : new mods.SearchCursor(view.state.doc, query, 0, view.state.doc.length,
+                (s: string) => s.toLowerCase());
+        while (!cur.next().done) {
+            ctrl.matches.push({ from: cur.value.from, to: cur.value.to });
         }
         codeView.findMatches = ctrl.matches.length;
         codeView.findActive = ctrl.matches.length ? 1 : 0;
-        repaintCodeMatches();
+        pushDeco();
         if (ctrl.matches.length) ctrl.focusMatch(0);
         else forceRender?.();
     };
@@ -3776,207 +3810,58 @@ function buildCodeController(bodyEl: HTMLElement): CodeController {
         const m = ctrl.matches[idx];
         if (!m) return;
         codeView.findActive = idx + 1;
-        // If the target row hasn't been appended yet (find raced ahead of the
-        // streaming row build), build up to it NOW so we can paint + scroll to it.
-        if (ctrl.rowsBuilt <= m.line) appendRows(ctrl.rowsBuilt, Math.min(lineCount, m.line + 1));
-        // and bring the highlight frontier down to it so the jumped-to line shows
-        // highlighted (not plain) — bounded catch-up, the idle pump finishes rest.
-        ctrl.ensureHighlighted(m.line + 1);
-        repaintCodeMatches();
-        // scroll the matched row to the middle of the viewport.
-        lineEls[m.line]?.scrollIntoView({ block: "center", behavior: "smooth" });
+        pushDeco();
+        // scroll the active match into the centre of the viewport.
+        view.dispatch({
+            effects: mods.EditorView.scrollIntoView(m.from, { y: "center" })
+        });
         forceRender?.();
     };
 
     ctrl.teardown = () => {
-        ctrl.cancelled = true;
-        if (ctrl.rafId) {
-            try { (window.cancelAnimationFrame || window.clearTimeout)(ctrl.rafId); } catch { /* ignore */ }
-            ctrl.rafId = 0;
-        }
-        if (ctrl.onScroll && ctrl.scroller) {
-            ctrl.scroller.removeEventListener("scroll", ctrl.onScroll);
-            ctrl.onScroll = null;
-            ctrl.scroller = null;
-        }
-        // CSS.highlights is a GLOBAL registry — drop our entries so a stale code
-        // highlight can't bleed into the next-mounted file.
-        if (hlSupported) {
-            try { CSSwithHL.highlights.delete(HL_CODE_ALL); CSSwithHL.highlights.delete(HL_CODE_ACTIVE); } catch { /* ignore */ }
-        }
+        try { view.destroy(); } catch { /* ignore */ }
     };
-
-    // --- highlighting: contiguous from the top, viewport-driven + idle-ahead ----
-    // hljs runs forward from line 0, ALWAYS contiguous, carrying its parser `top`
-    // state from one chunk to the next — that's what keeps a block comment /
-    // template literal correct no matter how deep it straddles. We never bulk-
-    // mutate all 50k rows in a burst (that triggered a multi-hundred-ms style/
-    // layout recalc over the content-visibility subtree per burst): instead we
-    // highlight only as far as the VIEWPORT needs (plus a buffer), then nudge a
-    // little further every idle frame. A scroll keeps the highlight frontier
-    // ahead of what's on screen; un-highlighted rows below the frontier are
-    // already visible as plain text (never blank). Each highlight step is capped
-    // at CHUNK_LINES so it stays a short task.
-    const hl = getHighlighter();
-    const canHighlight = !!(lang && lang !== "plaintext" && hl.getLanguage(lang));
-    let hlNext = 0;        // first not-yet-highlighted line (frontier)
-    let hlTop: any = null;  // hljs parser state AT the frontier
-    const LINE_PX = 19.5;   // must match contain-intrinsic-size / line-height
-    const VIEW_BUFFER = 1500; // px of look-ahead below the viewport to pre-highlight
-
-    // Highlight ONE chunk forward from the frontier (≤ CHUNK_LINES lines). Cheap:
-    // hljs+split+writes measured ~6 ms / 150 lines; the only real cost is the
-    // engine recalc the mutation triggers, which is why we keep the touched band
-    // small and frequent rather than one giant pass.
-    const highlightOneChunk = () => {
-        const from = hlNext;
-        const to = Math.min(lineCount, from + CHUNK_LINES);
-        if (from >= to) return;
-        const chunkText = lines.slice(from, to).join("\n");
-        let pieces: string[];
-        try {
-            const r = hl.highlightChunk(chunkText, lang, hlTop);
-            hlTop = r.top;
-            pieces = splitHighlightLines(r.html, to - from);
-        } catch {
-            pieces = lines.slice(from, to).map(escapeHtml);
-            hlTop = null;
-        }
-        for (let i = from; i < to; i++) {
-            const piece = pieces[i - from];
-            if (lineEls[i]) lineEls[i].innerHTML = piece && piece.length ? piece : "​";
-            ctrl.highlighted[i] = true;
-        }
-        hlNext = to;
-        // text nodes of the rows we just replaced changed → restamp find matches.
-        if (ctrl.matches.length) repaintCodeMatches();
-    };
-
-    // The line index the viewport (plus buffer) currently needs highlighted to.
-    const neededLine = (): number => {
-        const sc = bodyScroller();
-        if (!sc) return Math.min(lineCount, FIRST_BATCH);
-        // estimate the bottom-most visible line from the scroll offset (rows are
-        // ~LINE_PX tall; a generous buffer + slack covers wrap-mode taller rows).
-        const bottom = sc.scrollTop + sc.clientHeight + VIEW_BUFFER;
-        return Math.min(lineCount, Math.ceil(bottom / LINE_PX) + 8);
-    };
-
-    // How far the idle pump should keep the frontier ahead of the viewport before
-    // it goes quiet (resumes on the next scroll). Each highlightOneChunk mutates a
-    // content-visibility subtree → a style/layout recalc, so we DON'T grind the
-    // whole 50k-line file in the background; we keep a few screens ready and stop.
-    const idleTarget = () => Math.min(lineCount, neededLine() + CHUNK_LINES * 4);
-    // A far jump must not highlight thousands of lines in ONE task. Cap the
-    // synchronous catch-up; the visible band beyond the cap stays plain text (a
-    // beat) until the pump's frontier arrives — never blank.
-    const MAX_SYNC_CHUNKS = 3;
-
-    // The rAF pump. Priority 1: finish appending plain rows (so any row can be
-    // scrolled to). Priority 2: advance the highlight frontier to idleTarget(),
-    // one short chunk per frame, yielding between — then go quiet.
-    const pump = () => {
-        ctrl.rafId = 0;
-        if (ctrl.cancelled) return;
-        let more = false;
-        if (ctrl.rowsBuilt < lineCount) {
-            appendRows(ctrl.rowsBuilt, Math.min(lineCount, ctrl.rowsBuilt + ROW_BATCH));
-            more = true;
-        } else if (canHighlight && hlNext < idleTarget()) {
-            highlightOneChunk();
-            more = hlNext < idleTarget();
-        }
-        if (more) ctrl.rafId = (window.requestAnimationFrame || window.setTimeout)(pump) as unknown as number;
-    };
-    ctrl.pump = pump;
-
-    // Drive the frontier toward a target line NOW (scroll / find-jump): a small
-    // bounded synchronous catch-up so the visible band highlights promptly without
-    // one giant task, then hand the rest to the idle pump.
-    ctrl.ensureHighlighted = (target: number) => {
-        if (!canHighlight) return;
-        const cap = Math.min(lineCount, target);
-        let n = 0;
-        while (hlNext < cap && n++ < MAX_SYNC_CHUNKS) highlightOneChunk();
-        if (hlNext < idleTarget() && !ctrl.rafId) {
-            ctrl.rafId = (window.requestAnimationFrame || window.setTimeout)(pump) as unknown as number;
-        }
-    };
-
-    // Scroll → keep the frontier ahead of the viewport (throttled via rAF).
-    if (canHighlight) {
-        const sc = bodyScroller();
-        if (sc) {
-            let scRaf = 0;
-            const onScroll = () => {
-                if (scRaf || ctrl.cancelled) return;
-                scRaf = requestAnimationFrame(() => { scRaf = 0; ctrl.ensureHighlighted(neededLine()); });
-            };
-            sc.addEventListener("scroll", onScroll, { passive: true });
-            ctrl.onScroll = onScroll;
-            ctrl.scroller = sc;
-        }
-    }
-
-    // First batch synchronous = instant top-of-file paint. If we're RESTORING a
-    // saved scroll (cache return), build enough rows up front that the scroll
-    // container is already tall enough to reach that offset — otherwise
-    // consumePendingScroll would clamp to the short (still-streaming) height and
-    // land too high. Each row is ~LINE_PX tall; cover the target + a screenful.
-    let firstCount = FIRST_BATCH;
-    if (pendingScrollTop != null) {
-        const sc = bodyScroller();
-        const view = sc ? sc.clientHeight : 0;
-        const need = Math.ceil((pendingScrollTop + view) / LINE_PX) + FIRST_BATCH;
-        firstCount = Math.max(FIRST_BATCH, Math.min(lineCount, need));
-    }
-    appendRows(0, Math.min(lineCount, firstCount));
-    if (!canHighlight) ctrl.highlighted.fill(true); // plaintext: rows are final
-    else ctrl.ensureHighlighted(neededLine());
-    if (ctrl.rowsBuilt < lineCount || (canHighlight && hlNext < idleTarget())) {
-        ctrl.rafId = (window.requestAnimationFrame || window.setTimeout)(pump) as unknown as number;
-    }
 
     codeCtrl = ctrl;
     return ctrl;
 }
 
-/** The CODE/TEXT body: a scrollable, selectable line DOM. Each row carries its
- *  line number as a non-selectable CSS ::before "gutter" (so copy yields code
- *  only) and a word-wrap toggle switches its white-space. The DOM is built
- *  imperatively (50k React elements would be pathological) and filled
- *  progressively by the controller — React just mounts the empty scroll column,
- *  keyed on content.seq so a new file remounts fresh. */
+/** The CODE/TEXT body: a read-only CodeMirror editor. CM is lazy-loaded on the
+ *  first text-file open (see loadCM); React mounts an empty host and the effect
+ *  builds the EditorView once the modules resolve, keyed on content.seq so a new
+ *  file remounts fresh. While CM loads (a beat on the very first open) the body
+ *  shows nothing — the modules resolve in a few ms after the import is warm. */
 function CodeBody() {
     const { useRef, useEffect } = React;
-    const bodyRef = useRef(null as HTMLElement | null);
+    const hostRef = useRef(null as HTMLElement | null);
     useEffect(() => {
-        const b = bodyRef.current;
-        if (!b) return;
-        const ctrl = buildCodeController(b);
-        // restore find if it was open for this file (e.g. cache return), else
-        // restore the saved scroll once the rows exist.
-        if (codeView.findOpen && codeView.findQuery) ctrl.rebuildFind(codeView.findQuery);
-        else consumePendingScroll();
+        const host = hostRef.current;
+        if (!host) return;
+        let ctrl: CodeController | null = null;
+        let cancelled = false;
+        loadCM().then(mods => {
+            if (cancelled || !host.isConnected) return;
+            ctrl = buildCmController(host, mods);
+            // restore find if it was open for this file (e.g. cache return), else
+            // restore the saved scroll once the editor exists.
+            if (codeView.findOpen && codeView.findQuery) ctrl.rebuildFind(codeView.findQuery);
+            else consumePendingScroll();
+        });
         return () => {
-            ctrl.teardown();
-            if (codeCtrl === ctrl) codeCtrl = null;
+            cancelled = true;
+            ctrl?.teardown();
+            if (ctrl && codeCtrl === ctrl) codeCtrl = null;
         };
     }, [content.seq]);
-    return React.createElement(
-        "div",
-        {
-            key: content.seq,
-            className: "dockview-code-scroll" + (codeView.wrap ? " dockview-code-wrap" : ""),
-            // focusable so a click into the code body gives the panel keyboard
-            // focus — Ctrl+F / find keys are gated on that focus (never on hover).
-            tabIndex: 0
-        },
-        React.createElement("div", {
-            ref: bodyRef,
-            className: `dockview-code-pre dockview-code hljs language-${content.codeLang}`
-        })
-    );
+    return React.createElement("div", {
+        key: content.seq,
+        ref: hostRef,
+        className: "dockview-cm",
+        // focusable so a click into the code body gives the panel keyboard focus —
+        // Ctrl+F / find keys are gated on that focus (never on hover). CM's own
+        // content is focusable too; this wraps it for the gate.
+        tabIndex: 0
+    });
 }
 
 /** The CODE find bar = the generic FindBar wired to the code view-state. */
