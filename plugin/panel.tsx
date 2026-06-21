@@ -6277,7 +6277,10 @@ function DockPanel() {
                 },
                 React.createElement(
                     "div",
-                    { className: `${CLS.upper} dockview-header-upper` },
+                    {
+                        className: `${CLS.upper} dockview-header-upper`
+                            + (windows.length >= 2 ? " dockview-header-upper--tabs" : "")
+                    },
                     React.createElement(
                         "div",
                         {

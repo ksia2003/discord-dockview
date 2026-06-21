@@ -164,14 +164,15 @@
    separate row: they live INSIDE the existing header top row, occupying its
    icon/name slot, shown ONLY when ≥2 windows exist (a lone window renders the
    plain icon+title instead, so the single-window top row is byte-identical to
-   before — NO tab chrome, NO highlight).
+   before — NO tab chrome, NO underline).
 
-   FLAT, not boxed: a tab is just [glyph][name][controls] with a transparent
-   background — no hard border, no pill outline, no heavy filled box. The ACTIVE
-   tab gets a SUBTLE rounded background highlight using Discord's selected-list-
-   item token (--background-modifier-selected — the look of a selected channel /
-   DM / member-list row), NOT a bordered box. Inactive tabs = plain, slightly
-   dimmer text, transparent bg; hover = a faint bg.
+   FLAT UNDERLINE TABS (Discord user-profile-popout TabBar pattern): a tab is
+   just [glyph][name][controls] with a transparent background, occupying the
+   FULL header-row height — NO box, NO border, NO pill, NO rounded background
+   fill on any tab. The ACTIVE tab is marked by brighter text + a lit icon + a
+   thin underline bar pinned to the BOTTOM edge of the header row (the exact
+   Discord profile-tab indicator). Inactive tabs = muted text, no underline,
+   transparent bg; hover = a faint brighten only (no bg fill).
 
    Each tab carries its OWN ⋯/✕: the active tab shows both inline; an inactive
    tab shows a ✕ on hover only. There is NO shared far-right cluster when tabs
@@ -181,17 +182,23 @@
     flex: 1 1 auto;
     min-width: 0;
     display: flex;
-    align-items: center;
-    gap: 2px;
+    align-items: stretch; /* tabs fill the full row height (underline at bottom) */
+    gap: 0;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none; /* the tab row never shows a bar (it's chrome) */
 }
 .dockview-tabs::-webkit-scrollbar { height: 0; width: 0; }
 /* When the slot carries tabs (not the plain icon+title), it must NOT impose the
-   centred icon/title layout — let the scrollable tab row own the full slot. */
-.dockview-header .dockview-header-children--tabs {
+   centred icon/title layout — let the scrollable tab row own the full slot, and
+   stretch the slot to the full header-row height so each full-height tab reaches
+   the row's bottom edge (where the active underline bar sits). The extra
+   `.dockview-header-upper--tabs` qualifier raises specificity above the later base
+   `.dockview-header .dockview-header-children { align-items: center }` rule, which
+   would otherwise re-centre the slot and shrink it back off the row bottom. */
+.dockview-header .dockview-header-upper--tabs .dockview-header-children--tabs {
     align-items: stretch;
+    align-self: stretch;
     overflow: hidden;
 }
 .dockview-tab {
@@ -201,33 +208,46 @@
     gap: 6px;
     min-width: 0;
     max-width: 200px;
-    height: 30px;
-    padding: 0 4px 0 8px;
-    /* The radius shapes the active highlight / hover bg into a rounded selected-
-       item pill, NOT a boxed border — there is no border on a tab. */
-    border-radius: 4px;
+    height: 100%; /* full header-row height — content not inset into a sub-row box */
+    padding: 0 6px 0 10px;
+    position: relative; /* anchors the active underline bar */
+    /* NO border-radius / NO background: tabs are flat text, never a boxed pill. */
     color: var(--interactive-normal, #b5bac1);
     background: transparent;
     cursor: pointer;
     user-select: none;
-    transition: background-color 0.12s ease, color 0.12s ease;
+    transition: color 0.12s ease;
 }
-/* Inactive tab hover: a faint bg only (the resting strip stays flat). */
+/* Inactive tab hover: brighten the text only — the resting strip stays flat,
+   no background fill (underline-tab grammar, not a hover box). */
 .dockview-tab:not(.dockview-tab-active):hover {
-    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.06));
     color: var(--interactive-hover, #dbdee1);
 }
-/* ACTIVE tab: Discord's selected-list-item highlight — the low-contrast rounded
-   background a selected channel/DM/member-list row carries (--background-modifier-
-   selected), plus brightened text. A subtle highlight, NOT a bordered/filled box. */
-.dockview-tab-active,
-.dockview-tab-active:hover {
-    background: var(--background-modifier-selected, rgba(255, 255, 255, 0.08));
+/* ACTIVE tab: brighter/bolder text + lit icon + a thin underline bar at the
+   bottom edge of the header row (Discord profile-popout TabBar indicator). NO
+   background fill, NO border, NO box. The bar uses Discord's active-interactive
+   (near-white) colour and spans the tab's text/icon span (inset past the padding),
+   matching the mockup's Option B. */
+.dockview-tab-active {
     color: var(--text-strong, #f2f3f5);
+}
+.dockview-tab-active::after {
+    content: "";
+    position: absolute;
+    left: 10px;
+    right: 6px;
+    bottom: 0;
+    height: 2px;
+    border-radius: 2px 2px 0 0;
+    background: var(--interactive-active, #f2f3f5);
+    pointer-events: none;
 }
 .dockview-tab-icon {
     flex: 0 0 auto;
-    opacity: 0.9;
+    opacity: 0.65; /* inactive: muted/dimmed icon */
+}
+.dockview-tab-active .dockview-tab-icon {
+    opacity: 1; /* active: lit icon */
 }
 .dockview-tab-name {
     flex: 1 1 auto;
@@ -309,6 +329,21 @@
     height: 48px;
     padding: 8px 8px 8px 16px;
     box-sizing: border-box;
+}
+/* In multi-window (tabs) mode the underline tabs fill the FULL row height and the
+   active underline bar pins to the row's bottom edge (flush with the divider to
+   the second row). The single-window centred layout keeps its 8px bottom padding;
+   the tabs layout zeroes the upper row's vertical padding so the full-height tab
+   reaches the row bottom (left inset stays so the first tab aligns with the title).
+   Single-window headers never get this class, so the lone-window row is unchanged.
+   The full `.dockview-header.dockview-header--tworow` prefix matches the specificity
+   of the height/padding rule above so this vertical-padding override actually wins.
+   The bare `.dockview-header-upper--tabs` covers the rare non-tworow multi-window
+   case (active window has no second row, e.g. an unknown type). */
+.dockview-header-upper--tabs,
+.dockview-header.dockview-header--tworow .dockview-header-upper--tabs {
+    padding-top: 0;
+    padding-bottom: 0;
 }
 .dockview-header-upper {
     display: flex;
