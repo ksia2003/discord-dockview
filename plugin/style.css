@@ -255,7 +255,12 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-size: 13px;
+    /* Font PARITY with the single-window header title (.dockview-title, which
+       inherits Discord's `text-md/medium` = 16px / weight 500): a tab's filename
+       must read at the SAME size+weight as the pre-tab header — the active tab is
+       distinguished by brightness + the underline, NOT by a smaller font. Long
+       names ellipsise (above) and the strip h-scrolls; we never shrink to fit. */
+    font-size: 16px;
     font-weight: 500;
 }
 /* Per-tab control (⋯ / ✕): a flat ghost icon button (rule 5/10 — no border, no
