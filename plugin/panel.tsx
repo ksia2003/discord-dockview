@@ -282,7 +282,7 @@ async function loadPersistedState(): Promise<void> {
 // default, with a header toggle back to the RAW text (which reuses the code
 // viewer over the same content.code). The grid is parsed lazily from content.code
 // on mount, so the cache stays text-only (no parsed-rows payload to keep alive).
-type ContentType = "html" | "pdf" | "code" | "markdown" | "image" | "unknown" | "csv";
+type ContentType = "html" | "pdf" | "code" | "markdown" | "image" | "unknown" | "csv" | "mcpapp";
 
 interface PdfState {
     doc: any | null; // pdfjs PDFDocumentProxy
@@ -351,6 +351,7 @@ interface PdfViewState {
     findActive: number; // 1-based index of the active match (0 = none)
     findCase: boolean; // case-sensitive toggle (false = case-insensitive, the default)
 }
+interface McpAppViewState { appId: string | null; }
 interface DockWindow {
     // stable identity within the windows[] collection (tab key, switch target).
     id: string;
@@ -376,6 +377,7 @@ interface DockWindow {
     csvView: CsvViewState;
     editView: EditViewState;
     pdfView: PdfViewState;
+    mcpView: McpAppViewState;
     // the descriptor currently shown in the panel (so we can save it on switch)
     activeDescriptor: ChannelDescriptor | null;
     // the content-cache key this window is currently mirroring (null = none)
@@ -462,6 +464,7 @@ function makeWindow(opts: { pinned: boolean; ownerChannelId: string | null }): D
             findActive: 0,
             findCase: false
         },
+        mcpView: { appId: null },
         activeDescriptor: null,
         activeCacheKey: null,
         isNewFile: false,
@@ -1870,6 +1873,22 @@ function loadHtml(opts: { name: string; html?: string | null; url?: string | nul
     }
 }
 
+/** MCP-app loader. Renders AI-pushed HTML in the sandboxed (allow-scripts ONLY)
+ *  iframe like an inline artifact, but stamps the host nonce so its inline scripts
+ *  run under CSP and records the app id so the postMessage bridge can route to it.
+ *  `token`/`entry` mirror the neighbouring loaders' signature (inline html isn't
+ *  cached, so `entry` is always null here). */
+function loadMcpApp(opts: { name: string; html?: string | null; id?: string | null }, token: number, entry: CacheEntry | null) {
+    resetPdf();
+    resetCode();
+    const html = opts.html || "";
+    const nonce = pageNonce();
+    activeWindow.content.html = html;
+    activeWindow.content.frameHtml = nonce ? injectNonce(html, nonce) : html;
+    activeWindow.content.loading = false;
+    activeWindow.mcpView.appId = opts.id ?? opts.name;
+}
+
 /** PDF loader: fetch -> ArrayBuffer -> pdf.js (main-thread worker). On success
  *  the doc is stored in `entry` (the cache owns it); a stale resolve (token !=
  *  loadSeq) destroys the freshly-built doc to avoid a leak. */
@@ -2426,7 +2445,7 @@ function wrapMarkdownDoc(bodyHtml: string, hasMath: boolean): string {
  *  (channel return). It picks the renderer, hits/populates the cache, and bumps
  *  the load token. It does NOT touch open-state / channel bookkeeping — the
  *  callers do that around it. */
-function showContent(opts: { name: string; html?: string | null; url?: string | null; type: ContentType; noCache?: boolean }): "noop" | "cache" | "fetch" {
+function showContent(opts: { name: string; html?: string | null; url?: string | null; type: ContentType; noCache?: boolean; id?: string | null }): "noop" | "cache" | "fetch" {
     const name = opts.name || "file";
     const type = opts.type;
     const url = opts.url ?? null;
@@ -2492,6 +2511,7 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
     else if (type === "csv") loadCsv(opts, token, entry);
     else if (type === "markdown") loadMarkdown(opts, token, entry);
     else if (type === "unknown") loadUnknown(opts, token, entry);
+    else if (type === "mcpapp") loadMcpApp(opts, token, entry);
     else loadHtml(opts, token, entry);
 
     // Inline-html artifacts (no url) can't be re-loaded by descriptor, so they
@@ -2505,19 +2525,27 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
  *  (no fetch, no re-render, no flicker); clicking a different file we've seen
  *  restores it instantly from cache (no fetch); only a genuinely new file
  *  fetches. The view-state of the file we're leaving is snapshotted first. */
-export function load(opts: { name: string; html?: string | null; url?: string | null; type?: ContentType; noCache?: boolean }) {
+export function load(opts: { name: string; html?: string | null; url?: string | null; type?: ContentType; noCache?: boolean; id?: string | null }) {
     // Opening a file always lands in the TRANSIENT window of the current channel
     // (created if none) and never overwrites a pinned tab — pin-driven tabs.
     focusTransientForOpen();
     // Viewing a real file ends any new-file session (the empty editable surface),
     // so the loaded file gets a fresh original baseline + the merge diff.
     setIsNewFile(false);
-    const result = showContent({ name: opts.name, html: opts.html, url: opts.url, type: detectType(opts), noCache: opts.noCache });
+    const result = showContent({ name: opts.name, html: opts.html, url: opts.url, type: detectType(opts), noCache: opts.noCache, id: opts.id });
 
     // Open FIRST, then persist — so the saved per-channel state records open:true.
     openPanelChrome();
     // A no-op didn't change the body; everything else needs a render.
     if (result !== "noop") forceRender?.();
+}
+
+/** Render an AI-pushed MCP app: a sandboxed HTML widget driven over the bridge.
+ *  Routes through load() (which focuses the transient window, opens the chrome and
+ *  re-renders) with the mcpapp type; `id` is threaded through so loadMcpApp can key
+ *  the postMessage registry by it. */
+export function renderMcpApp({ id, html }: { id: string; html: string }) {
+    load({ name: id, html, type: "mcpapp", id });
 }
 
 /** Make the ACTIVE window the current channel's TRANSIENT window, ready to take a
@@ -2900,6 +2928,13 @@ function findChat(inner: HTMLElement): HTMLElement | null {
  *  kept mounted-but-hidden while we wait so a slow-but-fine artifact still shows
  *  the instant it loads (we just clear the timer). */
 const IFRAME_LOAD_TIMEOUT = 8000;
+
+// Live registry of mounted MCP-app iframe windows, keyed by app id. The bridge's
+// host→frame posts (`toframe`) look the contentWindow up here, and the frame→host
+// `__dockViewMcp` forwarding scans it to find which app owns an event.source. A
+// plain Map literal is a safe module-top value (no lazy proxy / TDZ involved).
+const mcpFrames = new Map<string, Window>();
+
 function HtmlBody() {
     const { useRef, useState, useEffect } = React;
     // "loading" until the iframe fires load; "ok" once it does; "failed" if the
@@ -2962,6 +2997,46 @@ function HtmlBody() {
 /** Body factory for the html/markdown iframe path (keeps the dispatcher tidy). */
 function renderHtmlBody() {
     return React.createElement(HtmlBody, { key: activeWindow.content.seq });
+}
+
+/** The MCP-app body: the AI-pushed HTML widget in a HARD-sandboxed iframe (sandbox
+ *  is "allow-scripts" ONLY — NO allow-same-origin, so the frame is a null origin
+ *  and can't reach the host). On mount we register the frame's contentWindow in the
+ *  module `mcpFrames` registry keyed by the current appId so the bridge can post to
+ *  it (`toframe`) and attribute its `__dockViewMcp` posts back (frame→host); the
+ *  cleanup drops it. */
+function McpAppBody() {
+    const { useRef, useEffect } = React;
+    const ref = useRef(null as HTMLIFrameElement | null);
+
+    useEffect(() => {
+        const appId = activeWindow.mcpView.appId;
+        const win = ref.current?.contentWindow;
+        if (appId && win) mcpFrames.set(appId, win);
+        return () => { if (appId) mcpFrames.delete(appId); };
+    }, []);
+
+    const onLoad = () => {
+        // re-register on (re)load: the contentWindow may be replaced when srcDoc
+        // parses, so keep the registry pointing at the live window.
+        const appId = activeWindow.mcpView.appId;
+        const win = ref.current?.contentWindow;
+        if (appId && win) mcpFrames.set(appId, win);
+    };
+
+    return React.createElement("iframe", {
+        key: "frame",
+        className: "dockview-frame",
+        srcDoc: activeWindow.content.frameHtml,
+        sandbox: "allow-scripts",
+        ref,
+        onLoad
+    });
+}
+
+/** Body factory for the MCP-app iframe path (keeps the dispatcher tidy). */
+function renderMcpAppBody() {
+    return React.createElement(McpAppBody, { key: activeWindow.content.seq });
 }
 
 /** pdf.js's own pixel-quantization helpers (ported verbatim from the viewer's
@@ -5372,6 +5447,12 @@ function renderBody() {
         }
         return renderUnsupportedBody();
     }
+    if (activeWindow.content.type === "mcpapp") {
+        if (activeWindow.content.loading || activeWindow.content.frameHtml == null) {
+            return React.createElement(LoadingBody, null);
+        }
+        return renderMcpAppBody();
+    }
     // markdown + .artifact (html) share the iframe path in VIEW mode. In EDIT mode
     // the body SWITCHES to an editable CM over the source (raw md / html source) —
     // mirroring the CSV Grid↔Raw body swap (toggleEditMode re-renders on the way
@@ -6937,6 +7018,11 @@ let heartbeat: any = null;
 let onKeyDown: ((e: KeyboardEvent) => void) | null = null;
 let onResize: (() => void) | null = null;
 let onMessage: ((e: MessageEvent) => void) | null = null;
+// MCP bridge WebSocket + its single pending reconnect timer (lazy — never opened
+// at module eval; startMcpClient() opens it from startPanel, stopMcpClient() tears
+// it down from stopPanel).
+let mcpSocket: WebSocket | null = null;
+let mcpReconnect: any = null;
 
 /** Resolve the currently-selected channel id (store first, URL fallback). */
 export function getCurrentChannelId(): string | null {
@@ -6949,6 +7035,61 @@ export function getCurrentChannelId(): string | null {
     }
     const m = /\/channels\/[^/]+\/(\d+)/.exec(location.pathname);
     return m ? m[1] : null;
+}
+
+/** Open (or re-open) the MCP bridge WebSocket. Reads the connect token from
+ *  localStorage AT CONNECT TIME (never at module eval); with no token we just log
+ *  and stay disconnected. Sends the hello handshake on open, routes `render` to
+ *  renderMcpApp and `toframe` into the addressed iframe, and schedules a single
+ *  reconnect on close/error (unless we're shutting down). Guards against a double
+ *  connect when a socket is already OPEN/CONNECTING. */
+function startMcpClient() {
+    if (!active) return; // don't reconnect after stopPanel
+    if (mcpSocket && (mcpSocket.readyState === WebSocket.OPEN || mcpSocket.readyState === WebSocket.CONNECTING)) return;
+    let token: string | null = null;
+    try { token = localStorage.getItem("dockview_mcp_token"); } catch { /* ignore */ }
+    if (!token) {
+        console.debug("[dockview] mcp: no dockview_mcp_token — not connecting");
+        return;
+    }
+    let sock: WebSocket;
+    try {
+        sock = new WebSocket("ws://127.0.0.1:9820");
+    } catch (e) {
+        console.debug("[dockview] mcp: connect failed", e);
+        return;
+    }
+    mcpSocket = sock;
+    sock.addEventListener("open", () => {
+        try { sock.send(JSON.stringify({ type: "hello", token })); } catch { /* ignore */ }
+    });
+    sock.addEventListener("message", (ev: MessageEvent) => {
+        let msg: any;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        if (!msg || typeof msg !== "object") return;
+        if (msg.type === "render" && msg.app) {
+            try { renderMcpApp({ id: msg.app.id, html: msg.app.html }); } catch { /* ignore */ }
+        } else if (msg.type === "toframe") {
+            const win = mcpFrames.get(msg.appId);
+            try { win?.postMessage({ __dockViewHost: true, payload: msg.payload }, "*"); } catch { /* ignore */ }
+        }
+    });
+    const reschedule = () => {
+        if (mcpSocket === sock) mcpSocket = null;
+        if (!active) return; // shutting down — no reconnect
+        clearTimeout(mcpReconnect);
+        mcpReconnect = setTimeout(startMcpClient, 3000);
+    };
+    sock.addEventListener("close", reschedule);
+    sock.addEventListener("error", reschedule);
+}
+
+/** Tear the MCP bridge down: cancel any pending reconnect and close the socket. */
+function stopMcpClient() {
+    clearTimeout(mcpReconnect);
+    mcpReconnect = null;
+    try { mcpSocket?.close(); } catch { /* ignore */ }
+    mcpSocket = null;
 }
 
 /** Start the panel: heartbeat, observer, hotkey + resize listeners. */
@@ -7085,9 +7226,28 @@ export function startPanel() {
         const d = e?.data;
         if (d && typeof d === "object" && typeof d.__dockViewOpenLink === "string") {
             openExternalLink(d.__dockViewOpenLink);
+            return;
+        }
+        // MCP-app frame → host bridge. The sandbox has no allow-same-origin, so the
+        // origin is the string "null"; identify the message by its __dockViewMcp flag
+        // AND by matching event.source to a registered app iframe contentWindow, then
+        // forward it up the bridge socket as a typed event.
+        if (d && typeof d === "object" && d.__dockViewMcp) {
+            let appId: string | null = null;
+            for (const [id, win] of mcpFrames) {
+                if (win === e.source) { appId = id; break; }
+            }
+            if (appId && mcpSocket && mcpSocket.readyState === WebSocket.OPEN) {
+                try {
+                    mcpSocket.send(JSON.stringify({ type: "event", appId, method: d.method, params: d.params }));
+                } catch { /* ignore */ }
+            }
         }
     };
     window.addEventListener("message", onMessage);
+
+    // Open the MCP bridge (no-op when no token is set in localStorage).
+    startMcpClient();
 
     // Mount immediately if a chat layout is already present.
     if (ensureHost()) attachObserver();
@@ -7116,6 +7276,10 @@ export function stopPanel() {
         window.removeEventListener("message", onMessage);
         onMessage = null;
     }
+    // 2b. MCP bridge socket + its pending reconnect (active already false above,
+    //     so no callback re-opens it).
+    stopMcpClient();
+    mcpFrames.clear();
     // 3. observer + its debounce
     observer?.disconnect();
     observer = null;
@@ -7205,7 +7369,9 @@ export function exposeDebug() {
         // 2b editable-surface debug surface: the mode toggles + the buffer so CDP
         // can drive edit-mode + assert the temporary buffer / re-render loop.
         get editView() { return activeWindow.editView; }, get csvView() { return activeWindow.csvView; }, toggleEditMode, toggleCsvMode, toggleCodeFind,
-        get editBuffer() { return editBufferText(); }, get codeCtrl() { return codeCtrl; }
+        get editBuffer() { return editBufferText(); }, get codeCtrl() { return codeCtrl; },
+        // MCP app surface debug: render an AI-pushed widget + drive/inspect the bridge.
+        renderMcpApp, startMcpClient, stopMcpClient, get mcpView() { return activeWindow.mcpView; }
     };
 }
 export function unexposeDebug() {
