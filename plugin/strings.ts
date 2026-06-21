@@ -104,7 +104,10 @@ export const STRINGS = {
     // --- image-only controls ------------------------------------------------
     image: {
         enterFullscreen: "Fullscreen (F)",
-        exitFullscreen: "Exit fullscreen (Esc)"
+        exitFullscreen: "Exit fullscreen (Esc)",
+        // prev/next step through the channel's images in order (Discord lightbox)
+        prevImage: "Previous image (←)",
+        nextImage: "Next image (→)"
     },
 
     // --- PDF header controls -------------------------------------------------

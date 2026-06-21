@@ -954,6 +954,38 @@
 }
 .dockview-lightbox-close svg { display: block; }
 
+/* Prev/next image steppers — round buttons centred on the left/right edges, the
+   same affordance as the close button. At a true list end / while loading they
+   keep their slot but dim + go non-interactive (grammar rule 9). */
+.dockview-lightbox-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    color: var(--white-500, #ffffff);
+    background: rgba(0, 0, 0, 0.4);
+    transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+.dockview-lightbox-nav-prev { left: 16px; }
+.dockview-lightbox-nav-next { right: 16px; }
+.dockview-lightbox-nav:hover { background: rgba(0, 0, 0, 0.7); }
+.dockview-lightbox-nav svg { display: block; }
+.dockview-lightbox-nav-disabled,
+.dockview-lightbox-nav-disabled:hover {
+    opacity: 0.3;
+    cursor: default;
+    background: rgba(0, 0, 0, 0.4);
+}
+
 /* Header ⋯ / close buttons centre their SVG inside the native 32px iconWrapper
    hover target. */
 .dockview-more,

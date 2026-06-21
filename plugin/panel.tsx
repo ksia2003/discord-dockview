@@ -15,7 +15,7 @@
 import * as DataStore from "@api/DataStore";
 import { getCurrentChannel } from "@utils/discord";
 import { findByProps, findCssClasses } from "@webpack";
-import { Button, ChannelStore, ContextMenuApi, createRoot, DraftType, Menu, React, SelectedChannelStore, UploadHandler } from "@webpack/common";
+import { Button, ChannelStore, ContextMenuApi, createRoot, DraftType, Menu, MessageActions, MessageStore, React, SelectedChannelStore, UploadHandler } from "@webpack/common";
 import type { Root } from "react-dom/client";
 
 // pdf.js — bundled into the renderer by esbuild. We ALSO import the worker
@@ -599,6 +599,172 @@ interface ImgControls {
 }
 let imgControls: ImgControls | null = null;
 
+// --- channel image gallery (prev/next image nav) ----------------------------
+// Discord has NO gallery store; images come from MessageStore. We build an
+// ORDERED list (oldest→newest, exactly like Discord's native lightbox) of every
+// image attachment in the channel currently being viewed, then step prev/next
+// through it. The list is rebuilt from MessageStore.getMessages(channelId) on the
+// first nav request for a channel (and after a load-more fetch), keyed by channel
+// id so a channel switch invalidates it. Each entry's url is normalised through
+// galleryFullResUrl so it matches the full-res url the panel loaded the image
+// under (embed.ts loads images via the same normalisation). At a list end, if the
+// MessageCollection reports more messages before/after, we fetchMessages() to
+// extend it; the prev/next button DIMS (never vanishes — grammar rule 9) at a
+// true end (no more to fetch) and while a load-more is in flight.
+interface GalleryEntry { messageId: string; url: string; name: string; }
+const gallery = {
+    channelId: null as string | null,
+    items: [] as GalleryEntry[],
+    hasMoreBefore: false,
+    hasMoreAfter: false,
+    loading: false // a fetchMessages() is in flight (dim the stepping button)
+};
+
+/** Last-path-segment filename of a url (gallery fallback when an attachment has
+ *  no `filename`). Decoded; query/hash dropped. */
+function galleryNameFromUrl(url: string): string {
+    let path = url;
+    try { path = new URL(url, location.href).pathname; } catch { /* keep raw */ }
+    let base = path.split("/").pop() || "image";
+    try { base = decodeURIComponent(base); } catch { /* keep raw */ }
+    return base || "image";
+}
+
+/** Build the ordered image list for `channelId` from MessageStore. Returns the
+ *  entries oldest→newest plus whether the collection has more at either end. */
+function buildGallery(channelId: string): { items: GalleryEntry[]; hasMoreBefore: boolean; hasMoreAfter: boolean } {
+    const items: GalleryEntry[] = [];
+    let hasMoreBefore = false;
+    let hasMoreAfter = false;
+    try {
+        const coll = MessageStore.getMessages(channelId);
+        if (coll) {
+            hasMoreBefore = !!coll.hasMoreBefore;
+            hasMoreAfter = !!coll.hasMoreAfter;
+            const arr: any[] = typeof coll.toArray === "function" ? coll.toArray() : (Array.isArray(coll) ? coll : []);
+            for (const msg of arr) {
+                const atts = msg && msg.attachments;
+                if (!atts || !atts.length) continue;
+                for (const a of atts) {
+                    const raw = a && (a.url || a.proxy_url);
+                    if (!raw) continue;
+                    const isImg = (typeof a.content_type === "string" && a.content_type.startsWith("image/"))
+                        || GALLERY_IMG_EXT_RE.test(String(raw));
+                    if (!isImg) continue;
+                    const url = galleryFullResUrl(String(raw));
+                    const name = (a.filename as string) || galleryNameFromUrl(url);
+                    items.push({ messageId: String(msg.id), url, name });
+                }
+            }
+        }
+    } catch {
+        /* MessageStore unavailable / shape changed — empty gallery (nav dims) */
+    }
+    return { items, hasMoreBefore, hasMoreAfter };
+}
+
+/** Refresh `gallery` for the channel the panel is in (idempotent per call). */
+function refreshGallery() {
+    const channelId = getCurrentChannelId();
+    if (!channelId) { gallery.channelId = null; gallery.items = []; gallery.hasMoreBefore = gallery.hasMoreAfter = false; return; }
+    const built = buildGallery(channelId);
+    gallery.channelId = channelId;
+    gallery.items = built.items;
+    gallery.hasMoreBefore = built.hasMoreBefore;
+    gallery.hasMoreAfter = built.hasMoreAfter;
+}
+
+/** Index of the image CURRENTLY shown in the panel within the gallery list, or
+ *  -1 if it isn't found (url mismatch / different channel). Matches on the
+ *  normalised url the panel loaded. */
+function galleryCurrentIndex(): number {
+    if (content.type !== "image" || !content.url) return -1;
+    const cur = galleryFullResUrl(content.url);
+    for (let i = 0; i < gallery.items.length; i++) {
+        if (gallery.items[i].url === cur) return i;
+    }
+    return -1;
+}
+
+/** Ensure the gallery is built for the current channel and the current image is
+ *  located in it; rebuild if the channel changed or the image isn't found yet
+ *  (e.g. first nav after opening an image). Returns the current index. */
+function ensureGallery(): number {
+    const channelId = getCurrentChannelId();
+    if (channelId !== gallery.channelId || galleryCurrentIndex() < 0) refreshGallery();
+    return galleryCurrentIndex();
+}
+
+/** Fetch one older/newer page into MessageStore, then rebuild the gallery. `dir`
+ *  -1 = older (before the oldest loaded message), +1 = newer (after the newest).
+ *  After it resolves we re-read getMessages and step onto the neighbour that is
+ *  now in range. Best-effort: a failure just clears the loading flag. */
+function galleryLoadMore(dir: -1 | 1) {
+    const channelId = gallery.channelId || getCurrentChannelId();
+    if (!channelId || gallery.loading) return;
+    if (dir < 0 && !gallery.hasMoreBefore) return;
+    if (dir > 0 && !gallery.hasMoreAfter) return;
+    const items = gallery.items;
+    if (!items.length) return;
+    const anchor = dir < 0 ? items[0].messageId : items[items.length - 1].messageId;
+    gallery.loading = true;
+    forceRender?.();
+    const arg: any = { channelId, limit: 50 };
+    if (dir < 0) arg.before = anchor; else arg.after = anchor;
+    let p: any;
+    try {
+        p = MessageActions.fetchMessages(arg);
+    } catch {
+        gallery.loading = false;
+        forceRender?.();
+        return;
+    }
+    Promise.resolve(p)
+        .catch(() => { /* ignore fetch error */ })
+        .then(() => {
+            gallery.loading = false;
+            refreshGallery();
+            // Step onto the neighbour now that the page is loaded. The current
+            // image kept its place in the rebuilt list; move one in `dir`.
+            const idx = galleryCurrentIndex();
+            const target = idx + dir;
+            if (idx >= 0 && target >= 0 && target < gallery.items.length) {
+                const next = gallery.items[target];
+                load({ name: next.name, url: next.url, type: "image" });
+            } else {
+                forceRender?.();
+            }
+        });
+}
+
+/** Step to the previous/next image in the channel's ordered gallery. `dir` -1 =
+ *  previous (older), +1 = next (newer). If stepping past a loaded end and there
+ *  are more messages to fetch, load them first (then land on the neighbour). */
+function galleryStep(dir: -1 | 1) {
+    const idx = ensureGallery();
+    if (idx < 0) return;
+    const target = idx + dir;
+    if (target >= 0 && target < gallery.items.length) {
+        const next = gallery.items[target];
+        load({ name: next.name, url: next.url, type: "image" });
+        return;
+    }
+    // Past the loaded end → try to fetch more in that direction.
+    galleryLoadMore(dir);
+}
+
+/** Can we step in `dir` (button enabled)? True when a neighbour is already loaded
+ *  OR the collection has more to fetch in that direction. While a load-more is in
+ *  flight the button is disabled (dimmed) but kept in its slot (rule 9). */
+function galleryCanStep(dir: -1 | 1): boolean {
+    if (gallery.loading) return false;
+    const idx = galleryCurrentIndex();
+    if (idx < 0) return false;
+    const target = idx + dir;
+    if (target >= 0 && target < gallery.items.length) return true;
+    return dir < 0 ? gallery.hasMoreBefore : gallery.hasMoreAfter;
+}
+
 // --- code viewer view-state (find), shared with the toolbar -----------------
 // The find fields mirror pdfView's: the bar/keyboard drive them, the controller
 // (codeCtrl) reads them to drive the CodeMirror find decorations. Matching runs
@@ -798,6 +964,26 @@ const MD_EXT = new Set(["md", "markdown", "mdown", "mkd"]);
 // Extensions rendered as an <img> (fit-width) in the panel instead of opening
 // Discord's native lightbox.
 const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "apng", "avif"]);
+
+// Image-attachment matcher for the channel-image gallery list (prev/next nav).
+// Mirrors embed.ts's IMG_EXT_RE: an attachment counts as an image when its
+// content_type is image/* OR its url path carries an image extension.
+const GALLERY_IMG_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg|apng|avif)(\?|#|$)/i;
+
+/** Strip Discord's thumbnail resize params (keep the signed ex/is/hm CDN params)
+ *  so the gallery url matches the full-res url embed.ts loads on a chip click.
+ *  MUST stay in sync with embed.ts's fullResImageUrl — the gallery indexes by the
+ *  same normalised url the panel was loaded with, so a match locates the current
+ *  image in the list. */
+function galleryFullResUrl(raw: string): string {
+    try {
+        const u = new URL(raw, location.href);
+        ["width", "height", "format", "quality", "size", "passthrough", "animated"].forEach(p => u.searchParams.delete(p));
+        return u.toString();
+    } catch {
+        return raw;
+    }
+}
 
 // Dark-themed stylesheet injected into the markdown sandbox iframe.
 const MD_STYLE = `<style>
@@ -3597,16 +3783,21 @@ function ImageLightbox() {
 
     const close = () => { imgView.fullscreen = false; (forceRender ? forceRender() : bump((n: number) => n + 1)); };
 
-    // Esc closes the lightbox. Bound at capture on window so it fires even though
-    // the panel's own keydown handler only runs when the panel holds focus —
-    // here we always want Esc to dismiss the overlay first. stopPropagation keeps
-    // it from also hitting Discord's Esc handlers (close-modal, deselect, etc.).
+    // Esc closes the lightbox; ←/→ step prev/next through the channel gallery
+    // (Discord-lightbox parity). Bound at capture on window so it fires even
+    // though the panel's own keydown handler only runs when the panel holds focus
+    // — here we always want these to act while the overlay is up. stopPropagation
+    // keeps Esc from also hitting Discord's Esc handlers (close-modal, etc.).
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.key === "Escape") {
                 e.preventDefault();
                 e.stopPropagation();
                 close();
+            } else if (e.key === "ArrowLeft") {
+                if (galleryCanStep(-1)) { e.preventDefault(); e.stopPropagation(); galleryStep(-1); }
+            } else if (e.key === "ArrowRight") {
+                if (galleryCanStep(1)) { e.preventDefault(); e.stopPropagation(); galleryStep(1); }
             }
         };
         window.addEventListener("keydown", onKey, true);
@@ -3644,6 +3835,10 @@ function ImageLightbox() {
                 })
             )
         ),
+        // prev/next channel-image steppers, on the left/right edges (Discord
+        // lightbox grammar). Disabled (dimmed) at a true end / while loading.
+        lightboxNavBtn("prev", STRINGS.image.prevImage, IMG_PREV_PATH, () => galleryStep(-1), !galleryCanStep(-1)),
+        lightboxNavBtn("next", STRINGS.image.nextImage, IMG_NEXT_PATH, () => galleryStep(1), !galleryCanStep(1)),
         React.createElement(
             "div",
             {
@@ -3663,6 +3858,32 @@ function ImageLightbox() {
                     transform: `translate(${imgView.tx}px, ${imgView.ty}px) scale(${imgView.scale})`
                 }
             })
+        )
+    );
+}
+
+/** A round edge-anchored prev/next button for the fullscreen lightbox (matches
+ *  the close button's affordance). `side` "prev"|"next" positions it left/right;
+ *  `disabled` dims it (kept in place per grammar rule 9). */
+function lightboxNavBtn(side: "prev" | "next", label: string, path: string, onClick: () => void, disabled: boolean) {
+    return React.createElement(
+        "button",
+        {
+            key: "lb-" + side,
+            type: "button",
+            className: "dockview-lightbox-nav dockview-lightbox-nav-" + side + (disabled ? " dockview-lightbox-nav-disabled" : ""),
+            "aria-label": label,
+            "aria-disabled": disabled || undefined,
+            disabled,
+            title: label,
+            onClick: disabled ? undefined : onClick,
+            // don't let a nav click reach the backdrop (which would close).
+            onMouseDown: (e: any) => e.stopPropagation()
+        },
+        React.createElement(
+            "svg",
+            { width: 28, height: 28, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+            React.createElement("path", { fill: "currentColor", d: path })
         )
     );
 }
@@ -4802,13 +5023,31 @@ function PdfHeaderControls() {
     );
 }
 
-/** Image header controls: the shared zoom group + a reset-to-fit. */
+// Chevron glyphs for the prev/next image stepper (Discord-style ghost icons).
+const IMG_PREV_PATH = "M15.3 18.7a1 1 0 0 1-1.4 0l-6-6a1 1 0 0 1 0-1.4l6-6a1 1 0 1 1 1.4 1.4L10 12l5.3 5.3a1 1 0 0 1 0 1.4Z";
+const IMG_NEXT_PATH = "M8.7 5.3a1 1 0 0 1 1.4 0l6 6a1 1 0 0 1 0 1.4l-6 6a1 1 0 1 1-1.4-1.4L14 12 8.7 6.7a1 1 0 0 1 0-1.4Z";
+
+/** Image header controls: prev/next channel-image nav + the shared zoom group +
+ *  a reset-to-fit + fullscreen. The prev/next pair cycles through the channel's
+ *  images IN ORDER (oldest→newest), like Discord's native lightbox; at a true end
+ *  (no more to fetch) or while a load-more is in flight the button DIMS rather
+ *  than vanishing (grammar rule 9). */
 function ImageHeaderControls() {
     if (content.loading || content.error || !content.url) return null;
     const pct = Math.round(imgView.scale * 100);
     return React.createElement(
         React.Fragment,
         null,
+        // prev/next image stepper — highest priority (it's the headline image
+        // action), so it never collapses. Dim at a true end / while loading.
+        React.createElement(
+            "div",
+            { className: "dockview-tool-group" },
+            toolBtn("img-prev", STRINGS.image.prevImage, IMG_PREV_PATH,
+                () => galleryStep(-1), false, !galleryCanStep(-1)),
+            toolBtn("img-next", STRINGS.image.nextImage, IMG_NEXT_PATH,
+                () => galleryStep(1), false, !galleryCanStep(1))
+        ),
         zoomGroup("img", pct, () => imgControls?.zoomOut(), () => imgControls?.zoomIn()),
         React.createElement(
             "div",
@@ -6109,6 +6348,12 @@ export function startPanel() {
             // focused panel like the other single-key image shortcuts.
             e.preventDefault();
             imgControls.toggleFullscreen();
+        } else if (e.key === "ArrowLeft") {
+            // Step to the previous channel image (inline; the lightbox handles its
+            // own ←/→ at capture and stops propagation, so this is inline-only).
+            if (galleryCanStep(-1)) { e.preventDefault(); galleryStep(-1); }
+        } else if (e.key === "ArrowRight") {
+            if (galleryCanStep(1)) { e.preventDefault(); galleryStep(1); }
         }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -6212,6 +6457,9 @@ export function exposeDebug() {
         contentCache, get loadSeq() { return loadSeq; }, get activeCacheKey() { return activeCacheKey; },
         pdfView, get pdfControls() { return pdfControls; },
         imgView, get imgControls() { return imgControls; },
+        // image gallery (prev/next) debug surface: drive + assert the nav.
+        gallery, refreshGallery, galleryStep, galleryCanStep,
+        get galleryIndex() { return galleryCurrentIndex(); },
         get memberListShown() { return isMemberListShown(); },
         get memberListRestorePending() { return memberListRestorePending; },
         get profileSidebarShown() { return isUserProfileSidebarShown(); },
