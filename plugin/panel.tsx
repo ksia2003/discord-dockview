@@ -4603,18 +4603,26 @@ function renderBody() {
 // competing blurple. Controls collapse priority-low first at narrow width (CSS).
 // ---------------------------------------------------------------------------
 
-/** A small SVG toolbar button (square, hover bg) — shared by all tool types. */
-function toolBtn(key: string, label: string, path: string, onClick: () => void, active = false) {
+/** A small SVG toolbar button (square, hover bg) — shared by all tool types.
+ *  `disabled` keeps the button in its slot but dimmed + non-interactive (Discord
+ *  grammar rule 9: a control never disappears by mode; when inactive it renders
+ *  disabled, not removed). A disabled button drops its hover/active state, dims,
+ *  shows a default cursor, and no-ops on click. */
+function toolBtn(key: string, label: string, path: string, onClick: () => void, active = false, disabled = false) {
     return React.createElement(
         "button",
         {
             key,
             type: "button",
-            className: "dockview-tool-btn" + (active ? " dockview-tool-btn-active" : ""),
+            className: "dockview-tool-btn"
+                + (active && !disabled ? " dockview-tool-btn-active" : "")
+                + (disabled ? " dockview-tool-btn-disabled" : ""),
             "aria-label": label,
             title: label,
-            "aria-pressed": active || undefined,
-            onClick
+            "aria-pressed": (active && !disabled) || undefined,
+            "aria-disabled": disabled || undefined,
+            disabled,
+            onClick: disabled ? undefined : onClick
         },
         React.createElement(
             "svg",
@@ -4834,16 +4842,16 @@ function CsvHeaderControls() {
         } catch { fallbackCopy(text, done); }
     };
     const children: any[] = [];
-    // RAW-only: find trigger (collapse before the always-on Raw toggle / copy).
-    if (raw) {
-        children.push(React.createElement(
-            "div",
-            { key: "csv-find-grp", className: "dockview-tool-group dockview-collapse-mid" },
-            toolBtn("csv-find", STRINGS.code.find,
-                "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
-                () => toggleCodeFind(), codeView.findOpen)
-        ));
-    }
+    // Find trigger. Find runs over the raw CM body, so it is only ACTIVE in Raw
+    // mode; in Grid mode it stays in its slot but DISABLED (dimmed) rather than
+    // vanishing (grammar rule 9 — never appear/disappear by mode).
+    children.push(React.createElement(
+        "div",
+        { key: "csv-find-grp", className: "dockview-tool-group dockview-collapse-mid" },
+        toolBtn("csv-find", STRINGS.code.find,
+            "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
+            () => toggleCodeFind(), codeView.findOpen, !raw)
+    ));
     // Always: the Raw state-colour toggle (icon highlights when active) + copy.
     children.push(React.createElement(
         "div",
@@ -4878,17 +4886,19 @@ function EditTextHeaderControls(props: { mdMode: boolean }) {
         } catch { fallbackCopy(text, done); }
     };
     const children: any[] = [];
-    // EDIT-only: find + copy over the editable CM (the rendered iframe has neither).
-    if (editing) {
-        children.push(React.createElement(
-            "div",
-            { key: "edit-find-grp", className: "dockview-tool-group dockview-collapse-mid" },
-            toolBtn("edit-find", STRINGS.code.find,
-                "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
-                () => toggleCodeFind(), codeView.findOpen)
-        ));
-        children.push(copyBtn("edit-copy", STRINGS.code.copy, copied, copy));
-    }
+    // Find runs over the editable CM body, which only exists in EDIT mode; in
+    // RENDERED mode the body is the read-only iframe (no find target), so find
+    // stays in its slot DISABLED (dimmed) rather than vanishing (grammar rule 9).
+    children.push(React.createElement(
+        "div",
+        { key: "edit-find-grp", className: "dockview-tool-group dockview-collapse-mid" },
+        toolBtn("edit-find", STRINGS.code.find,
+            "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
+            () => toggleCodeFind(), codeView.findOpen, !editing)
+    ));
+    // Copy stays in its slot in both modes (it copies the source/buffer either way),
+    // so it never vanishes — no need to disable it by mode.
+    children.push(copyBtn("edit-copy", STRINGS.code.copy, copied, copy));
     // Always: the edit state-colour toggle (pencil highlights when editing).
     const enter = props.mdMode ? STRINGS.edit.enterEditMarkdown : STRINGS.edit.enterEditArtifact;
     const exit = props.mdMode ? STRINGS.edit.exitEditMarkdown : STRINGS.edit.exitEditArtifact;

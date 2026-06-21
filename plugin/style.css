@@ -1059,6 +1059,21 @@
     background: var(--background-modifier-selected, rgba(255, 255, 255, 0.12));
 }
 .dockview-tool-btn svg { display: block; }
+/* Disabled (dimmed) tool button: keeps its slot + icon but reads as unavailable —
+   Discord dims actions it can't perform right now (grammar rule 9: a control is
+   never removed by mode, only disabled). Dropped opacity, default cursor, and no
+   hover/active feedback; the click is a no-op (handler omitted in JS).
+   Doubled the class (.dockview-tool-btn.dockview-tool-btn-disabled, 0,2,0) so it
+   outranks Discord's global `.app__* button { cursor: pointer }` (0,1,1) — a
+   single-class rule loses to it and the disabled cursor wouldn't take. */
+.dockview-tool-btn.dockview-tool-btn-disabled,
+.dockview-tool-btn.dockview-tool-btn-disabled:hover,
+.dockview-tool-btn.dockview-tool-btn-disabled:active {
+    opacity: 0.35;
+    cursor: default;
+    background: transparent;
+    color: var(--interactive-normal, #b5bac1);
+}
 /* Zoom percentage readout between -/+ */
 .dockview-tool-pct {
     min-width: 44px;
