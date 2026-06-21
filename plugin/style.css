@@ -41,6 +41,38 @@
     display: block !important;
 }
 
+/* TWO-MODE width (mirrors Discord's native thread panel). DOCKED (default, no
+   class): the host is the in-flow flex spacer above — its inline flex/width push
+   and shrink the chat. FLOATING (.dockview-host--floating): when the WINDOW is
+   too narrow to dock the panel beside a min-width chat, JS takes the host OUT of
+   the flex row so the chat reclaims FULL width underneath, and the card overlays
+   from the content's right edge. position:absolute removes it from flow (chat
+   reflows to full width); right/top/bottom pin it to the content area; the inline
+   width (set by applyDockLayout, capped to leave a clickable chat sliver) is the
+   overlay width. A shadow reads it as a floating layer over the chat. The host
+   must be absolute against the PAGE-INNER content area, so that marker class is
+   made a positioning context while the dock is open (it only establishes a
+   containing block for our overlay; Discord's own descendants keep their own
+   positioned ancestors, so in-flow layout is unchanged). */
+html.dockview-open .dockview-page-inner {
+    position: relative;
+}
+#dockview-root.dockview-host--floating {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    height: auto;
+    z-index: 200;
+    box-shadow: var(--shadow-high, -8px 0 24px rgba(0, 0, 0, 0.36));
+}
+/* No resize handle while floating (native shows none in overlay mode). The card
+   wrapper still pins to the host (the rule below), so the card fills the overlay
+   width; only the 8px ew-resize grab bar is removed. */
+#dockview-root.dockview-host--floating .dockview-resize {
+    display: none;
+}
+
 /* Exclusive right-slot mutual exclusion. panel.tsx marks the competing native
    occupant (DM profile sidebar, native thread card, and its transition
    placeholder) while the dock is open. This avoids persistent `:has()` selectors:

@@ -95,6 +95,24 @@ const MIN_WIDTH = 360;
 const DEFAULT_WIDTH = 420;
 const MAX_WIDTH_FRAC = 0.6; // of window width
 
+// ---------------------------------------------------------------------------
+// TWO-MODE width behaviour (mirrors Discord's native thread panel). The dock has
+// a DOCKED (push) mode and a FLOATING (overlay) mode, auto-switched by how much
+// width the dock+chat share — so a wide persisted dock can never crush the chat
+// on a narrow window. The decision + clamp live in ONE place: applyDockLayout().
+//
+//   - CHAT_MIN_WIDTH: the chat's protected minimum. The docked dock is never
+//     applied wider than (content − this), so the message area keeps its min;
+//     when even DOCK_MIN_WIDTH can't fit beside it, the dock goes floating.
+//   - DOCK_MIN_WIDTH: the dock's own minimum while docked (the smallest push).
+//   - FLOAT_CHAT_SLIVER: while floating, leave at least this much chat visible/
+//     clickable behind the overlay (native floats a panel that doesn't quite
+//     cover the chat). The float width is capped to (content − this).
+// All tune-able: change here, nothing else.
+const CHAT_MIN_WIDTH = 420;
+const DOCK_MIN_WIDTH = 280;
+const FLOAT_CHAT_SLIVER = 48;
+
 // The dock width is a DOCK-LEVEL (global) property, NOT per-window: every tab is
 // the same dock chrome, so they all share ONE width. It lives in a single module
 // singleton (persisted to LS_WIDTH), and every window's `state.width` is a getter/
@@ -2880,6 +2898,24 @@ export function onChannelSelect(newId: string | null) {
 
 function clampWidth(w: number): number {
     return clampWidthRaw(w);
+}
+
+/** Clamp a width chosen by the LEFT-edge resize DRAG. Native clamps the drag so
+ *  the chat keeps its minimum (you can't drag a docked panel so wide the chat
+ *  collapses) — floating is reserved for a too-narrow WINDOW, not for dragging.
+ *  So: on top of the base clampWidth, cap the dragged width to leave the chat
+ *  ≥ CHAT_MIN_WIDTH while there's room to dock at all. When the window is already
+ *  too narrow to dock (floating mode), there is no resize handle, so this path
+ *  isn't reached then; the guard just keeps the value sane if it ever is. */
+function clampDockDrag(w: number): number {
+    let v = clampWidth(w);
+    const inner = findPageInner();
+    const avail = availableContentWidth(inner);
+    if (avail > 0) {
+        const maxDocked = avail - CHAT_MIN_WIDTH;
+        if (maxDocked >= DOCK_MIN_WIDTH) v = Math.min(v, maxDocked);
+    }
+    return v;
 }
 
 /** The PAGE INNER div = the page__'s child that directly contains chat_. */
@@ -6300,7 +6336,9 @@ function DockPanel() {
             rafId = 0;
             if (!resizing.current) return;
             const delta = startX - pendingX; // drag left edge: leftward = wider
-            const next = clampWidth(startWidth + delta);
+            // Clamp the drag so a docked panel can't grow past the chat's min
+            // (native clamps the drag; floating is for a too-narrow window only).
+            const next = clampDockDrag(startWidth + delta);
             if (next !== activeWindow.state.width) {
                 activeWindow.state.width = next;
                 applyHostWidth(); // direct inline-style write, no React
@@ -6328,7 +6366,7 @@ function DockPanel() {
             // Make sure the host reflects the final pointer position, then sync
             // React's width state ONCE (its [width] effect persists to LS).
             const delta = startX - pendingX;
-            const final = clampWidth(startWidth + delta);
+            const final = clampDockDrag(startWidth + delta);
             activeWindow.state.width = final;
             applyHostWidth();
             setWidth(final);
@@ -6907,10 +6945,8 @@ function applyOpenState() {
             // Drive open/closed via a class (display:block !important) instead of
             // inline display — Discord's layout code intermittently resets our
             // injected sibling's inline `display` to none, but it never beats the
-            // class rule. width/flex stay inline (Discord leaves those alone).
+            // class rule. width/flex/mode all come from applyDockLayout() (below).
             host.classList.add("dockview-open");
-            host.style.flex = `0 0 ${activeWindow.state.width}px`;
-            host.style.width = `${activeWindow.state.width}px`;
         }
         // Kept for compatibility with any older debug CSS; the current sidebar
         // exclusion is the targeted data attribute set by hideExclusiveRightSlot.
@@ -6919,17 +6955,87 @@ function applyOpenState() {
         if (host) host.classList.remove("dockview-open");
         document.documentElement.classList.remove("dockview-open");
     }
+    // Geometry (docked-push + clamp, or floating-overlay) is owned by one place.
+    applyDockLayout();
     hideExclusiveRightSlot(inner);
 }
 
-/** Write ONLY the host's width/flex from state.width, nothing else. Used in the
- *  resize drag's rAF loop so a width change is a single cheap inline-style write
- *  (no React render, no document-class / page-inner work like applyOpenState). */
-function applyHostWidth() {
+/** Width the message area shares with the dock = the page-inner flex container's
+ *  inner width (chat + host are its flex children). This is robust to the server
+ *  rail / channel sidebar being shown or hidden, because those sit OUTSIDE the
+ *  page-inner div — its clientWidth is exactly the content area the two share.
+ *  Falls back to a window-derived estimate before the inner div exists. */
+function availableContentWidth(inner: HTMLElement | null): number {
+    const cw = inner?.clientWidth || 0;
+    if (cw > 0) return cw;
+    // Pre-mount fallback: window minus a coarse left-chrome estimate.
+    return Math.max(0, (window.innerWidth || 1280));
+}
+
+/** TWO-MODE geometry: decide docked (push) vs floating (overlay) from the shared
+ *  content width and apply the host's width/flex/position accordingly. This is
+ *  the SINGLE place the mode + clamp live; every entry point (open, channel
+ *  switch, window resize, resize-drag) calls it.
+ *
+ *  Native parity:
+ *   - DOCKED: the host stays an in-flow flex spacer that pushes the chat. The
+ *     APPLIED width is clamped to keep the chat ≥ CHAT_MIN_WIDTH (and the dock
+ *     ≥ DOCK_MIN_WIDTH) — we never overwrite the user's intended `dockWidth`,
+ *     only what is painted, so the dock restores its full width when the window
+ *     grows again (exactly like native).
+ *   - FLOATING: triggered only when even DOCK_MIN_WIDTH can't fit beside
+ *     CHAT_MIN_WIDTH (the WINDOW is too narrow). The host is taken out of flow
+ *     (position:absolute via .dockview-host--floating) so the chat reclaims FULL
+ *     width underneath; the card overlays from the content's right edge at a
+ *     width capped to leave a clickable chat sliver. No resize handle in this
+ *     mode (CSS hides it under the floating class). */
+function applyDockLayout() {
     const host = document.getElementById(HOST_ID);
     if (!host) return;
-    host.style.flex = `0 0 ${activeWindow.state.width}px`;
-    host.style.width = `${activeWindow.state.width}px`;
+    if (!dockHasWindows()) {
+        // Closed: leave no floating mark behind and drop the inline geometry.
+        host.classList.remove("dockview-host--floating");
+        return;
+    }
+
+    const inner = findPageInner();
+    const avail = availableContentWidth(inner);
+    const want = activeWindow.state.width; // the user's intended (persisted) width
+
+    // Floating ⟺ even the dock's minimum can't sit beside the chat's minimum.
+    const floating = avail > 0 && (avail - DOCK_MIN_WIDTH) < CHAT_MIN_WIDTH;
+
+    if (floating) {
+        // Overlay: width fits the content and leaves a chat sliver clickable.
+        const maxFloat = Math.max(DOCK_MIN_WIDTH, avail - FLOAT_CHAT_SLIVER);
+        const applied = Math.max(DOCK_MIN_WIDTH, Math.min(want, maxFloat));
+        host.classList.add("dockview-host--floating");
+        // position:absolute (from the class) takes the host out of the flex row;
+        // width is the overlay width. flex is reset so it contributes nothing.
+        host.style.flex = "0 0 auto";
+        host.style.width = `${applied}px`;
+    } else {
+        // Docked push + clamp: keep the chat ≥ its min while docked, but never
+        // below the dock's own min. Only the APPLIED width is clamped.
+        host.classList.remove("dockview-host--floating");
+        let applied = want;
+        if (avail > 0) {
+            const maxDocked = avail - CHAT_MIN_WIDTH;
+            applied = Math.min(want, maxDocked);
+            applied = Math.max(applied, DOCK_MIN_WIDTH);
+        }
+        host.style.flex = `0 0 ${applied}px`;
+        host.style.width = `${applied}px`;
+    }
+}
+
+/** Write ONLY the host's geometry from state.width, nothing else. Used in the
+ *  resize drag's rAF loop so a width change is a single cheap layout pass (no
+ *  React render, no document-class / page-inner work like applyOpenState). The
+ *  mode/clamp recompute lives in applyDockLayout(), so a drag re-evaluates the
+ *  mode live too. */
+function applyHostWidth() {
+    applyDockLayout();
 }
 
 /** Drop the document state class (restoring any preemptively-hidden DM profile /
@@ -7209,14 +7315,20 @@ export function startPanel() {
     };
     window.addEventListener("keydown", onKeyDown);
 
-    // re-clamp width if the window shrinks
+    // On every window resize: re-evaluate the docked/floating mode + clamp (a
+    // window that narrows must flip a wide dock to floating even if the PERSISTED
+    // width doesn't change — applyDockLayout clamps only what is applied, never
+    // the user's intended width, so the dock restores its width when the window
+    // grows again). Also hard-re-clamp the persisted width to the legacy bound
+    // (innerWidth*0.6) so a stored value can never exceed the window itself.
     onResize = () => {
+        if (!dockHasWindows()) return;
         const w = clampWidth(activeWindow.state.width);
         if (w !== activeWindow.state.width) {
             activeWindow.state.width = w;
-            applyOpenState();
             forceRender?.();
         }
+        applyDockLayout();
     };
     window.addEventListener("resize", onResize);
 
