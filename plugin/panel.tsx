@@ -714,19 +714,37 @@ function disposeCacheEntry(e: CacheEntry) {
     }
 }
 
-/** Insert/refresh an entry as most-recently-used and evict past capacity. The
- *  active (currently-shown) entry is never evicted — its pdf doc is live. */
+/** The set of cache keys referenced by ANY live window (pinned tabs + transient).
+ *  Every one of these MUST be non-evictable: each window's `content` still points
+ *  at its entry's payloads (notably a live pdf.js doc), so evicting one would
+ *  destroy a doc a hidden-but-live tab is still rendering. With several windows
+ *  the active key alone is not enough — protect them all. */
+function liveCacheKeys(): Set<string> {
+    const keys = new Set<string>();
+    for (const w of windows) {
+        if (w.activeCacheKey != null) keys.add(w.activeCacheKey);
+    }
+    return keys;
+}
+
+/** Insert/refresh an entry as most-recently-used and evict past capacity. Any
+ *  entry referenced by a LIVE window (pinned or transient) is never evicted — its
+ *  pdf doc is in use by that window's content, even when the tab isn't visible. */
 function cacheTouch(entry: CacheEntry) {
     // re-insert at the end (Map preserves insertion order = LRU order).
     contentCache.delete(entry.key);
     contentCache.set(entry.key, entry);
-    while (contentCache.size > CONTENT_CACHE_MAX) {
-        // evict the oldest non-active entry.
+    // The cache must hold at least every live window's entry; if more windows are
+    // live than CONTENT_CACHE_MAX, the live floor wins (never evict a live entry).
+    const live = liveCacheKeys();
+    const cap = Math.max(CONTENT_CACHE_MAX, live.size);
+    while (contentCache.size > cap) {
+        // evict the oldest entry NOT referenced by any live window.
         let victim: string | null = null;
         for (const k of contentCache.keys()) {
-            if (k !== activeWindow.activeCacheKey) { victim = k; break; }
+            if (!live.has(k)) { victim = k; break; }
         }
-        if (victim == null) break; // only the active entry remains
+        if (victim == null) break; // only live entries remain — nothing evictable
         const e = contentCache.get(victim)!;
         contentCache.delete(victim);
         disposeCacheEntry(e);
