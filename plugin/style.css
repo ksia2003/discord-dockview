@@ -226,8 +226,10 @@
     font-size: 13px;
     font-weight: 500;
 }
-/* Per-tab close ✕: a ghost icon button (rule 10), only fully visible on
-   tab-hover/active so the resting strip stays calm (Discord tab-close pattern). */
+/* Per-tab close ✕: rendered ONLY on INACTIVE tabs (the active window is closed
+   via the far-right ✕, so there is exactly one close path per window). A ghost
+   icon button (rule 10) hidden at rest and revealed on hover — the Discord
+   tab-close pattern, so the resting strip stays calm. */
 .dockview-tab-close {
     flex: 0 0 auto;
     display: flex;
@@ -244,8 +246,7 @@
     opacity: 0;
     transition: opacity 0.12s ease, background-color 0.12s ease;
 }
-.dockview-tab:hover .dockview-tab-close,
-.dockview-tab-active .dockview-tab-close {
+.dockview-tab:hover .dockview-tab-close {
     opacity: 0.7;
 }
 .dockview-tab-close:hover {

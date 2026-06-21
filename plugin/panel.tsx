@@ -5970,21 +5970,29 @@ function DockTabs() {
                 },
                 tabIcon(w.content.type),
                 React.createElement("span", { className: "dockview-tab-name" }, label),
-                React.createElement(
-                    "button",
-                    {
-                        type: "button",
-                        className: "dockview-tab-close",
-                        "aria-label": STRINGS.tabs.close,
-                        title: STRINGS.tabs.close,
-                        onClick: (e: any) => { e.stopPropagation(); closeTab(w.id); }
-                    },
-                    React.createElement(
-                        "svg",
-                        { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
-                        React.createElement("path", { fill: "currentColor", d: TAB_CLOSE_PATH })
+                // ONE close path per window: the ACTIVE tab has NO inline ✕ — it is
+                // closed via the far-right ✕ (which always acts on the active window),
+                // so there's never a double-close. INACTIVE tabs carry a small ✕ that
+                // CSS reveals only on hover; clicking it closes THAT window directly
+                // (closeTab leaves the active binding alone for a non-active tab, so
+                // it never switches to the tab first).
+                isActive
+                    ? null
+                    : React.createElement(
+                        "button",
+                        {
+                            type: "button",
+                            className: "dockview-tab-close",
+                            "aria-label": STRINGS.tabs.close,
+                            title: STRINGS.tabs.close,
+                            onClick: (e: any) => { e.stopPropagation(); closeTab(w.id); }
+                        },
+                        React.createElement(
+                            "svg",
+                            { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+                            React.createElement("path", { fill: "currentColor", d: TAB_CLOSE_PATH })
+                        )
                     )
-                )
             );
         })
     );
@@ -6104,9 +6112,14 @@ function DockPanel() {
     }, []);
 
     const close = useCallback(() => {
-        // X also dismisses any open attach bar so the next open is clean.
+        // The far-right ✕ closes the ACTIVE window (the one the ⋯ menu acts on).
+        // With a lone window that IS the dock, so closeTab falls through to
+        // closePanel() (member-list restore etc.) — byte-identical to the old
+        // dock-level X. With ≥2 windows it closes just the active tab and
+        // activates a neighbour. There is no separate dock-level X anymore;
+        // this single ✕ is the ONE close path for the active window.
         attachBarOpen = false;
-        closePanel();
+        closeTab(activeWindowId);
     }, []);
 
     const hasContent = activeWindow.content.name != null;
