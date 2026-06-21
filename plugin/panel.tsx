@@ -3876,9 +3876,18 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
     // A compartment for editable/readOnly so the Read↔Edit toggle reconfigures it
     // in place rather than rebuilding the EditorView (preserves scroll, find state,
     // and the Korean IME composition surface).
+    //
+    // READ mode = EditorState.readOnly (blocks edits) while the VIEW stays editable
+    // (`editable.of(true)`), NOT `EditorView.editable.of(false)`. editable:false sets
+    // contentEditable=false on .cm-content, which suppresses mouse drag-selection and
+    // CM's selection drawing — so read mode lost text selection/copy (a regression
+    // vs the old CodeBody). readOnly is the CM-idiomatic read surface: selection,
+    // a visible highlight and copy all work; only document mutation is blocked. A
+    // caret may show in read mode (acceptable — it's read-only), prioritising
+    // working selection + copy.
     const editCompartment = new mods.Compartment();
     const editableExt = (on: boolean) => [
-        mods.EditorView.editable.of(on),
+        mods.EditorView.editable.of(true),
         mods.EditorState.readOnly.of(!on)
     ];
 
