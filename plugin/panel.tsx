@@ -3638,6 +3638,10 @@ interface CMModules {
     // find decoration plumbing (built once from the modules).
     setFindEffect: any;
     findField: any;
+    // @codemirror/merge: inline colored diff vs a pristine original (2c-1).
+    unifiedMergeView: any;
+    // our diff colour theme (added/changed = green, deleted = red), built once.
+    mergeTheme: any;
 }
 
 let cmModulesPromise: Promise<CMModules> | null = null;
@@ -3655,12 +3659,14 @@ function loadCM(): Promise<CMModules> {
         const langMod = await import("@codemirror/language");
         const searchMod = await import("@codemirror/search");
         const lezerHl = await import("@lezer/highlight");
+        const mergeMod = await import("@codemirror/merge");
 
         const { EditorState, Compartment, StateField, StateEffect, RangeSetBuilder } = stateMod as any;
         const { EditorView, Decoration, lineNumbers } = viewMod as any;
         const { syntaxHighlighting, HighlightStyle } = langMod as any;
         const { SearchCursor } = searchMod as any;
         const { tags } = lezerHl as any;
+        const { unifiedMergeView } = mergeMod as any;
 
         // --- Discord-tuned theme. Background/foreground match the in-panel code
         // surface (--background-base-lower / #dbdee1) so the editor reads at the
@@ -3802,11 +3808,43 @@ function loadCM(): Promise<CMModules> {
             }
         };
 
+        // --- merge diff theme. unifiedMergeView ships a dark baseTheme, but we
+        // tune the colours to 선인's brief ("추가된 내용 색 다르게") and Discord's
+        // palette: added/changed text on a GREEN wash, deleted text on a RED wash,
+        // each with a matching change-gutter stripe. The accept/reject chunk
+        // buttons are HIDDEN via mergeControls:false at the call site (they read as
+        // heavy on a narrow panel); the colored add/change/delete display is the
+        // point. We restyle `cm-changedText` / `cm-deletedChunk` (the editor is the
+        // "b" side of a unified view, class `cm-merge-b`).
+        const mergeTheme = EditorView.theme({
+            // changed/added lines: a faint green line wash + stronger green on the
+            // exact changed text run.
+            ".cm-changedLine": { backgroundColor: "rgba(63, 185, 80, 0.12)" },
+            ".cm-changedText": {
+                backgroundColor: "rgba(63, 185, 80, 0.32)",
+                borderRadius: "2px"
+            },
+            // inline-changed line (allowInlineDiffs path) — same green wash.
+            ".cm-inlineChangedLine": { backgroundColor: "rgba(63, 185, 80, 0.12)" },
+            // deleted chunk block (shown above the new text): a red wash, with the
+            // exact deleted run a stronger red, struck through.
+            ".cm-deletedChunk": { backgroundColor: "rgba(248, 81, 73, 0.12)" },
+            ".cm-deletedChunk .cm-deletedText, .cm-deletedText": {
+                backgroundColor: "rgba(248, 81, 73, 0.32)",
+                color: "#ffb4ad",
+                textDecoration: "line-through"
+            },
+            ".cm-insertedLine": { textDecoration: "none" },
+            // change-gutter stripes (the thin marker next to a changed/deleted line).
+            ".cm-changedLineGutter": { backgroundColor: "#3fb950" },
+            ".cm-deletedLineGutter": { backgroundColor: "#f85149" }
+        }, { dark: true });
+
         return {
             EditorState, EditorView, lineNumbers, Compartment, syntaxHighlighting, HighlightStyle,
             tags, Decoration, SearchCursor, RangeSetBuilder,
             StateField, StateEffect, languageFor, theme, highlightStyle,
-            setFindEffect, findField
+            setFindEffect, findField, unifiedMergeView, mergeTheme
         } as CMModules;
     })();
     return cmModulesPromise;
@@ -3822,6 +3860,7 @@ interface CodeController {
     rebuildFind: (query: string) => void;
     focusMatch: (idx: number) => void;
     setEditable: (on: boolean) => void; // flip read↔edit via the compartment (2b)
+    insert: (text: string) => void; // type text at the doc end (drives the buffer)
     teardown: () => void;
 }
 let codeCtrl: CodeController | null = null;
@@ -3882,11 +3921,43 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
     // a visible highlight and copy all work; only document mutation is blocked. A
     // caret may show in read mode (acceptable — it's read-only), prioritising
     // working selection + copy.
+    // The pristine original = the merge-diff baseline. NULL for a new file (no
+    // original ever existed) → it edits as a plain CM with no diff (2c-1). For an
+    // existing file it's the file's loaded source (code/csv/markdown source, or the
+    // artifact html). Captured once; the original never changes.
+    const original = editOriginalText();
+
     const editCompartment = new mods.Compartment();
-    const editableExt = (on: boolean) => [
-        mods.EditorView.editable.of(true),
-        mods.EditorState.readOnly.of(!on)
-    ];
+    // The editable/readOnly state PLUS (when editable + there's an original) the
+    // inline colored diff vs that original (2c-1). Bundling the merge view into the
+    // SAME compartment means the read↔edit toggle adds/removes the diff in step:
+    // read mode = no diff (just the read-only source); edit mode = the live diff.
+    // A new file (original==null) never gets the diff. unifiedMergeView highlights
+    // ranges where the editor doc differs from `original`; when they're equal (no
+    // edits yet) it shows nothing — a clean editor.
+    const editableExt = (on: boolean) => {
+        const base = [
+            mods.EditorView.editable.of(true),
+            mods.EditorState.readOnly.of(!on)
+        ];
+        if (on && original != null) {
+            base.push(mods.unifiedMergeView({
+                original,
+                // hide the per-chunk accept/reject buttons — heavy on a narrow side
+                // panel; the colored add/change/delete display is what 선인 asked
+                // for (note for 선인: accept/reject is intentionally suppressed).
+                mergeControls: false,
+                // keep the change-gutter stripe (a thin colored marker per changed
+                // line) — it's a quiet locator, not noise.
+                gutter: true,
+                highlightChanges: true,
+                // a fragment-only original can mis-highlight deleted lines under the
+                // editor language; off is safer + lighter.
+                syntaxHighlightDeletions: false
+            }));
+        }
+        return base;
+    };
 
     // Push edits into the temporary buffer (never the original). Only real document
     // changes count, so a pure selection/scroll dispatch doesn't churn the buffer.
@@ -3896,10 +3967,11 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
 
     const extensions: any[] = [
         mods.lineNumbers(), // GitHub/VS-Code-style line-number gutter
-        editCompartment.of(editableExt(startEditable)), // read↔edit (reconfigurable)
+        editCompartment.of(editableExt(startEditable)), // read↔edit (+ diff) (reconfigurable)
         editListener, // edits -> temporary buffer
         mods.EditorView.lineWrapping, // always wrap — never horizontal scroll
         mods.theme,
+        mods.mergeTheme, // diff colours (added/changed green, deleted red)
         mods.findField
     ];
     if (langSupport) {
@@ -3919,6 +3991,13 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
         setEditable: (on: boolean) => {
             view.dispatch({ effects: editCompartment.reconfigure(editableExt(on)) });
             if (on) view.focus();
+        },
+        // Insert text at the document end via a real CM transaction (used by the
+        // CDP harness to drive an edit through the same path a keystroke takes —
+        // the update listener then mirrors it into the temporary buffer).
+        insert: (text: string) => {
+            const at = view.state.doc.length;
+            view.dispatch({ changes: { from: at, insert: text } });
         },
         teardown: () => { /* set below */ }
     };
