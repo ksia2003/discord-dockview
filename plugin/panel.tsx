@@ -348,6 +348,11 @@ interface CachedView {
     scrollTop?: number;
     // csv: which view the user left the file on (grid by default)
     csvMode?: "grid" | "raw";
+    // editable text family (code/markdown/csv-raw/artifact): the mode the user
+    // left the file on, and the temporary edit buffer (null = unedited). Both
+    // survive a cache return so a re-opened file keeps your edits + your mode.
+    editMode?: "view" | "edit";
+    editBuffer?: string | null;
 }
 interface CacheEntry {
     key: string;
@@ -446,8 +451,9 @@ function viewScroller(): HTMLElement | null {
     if (content.type === "csv" && csvView.mode === "grid") {
         return document.querySelector<HTMLElement>(`#${HOST_ID} .dockview-csv-scroll`) || bodyScroller();
     }
-    const cmCode = content.type === "code" || (content.type === "csv" && csvView.mode === "raw");
-    if (cmCode) {
+    // The CM editor (code / csv-raw / markdown-or-artifact in edit mode) owns its
+    // own scroller; everything else (rendered iframe, pdf, image) scrolls the body.
+    if (cmBodyShown()) {
         return document.querySelector<HTMLElement>(`#${HOST_ID} .dockview-cm .cm-scroller`) || bodyScroller();
     }
     return bodyScroller();
@@ -471,6 +477,12 @@ function snapshotActiveView() {
         e.view.imgTy = imgView.ty;
     } else if (e.type === "csv") {
         e.view.csvMode = csvView.mode;
+    }
+    // editable text family: remember the edit mode + buffer (the buffer is also
+    // written through on every keystroke by setEditBuffer; this catches the mode).
+    if (e.type === "code" || e.type === "markdown" || e.type === "html" || e.type === "csv") {
+        e.view.editMode = editView.mode;
+        e.view.editBuffer = editView.editBuffer;
     }
 }
 
@@ -501,6 +513,15 @@ function applyCachedView(e: CacheEntry) {
         // restore the grid/raw choice the user left this file on; the delimiter is
         // re-sniffed by the loader (it lives on csvView already at this point).
         csvView.mode = e.view.csvMode ?? "grid";
+    }
+    // Editable text family: restore the edit mode + temporary buffer the user left
+    // this file on so a re-open keeps both. (CSV's view mode rides csvView above;
+    // here we only restore its edit BUFFER, since raw editing shares the buffer.)
+    if (e.type === "code" || e.type === "markdown" || e.type === "html" || e.type === "csv") {
+        editView.editBuffer = e.view.editBuffer ?? null;
+        editView.mode = e.type === "csv" ? "view" : (e.view.editMode ?? "view");
+    } else {
+        resetEditView();
     }
     pendingScrollTop = e.view.scrollTop ?? null;
 }
@@ -614,6 +635,55 @@ const csvView = {
 function resetCsvView() {
     csvView.mode = "grid"; // a fresh CSV always opens as a grid (per-file default)
     csvView.delimiter = ",";
+}
+
+// --- editable-mode view-state (view ↔ edit), shared with the toolbar (2b) -----
+// A text-family file opens in VIEW mode; a single state-colour toggle enters EDIT
+// over a TEMPORARY in-memory buffer (never the original file / Discord message).
+// `mode` drives code (read↔edit), markdown (rendered↔edit-source) and .artifact
+// (rendered↔html-source-edit). CSV is the special case: its grid/raw toggle is
+// the edit entry (raw = the editable CM), so it uses csvView.mode, not this — but
+// the BUFFER plumbing below is shared by all four. Module-scope so the header
+// toggle and the body renderer drive one state.
+//   `editBuffer` is the live edit text (null = unedited; the CM shows the original
+//   source). It is mirrored into the active cache entry's view so it survives both
+//   mode toggles AND a cache return (re-open lands on the edited text). Inline
+//   artifacts (no cache key) keep the buffer here only, which is fine — they live
+//   exactly as long as the dock is open.
+const editView = {
+    mode: "view" as "view" | "edit",
+    editBuffer: null as string | null
+};
+function resetEditView() {
+    editView.mode = "view"; // a fresh file always opens in the view mode
+    editView.editBuffer = null; // and unedited (no buffer yet)
+}
+
+/** The ORIGINAL (unedited) source text for the current editable type. Code/CSV-raw
+ *  edit content.code; markdown edits its raw source (stored in content.code by the
+ *  markdown loader, NOT the rendered html); .artifact edits content.html. */
+function editSourceText(): string {
+    if (content.type === "html") return content.html || ""; // .artifact HTML source
+    return content.code || ""; // code / csv-raw / markdown-source
+}
+
+/** The current EDITABLE text = the buffer if the user has edited, else the
+ *  original source. This is what the editable CM is seeded from and what the
+ *  renderers (markdown re-render, artifact re-render, CSV grid re-parse) derive
+ *  from on a toggle back to the view mode. */
+function editBufferText(): string {
+    return editView.editBuffer != null ? editView.editBuffer : editSourceText();
+}
+
+/** Record a CM edit into the temporary buffer + mirror it into the active cache
+ *  entry so it survives mode toggles and a cache return. Never touches the
+ *  original source field (content.code / content.html stay the pristine file). */
+function setEditBuffer(text: string) {
+    editView.editBuffer = text;
+    if (activeCacheKey != null) {
+        const e = contentCache.get(activeCacheKey);
+        if (e) e.view.editBuffer = text;
+    }
 }
 
 // --- PDF viewer view-state (page nav / zoom / fit / find), shared w/ toolbar --
@@ -1126,6 +1196,7 @@ function imageBlobToPng(blob: Blob): Promise<Blob | null> {
 function resetHtml() {
     content.html = null;
     content.frameHtml = null;
+    resetEditView(); // a fresh artifact/markdown opens rendered + unedited
 }
 /** Reset only the pdf-specific fields (and bump the render token to abort).
  *  The live doc is OWNED by its cache entry now, so we do NOT destroy it here —
@@ -1140,6 +1211,7 @@ function resetCode() {
     content.code = null;
     content.codeLang = "plaintext";
     resetCodeView(); // a fresh code load opens with find closed
+    resetEditView(); // and in read mode, unedited
 }
 
 /** fetch() wrapper for the loaders. `noCache` (a retry from the error card)
@@ -1613,6 +1685,16 @@ function markdownToHtml(md: string): { html: string; hasMath: boolean } {
     return { html, hasMath: _mdHasMath };
 }
 
+/** The full markdown -> dark sandboxed-doc pipeline (marked + code highlight +
+ *  KaTeX-aware wrapper). Shared by the loader (first render from the fetched
+ *  source) and the edit toggle (re-render from the edited buffer) so a markdown
+ *  edit shows up rendered identically. */
+function renderMarkdownDoc(md: string): string {
+    const { html, hasMath } = markdownToHtml(md);
+    const bodyHtml = highlightMarkdownCode(html);
+    return wrapMarkdownDoc(bodyHtml, hasMath);
+}
+
 /** MARKDOWN loader: fetch -> marked -> dark doc -> nonce sandbox iframe path. */
 function loadMarkdown(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
     resetPdf();
@@ -1632,12 +1714,15 @@ function loadMarkdown(opts: { name: string; url?: string | null; noCache?: boole
             return r.text();
         })
         .then(md => {
-            const { html, hasMath } = markdownToHtml(md);
-            const bodyHtml = highlightMarkdownCode(html);
-            const fullHtml = wrapMarkdownDoc(bodyHtml, hasMath);
-            if (entry) { entry.html = fullHtml; const nonce = pageNonce(); entry.frameHtml = nonce ? injectNonce(fullHtml, nonce) : fullHtml; entry.loading = false; entry.error = null; }
+            const fullHtml = renderMarkdownDoc(md);
+            // Keep the RAW markdown source around (content.code, lang "markdown") so
+            // the edit mode can open a CM over the source — the rendered html is the
+            // VIEW; edits re-render from this source. (resetCode nulled it above.)
+            if (entry) { entry.html = fullHtml; const nonce = pageNonce(); entry.frameHtml = nonce ? injectNonce(fullHtml, nonce) : fullHtml; entry.code = md; entry.codeLang = "markdown"; entry.loading = false; entry.error = null; }
             if (token !== loadSeq) return;
             setArtifactHtml(fullHtml);
+            content.code = md;
+            content.codeLang = "markdown";
             content.loading = false;
             content.error = null;
             forceRender?.();
@@ -3739,15 +3824,48 @@ interface CodeController {
     matches: { from: number; to: number }[]; // document offsets per match
     rebuildFind: (query: string) => void;
     focusMatch: (idx: number) => void;
+    setEditable: (on: boolean) => void; // flip read↔edit via the compartment (2b)
     teardown: () => void;
 }
 let codeCtrl: CodeController | null = null;
 
-/** Build a read-only CM EditorView for the current code file and wire it to the
- *  shared find model. Called from CmBody once the CM modules have loaded. */
+/** Whether the CURRENT body is a CodeMirror editor (so find / Ctrl+F apply). True
+ *  for plain code, a CSV in raw mode, and markdown / .artifact in edit mode. */
+function cmBodyShown(): boolean {
+    if (content.code == null && content.type !== "html") return false;
+    if (content.type === "code") return true;
+    if (content.type === "csv") return csvView.mode === "raw";
+    if (content.type === "markdown" || content.type === "html") return editView.mode === "edit";
+    return false;
+}
+
+/** Whether the CM body for the CURRENT content should be EDITABLE on mount.
+ *  - code: editable only in edit mode (Read↔Edit is one CM, flipped live).
+ *  - csv-raw: always editable (Raw IS the edit surface — Grid↔Raw is a body swap).
+ *  - markdown/artifact edit: the CM is only mounted in edit mode, so editable.
+ *  In every case the doc is seeded from editBufferText() (the buffer if edited,
+ *  else the pristine source) so a re-mount in either mode shows your edits. */
+function cmEditableForContent(): boolean {
+    if (content.type === "csv") return csvView.mode === "raw"; // raw = edit surface
+    if (content.type === "code") return editView.mode === "edit";
+    // markdown / artifact: the CM body only exists in edit mode.
+    return editView.mode === "edit";
+}
+
+/** Build a CM EditorView for the current text file and wire it to the shared find
+ *  model. Read↔edit is a runtime COMPARTMENT reconfigure (setEditable) — the view
+ *  is NOT torn down/rebuilt on a toggle. The doc is seeded from the temporary edit
+ *  buffer (editBufferText), and an update listener writes edits back to it so the
+ *  ORIGINAL source (content.code / content.html) is never mutated. */
 function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
-    const code = content.code || "";
-    const lang = content.codeLang;
+    // Seed from the buffer (= edits if any, else the pristine source). For markdown
+    // the source is the raw md (stored in content.code by the loader), for .artifact
+    // it's the html source — editBufferText() resolves the right one per type.
+    const code = editBufferText();
+    // The highlight gate uses the file's natural language. Markdown source edits
+    // get the markdown grammar; .artifact html source gets the html grammar.
+    const lang = content.type === "html" ? "html" : content.codeLang;
+    const startEditable = cmEditableForContent();
     // Line count for the highlight gate (same trailing-newline convention as the
     // old viewer: a single trailing newline is not its own line).
     const bodyText = code.endsWith("\n") ? code.slice(0, -1) : code;
@@ -3755,10 +3873,25 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
 
     const langSupport = lineCount < HIGHLIGHT_MAX_LINES ? mods.languageFor(lang) : null;
 
+    // A compartment for editable/readOnly so the Read↔Edit toggle reconfigures it
+    // in place rather than rebuilding the EditorView (preserves scroll, find state,
+    // and the Korean IME composition surface).
+    const editCompartment = new mods.Compartment();
+    const editableExt = (on: boolean) => [
+        mods.EditorView.editable.of(on),
+        mods.EditorState.readOnly.of(!on)
+    ];
+
+    // Push edits into the temporary buffer (never the original). Only real document
+    // changes count, so a pure selection/scroll dispatch doesn't churn the buffer.
+    const editListener = mods.EditorView.updateListener.of((u: any) => {
+        if (u.docChanged) setEditBuffer(u.state.doc.toString());
+    });
+
     const extensions: any[] = [
         mods.lineNumbers(), // GitHub/VS-Code-style line-number gutter
-        mods.EditorView.editable.of(false), // not editable (2a is read-only)
-        mods.EditorState.readOnly.of(true), // and read-only (no edits via API)
+        editCompartment.of(editableExt(startEditable)), // read↔edit (reconfigurable)
+        editListener, // edits -> temporary buffer
         mods.EditorView.lineWrapping, // always wrap — never horizontal scroll
         mods.theme,
         mods.findField
@@ -3777,6 +3910,10 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
         matches: [],
         rebuildFind: () => { /* set below */ },
         focusMatch: () => { /* set below */ },
+        setEditable: (on: boolean) => {
+            view.dispatch({ effects: editCompartment.reconfigure(editableExt(on)) });
+            if (on) view.focus();
+        },
         teardown: () => { /* set below */ }
     };
 
@@ -3932,7 +4069,9 @@ let csvCtrl: CsvController | null = null;
 /** Build the grid DOM into `mount` and stream the body rows in. Returns the
  *  controller (also stored in csvCtrl). One call per CSV grid mount. */
 function buildCsvController(mount: HTMLElement): CsvController {
-    const rows = parseDelimited(content.code || "", csvView.delimiter);
+    // Parse the edited BUFFER (so a Raw edit shows up in the grid on toggle-back),
+    // falling back to the original text when the file is unedited.
+    const rows = parseDelimited(editBufferText(), csvView.delimiter);
     const header = rows.length ? rows[0] : [];
     // Column count = the widest of the header / a sample of data rows, so ragged
     // rows still get enough columns; capped so a runaway row can't explode the DOM.
@@ -4056,10 +4195,10 @@ function CsvBody() {
     );
 }
 
-/** Flip a CSV between the grid and the raw text view. Each view re-mounts fresh
- *  (a new content.seq) and opens at its own top — we don't carry scroll across the
- *  toggle, which keeps the switch predictable (and the two views have unrelated
- *  geometries anyway). */
+/** Flip a CSV between the grid and the raw text view. Raw IS the editable surface
+ *  (its CM mounts editable, edits go to the temporary buffer); Grid re-parses from
+ *  the edited buffer so a Raw edit shows up in the grid on toggle-back. Each view
+ *  re-mounts fresh (a new content.seq) and opens at its own top. */
 function toggleCsvMode() {
     if (content.type !== "csv") return;
     csvView.mode = csvView.mode === "grid" ? "raw" : "grid";
@@ -4067,6 +4206,45 @@ function toggleCsvMode() {
     if (csvView.mode === "grid" && codeView.findOpen) toggleCodeFind();
     content.seq += 1; // new body identity -> CodeBody/CsvBody remount fresh
     pendingScrollTop = null; // each view opens at its own top (no cross-bleed)
+    forceRender?.();
+}
+
+/** Flip the editable text family between its VIEW mode and EDIT mode (2b). The
+ *  CSV grid/raw toggle is a SEPARATE path (toggleCsvMode) — this drives code,
+ *  markdown and .artifact.
+ *   - code: ONE CodeMirror instance, flipped read↔edit live via the compartment
+ *     (no remount — scroll/find/IME survive). The doc already shows the buffer.
+ *   - markdown / .artifact: the body SWITCHES (rendered iframe ↔ editable CM over
+ *     the source). Toggling back to VIEW RE-RENDERS from the edited buffer (md
+ *     re-marked, html re-stamped) so your edits are reflected in the render. */
+function toggleEditMode() {
+    if (content.type !== "code" && content.type !== "markdown" && content.type !== "html") return;
+    const entering = editView.mode === "view";
+    editView.mode = entering ? "edit" : "view";
+
+    if (content.type === "code") {
+        // Same CM instance: just reconfigure editability. No seq bump, no remount.
+        codeCtrl?.setEditable(entering);
+        forceRender?.(); // repaint the toggle's active state (row 2)
+        return;
+    }
+
+    // markdown / artifact = a body swap (iframe <-> CM). When LEAVING edit, rebuild
+    // the rendered doc from the edited buffer so the render reflects the edits.
+    if (!entering) {
+        const src = editBufferText();
+        const fullHtml = content.type === "markdown" ? renderMarkdownDoc(src) : src;
+        setArtifactHtml(fullHtml);
+        // keep the cache entry's rendered payload in sync so a re-open shows edits.
+        if (activeCacheKey != null) {
+            const e = contentCache.get(activeCacheKey);
+            if (e) { e.html = content.html; e.frameHtml = content.frameHtml; }
+        }
+    }
+    // close any find bar from the edit CM so it doesn't linger over the render.
+    if (!entering && codeView.findOpen) toggleCodeFind();
+    content.seq += 1; // new body identity -> iframe/CM remount fresh
+    pendingScrollTop = null; // each mode opens at its own top
     forceRender?.();
 }
 
@@ -4386,8 +4564,17 @@ function renderBody() {
         }
         return renderUnsupportedBody();
     }
-    // markdown shares the html (frameHtml iframe) path; fall through.
-    if (content.loading || content.frameHtml == null) {
+    // markdown + .artifact (html) share the iframe path in VIEW mode. In EDIT mode
+    // the body SWITCHES to an editable CM over the source (raw md / html source) —
+    // mirroring the CSV Grid↔Raw body swap (toggleEditMode re-renders on the way
+    // back). The CM seeds from editBufferText() and writes edits to the buffer.
+    if (content.loading) {
+        return React.createElement(LoadingBody, null);
+    }
+    if (editView.mode === "edit") {
+        return React.createElement(CodeBody, null);
+    }
+    if (content.frameHtml == null) {
         return React.createElement(LoadingBody, null);
     }
     return renderHtmlBody();
@@ -4548,7 +4735,8 @@ function CodeHeaderControls() {
     const [copied, setCopied] = useState(false);
     if (content.loading || content.error || content.code == null) return null;
     const copy = () => {
-        const text = content.code || "";
+        // copy what's SHOWN: the edited buffer in edit mode, else the original.
+        const text = editBufferText();
         const done = () => {
             setCopied(true);
             setTimeout(() => setCopied(false), 1200);
@@ -4563,6 +4751,7 @@ function CodeHeaderControls() {
             fallbackCopy(text, done);
         }
     };
+    const editing = editView.mode === "edit";
     return React.createElement(
         React.Fragment,
         null,
@@ -4576,9 +4765,21 @@ function CodeHeaderControls() {
                 "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
                 () => toggleCodeFind(), codeView.findOpen)
         ),
-        copyBtn("code-copy", STRINGS.code.copy, copied, copy)
+        copyBtn("code-copy", STRINGS.code.copy, copied, copy),
+        // Edit toggle (2b): one pencil button that highlights when EDIT is on
+        // (member-list state-colour grammar). Read = CM read-only, Edit = CM
+        // editable over the temporary buffer.
+        React.createElement(
+            "div",
+            { className: "dockview-tool-group" },
+            toolBtn("code-edit", editing ? STRINGS.edit.exitEditCode : STRINGS.edit.enterEditCode,
+                EDIT_PENCIL_PATH, () => toggleEditMode(), editing)
+        )
     );
 }
+
+/** The pencil glyph used by every edit toggle (code / markdown / artifact). */
+const EDIT_PENCIL_PATH = "M19.3 8.9 15.1 4.7l1.4-1.4a2 2 0 0 1 2.8 0l1.4 1.4a2 2 0 0 1 0 2.8l-1.4 1.4ZM13.7 6.1l4.2 4.2L8.6 19.6 3 21l1.4-5.6 9.3-9.3Z";
 
 /** A ghost icon copy button (Discord message code-block copy glyph) with a
  *  "copied" check flash. Shared by code + CSV row-2 controls. `label` is the
@@ -4614,7 +4815,8 @@ function CsvHeaderControls() {
     if (content.loading || content.error || content.code == null) return null;
     const raw = csvView.mode === "raw";
     const copy = () => {
-        const text = content.code || "";
+        // raw mode may hold an edited buffer; grid mode = the original text.
+        const text = editBufferText();
         const done = () => { setCopied(true); setTimeout(() => setCopied(false), 1200); };
         try {
             if (navigator.clipboard?.writeText) {
@@ -4647,23 +4849,69 @@ function CsvHeaderControls() {
     return React.createElement(React.Fragment, null, ...children);
 }
 
+/** Markdown / .artifact row-2 controls (2b): a single state-colour EDIT toggle
+ *  (Rendered ↔ source-edit). In EDIT mode the body is an editable CM, so a find
+ *  trigger + copy appear too (mirroring the code row); in RENDERED mode it's just
+ *  the toggle (the iframe owns its own content). `mdMode` true = markdown (edit the
+ *  raw md source), false = .artifact (edit the html source). */
+function EditTextHeaderControls(props: { mdMode: boolean }) {
+    const { useState } = React;
+    const [copied, setCopied] = useState(false);
+    if (content.loading || content.error) return null;
+    const editing = editView.mode === "edit";
+    const copy = () => {
+        const text = editBufferText();
+        const done = () => { setCopied(true); setTimeout(() => setCopied(false), 1200); };
+        try {
+            if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+            } else { fallbackCopy(text, done); }
+        } catch { fallbackCopy(text, done); }
+    };
+    const children: any[] = [];
+    // EDIT-only: find + copy over the editable CM (the rendered iframe has neither).
+    if (editing) {
+        children.push(React.createElement(
+            "div",
+            { key: "edit-find-grp", className: "dockview-tool-group dockview-collapse-mid" },
+            toolBtn("edit-find", STRINGS.code.find,
+                "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
+                () => toggleCodeFind(), codeView.findOpen)
+        ));
+        children.push(copyBtn("edit-copy", STRINGS.code.copy, copied, copy));
+    }
+    // Always: the edit state-colour toggle (pencil highlights when editing).
+    const enter = props.mdMode ? STRINGS.edit.enterEditMarkdown : STRINGS.edit.enterEditArtifact;
+    const exit = props.mdMode ? STRINGS.edit.exitEditMarkdown : STRINGS.edit.exitEditArtifact;
+    children.push(React.createElement(
+        "div",
+        { key: "edit-toggle-grp", className: "dockview-tool-group" },
+        toolBtn("edit-toggle", editing ? exit : enter, EDIT_PENCIL_PATH,
+            () => toggleEditMode(), editing)
+    ));
+    return React.createElement(React.Fragment, null, ...children);
+}
+
 /** The per-viewer control cluster for the current content type, rendered in the
- *  SECOND header row (below the icon/name/⋯/X top row). Empty for markdown /
- *  artifact / unknown (their row 2 is suppressed entirely — see hasViewerControls). */
+ *  SECOND header row (below the icon/name/⋯/X top row). Markdown + .artifact get
+ *  the edit toggle (2b); unknown has no row 2 (see hasViewerControls). */
 function HeaderControls() {
     if (content.type === "pdf") return React.createElement(PdfHeaderControls, null);
     if (content.type === "image") return React.createElement(ImageHeaderControls, null);
     if (content.type === "code") return React.createElement(CodeHeaderControls, null);
     if (content.type === "csv") return React.createElement(CsvHeaderControls, null);
+    if (content.type === "markdown") return React.createElement(EditTextHeaderControls, { mdMode: true });
+    if (content.type === "html") return React.createElement(EditTextHeaderControls, { mdMode: false });
     return null;
 }
 
 /** True when the current content has row-2 controls (so the second header row is
- *  rendered). Artifact / markdown / unknown have none — no empty strip. */
+ *  rendered). Markdown + .artifact now carry the edit toggle; only unknown has none. */
 function hasViewerControls(): boolean {
     if (content.loading || content.error) return false;
     return content.type === "pdf" || content.type === "image"
-        || content.type === "code" || content.type === "csv";
+        || content.type === "code" || content.type === "csv"
+        || content.type === "markdown" || content.type === "html";
 }
 
 /** Clipboard fallback for environments where navigator.clipboard is blocked. */
@@ -5189,11 +5437,10 @@ function DockPanel() {
                 // body is inset below it (no content hidden under the bar). PDF and
                 // code share the same FindBar component, each wired to its viewer.
                 const pdfFind = hasContent && content.type === "pdf" && pdfView.findOpen && content.pdf.doc;
-                // Code find applies to plain code AND a CSV viewed in RAW mode (raw
-                // reuses the code body); the grid view has no find bar.
-                const codeFind = hasContent
-                    && (content.type === "code" || (content.type === "csv" && csvView.mode === "raw"))
-                    && codeView.findOpen && content.code != null;
+                // Code find applies to plain code, a CSV viewed in RAW mode, and a
+                // markdown / .artifact in EDIT mode — every case whose body is the
+                // editable/read CM. The grid + rendered iframe views have no find.
+                const codeFind = hasContent && codeView.findOpen && cmBodyShown();
                 const findShown = pdfFind || codeFind;
                 return React.createElement(
                     "div",
@@ -5727,9 +5974,9 @@ export function startPanel() {
         // Code branch: Ctrl+F toggles our find (Discord may eat the global one);
         // when find is already open Ctrl+F jumps to the next match, matching the
         // PDF UX. The find input itself handles Enter/Shift+Enter/Esc once focused.
-        // A CSV in RAW mode reuses the code body, so it gets the same find keys.
-        const csvRaw = content.type === "csv" && csvView.mode === "raw";
-        if ((content.type === "code" || csvRaw) && content.code != null) {
+        // Applies to every CM body: plain code, a CSV in RAW mode, and markdown /
+        // .artifact in EDIT mode (cmBodyShown covers all three).
+        if (cmBodyShown()) {
             if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
                 e.preventDefault();
                 if (!codeView.findOpen) toggleCodeFind();
@@ -5868,7 +6115,11 @@ export function exposeDebug() {
         get selfProfileToggle() { return selfProfileToggle; },
         closeNativeChannelSidebar,
         onMemberSectionToggle, onUserProfileSidebarToggle, onChannelSidebarView, closeForExclusiveTakeover,
-        openCompose, attachComposeFile, attachActiveFile, composeTextToFile, get compose() { return compose; }
+        openCompose, attachComposeFile, attachActiveFile, composeTextToFile, get compose() { return compose; },
+        // 2b editable-surface debug surface: the mode toggles + the buffer so CDP
+        // can drive edit-mode + assert the temporary buffer / re-render loop.
+        editView, csvView, toggleEditMode, toggleCsvMode, toggleCodeFind,
+        get editBuffer() { return editBufferText(); }, get codeCtrl() { return codeCtrl; }
     };
 }
 export function unexposeDebug() {

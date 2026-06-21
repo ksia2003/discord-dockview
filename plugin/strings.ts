@@ -133,6 +133,24 @@ export const STRINGS = {
         copied: "Copied"
     },
 
+    // --- edit toggle (code / markdown / artifact) ---------------------------
+    // A single STATE-COLOUR toggle (Discord member-list grammar): one pencil icon
+    // button that highlights when EDIT is active. A file opens in its view mode
+    // (code = read, markdown = rendered, artifact = rendered); the toggle enters a
+    // TEMPORARY in-memory edit over the source (the original file is untouched).
+    // Tooltip names the action the click performs, so it flips with the state.
+    edit: {
+        // code: read <-> edit
+        enterEditCode: "Edit",
+        exitEditCode: "Done editing",
+        // markdown: rendered <-> edit source
+        enterEditMarkdown: "Edit source",
+        exitEditMarkdown: "Done editing",
+        // .artifact: rendered <-> edit html source
+        enterEditArtifact: "Edit HTML",
+        exitEditArtifact: "Done editing"
+    },
+
     // --- header buttons (popout / more / close) -----------------------------
     header: {
         openInNewWindow: "Open in browser",
