@@ -169,31 +169,24 @@ export const STRINGS = {
         copyLink: "Copy link",
         openInPanel: "Open in panel",
         // Attach the file currently shown in the panel to the message composer
-        // (a pending upload chip on the active channel).
-        attach: "Attach to message"
+        // (a pending upload chip on the active channel). When the file has edits,
+        // the EDITED buffer is attached, not the original.
+        attach: "Attach to message",
+        // `+` composer-menu item: open an empty editable dock surface (a new
+        // markdown file) and write it from scratch.
+        newFile: "New file"
     },
 
-    // --- compose ("text -> file") --------------------------------------------
-    // A single item in Discord's `+` composer menu that converts the CURRENT
-    // composer text into a `.md` file attachment (a native attachment chip), then
-    // clears the composer — mirroring Discord's own "Upload text as file"
-    // (which covers the `.txt` case beside it). No editor, panel, or filename
-    // prompt. `menuItemMd` is the visible label; the other keys below feed the
-    // legacy in-panel writer (kept but unused, slated for removal).
-    compose: {
-        menuItemTxt: "New text file",
-        menuItemMd: "Send as markdown file",
-        namePlaceholder: "Filename",
-        // md Edit/Preview toggle (replaces the old always-split editor|preview).
-        editTab: "Edit",
-        previewTab: "Preview",
-        attach: "Attach",
-        attachHint: "Attach to message",
-        // Editor empty-state. The textarea opens in EDIT mode, so its placeholder
-        // must invite writing — NOT read like a preview ("Start writing to see a
-        // preview" made the editable area look like an empty preview pane).
-        editorPlaceholderMd: "Write Markdown…",
-        editorPlaceholderTxt: "Write…",
-        previewEmpty: "Start writing to see a preview."
+    // --- attach (after edit) filename input ---------------------------------
+    // Staging an edited file as a new upload offers a native filename field (the
+    // Discord "new thread name" pattern, grammar rule 6): the file's own name is
+    // the PLACEHOLDER, so leaving it blank reuses that name; typing renames the
+    // staged file. `defaultNewName` is the placeholder for a brand-new file that
+    // never had an original name.
+    attach: {
+        defaultNewName: "message.md",
+        confirm: "Attach",
+        cancel: "Cancel",
+        hint: "Attach to message"
     }
 } as const;

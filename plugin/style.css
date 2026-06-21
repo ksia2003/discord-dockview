@@ -1166,85 +1166,17 @@
 }
 
 /* ----------------------------------------------------------------------------
-   COMPOSE (write) MODE — a tiny in-panel .txt/.md writer. The body is FULL WIDTH
-   and shows EITHER the editor OR the rendered-markdown preview, switched by the
-   Edit/Preview toggle in the second-row toolbar (no side-by-side split — a narrow
-   side panel can't afford two cramped columns). For .txt there is no preview.
+   ATTACH FILENAME BAR (2c-2) — a native inline filename input shown as a SECOND
+   header row when the user picks ⋯ → "Attach to message" (or attaches a new
+   file). The Discord "new thread name" pattern (grammar rule 6): the original
+   filename is the PLACEHOLDER, blank reuses it, typing renames the staged file.
+   It sits in the same second-row strip the viewer controls use, so the card's
+   flex-column layout flows the body below with no offset math. A thin divider
+   separates it from the top row; it carries the header padding so the input lines
+   up with the title above. Confirm = the native blurple Button (rule 3); Cancel =
+   a ghost text button (rule 4).
    ------------------------------------------------------------------------- */
-.dockview-compose {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    height: 100%;
-    min-height: 0;
-}
-.dockview-compose-editor {
-    flex: 1 1 auto;
-    width: 100%;
-    min-width: 0;
-    min-height: 0;
-    box-sizing: border-box;
-    padding: 14px 16px;
-    border: none;
-    outline: none;
-    resize: none;
-    background: var(--background-gradient-chat, var(--background-base-lower));
-    color: var(--text-default, #dbdee1);
-    font-family: Consolas, "Andale Mono WT", "Andale Mono", "Courier New", monospace;
-    font-size: 14px;
-    line-height: 1.6;
-    tab-size: 4;
-    /* Match the dock body's stable-gutter + thin dark scrollbar so the editor
-       reads as part of the same surface as every viewer body. */
-    scrollbar-gutter: stable;
-}
-.dockview-compose-editor::placeholder { color: var(--text-muted, #949ba4); }
-/* The preview iframe fills the body (its own dark stylesheet lives in MD_STYLE;
-   this only sizes it). Full width — same surface as the normal markdown viewer. */
-.dockview-compose-preview {
-    flex: 1 1 auto;
-    width: 100%;
-    min-width: 0;
-    min-height: 0;
-    display: block;
-    border: none;
-    background: #1e1f22;
-}
-/* Empty-preview placeholder: a quiet centred line (the dock's idle-state voice)
-   shown when Preview is selected with an empty buffer, instead of a blank iframe. */
-.dockview-compose-preview-empty {
-    flex: 1 1 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    color: var(--text-muted, #949ba4);
-    font-size: 14px;
-    text-align: center;
-}
-/* Editor scrollbar: same thin dark fade-on-hover as .dockview-body. */
-.dockview-compose-editor::-webkit-scrollbar { width: 8px; height: 8px; }
-.dockview-compose-editor::-webkit-scrollbar-track { background-color: var(--scrollbar-thin-track, transparent); }
-.dockview-compose-editor::-webkit-scrollbar-thumb {
-    background-color: var(--scrollbar-thin-thumb, #1a1b1e);
-    border-radius: 4px;
-    min-height: 40px;
-}
-.dockview-compose-editor::-webkit-scrollbar-corner { background-color: transparent; }
-.dockview-compose-editor::-webkit-scrollbar-thumb,
-.dockview-compose-editor::-webkit-scrollbar-track { visibility: hidden; }
-.dockview-compose-editor:hover::-webkit-scrollbar-thumb,
-.dockview-compose-editor:hover::-webkit-scrollbar-track,
-.dockview-compose-editor:focus::-webkit-scrollbar-thumb,
-.dockview-compose-editor:focus::-webkit-scrollbar-track { visibility: visible; }
-
-/* ----------------------------------------------------------------------------
-   COMPOSE second-row toolbar — a sub-toolbar directly below the top header row,
-   inside `.dockview-header`. Holds the filename input + (md only) the Edit/Preview
-   toggle + the native blurple Attach button. A thin divider separates it from the
-   top row; it carries the header padding so it lines up with the title above.
-   ------------------------------------------------------------------------- */
-.dockview-compose-toolbar {
+.dockview-attach-toolbar {
     flex: 0 0 auto;
     display: flex;
     align-items: center;
@@ -1253,8 +1185,8 @@
     border-top: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
 }
 /* Filename field: a sober ghost input matching the find bar. Takes the slack so
-   the toggle + Attach stay pinned to the right and it ellipsises first. */
-.dockview-compose-name {
+   Cancel + Attach stay pinned to the right and it ellipsises first. */
+.dockview-attach-name {
     flex: 1 1 auto;
     min-width: 0;
     box-sizing: border-box;
@@ -1267,53 +1199,27 @@
     font-size: 14px;
     outline: none;
 }
-.dockview-compose-name:focus { border-color: var(--text-link, #00a8fc); }
-.dockview-compose-name::placeholder { color: var(--text-muted, #949ba4); }
-/* Edit/Preview toggle: ONE native segmented control — a single inset pill frame
-   holding two equal-width, border-less segments. The active segment is raised as a
-   "thumb" (solid fill + subtle lift), exactly like Discord's compact segmented
-   toggles; the halves never read as two detached buttons. Height matches the
-   filename field + Attach button (30px) so the whole toolbar sits on one baseline. */
-.dockview-compose-seg {
+.dockview-attach-name:focus { border-color: var(--text-link, #00a8fc); }
+.dockview-attach-name::placeholder { color: var(--text-muted, #949ba4); }
+/* Cancel: a borderless ghost text button (secondary action). */
+.dockview-attach-cancel {
     flex: 0 0 auto;
-    box-sizing: border-box;
-    display: flex;
-    align-items: stretch;
     height: 30px;
-    padding: 2px;
-    border-radius: 6px;
-    border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
-    background: var(--input-background, rgba(0, 0, 0, 0.2));
-}
-.dockview-compose-seg-item {
-    flex: 1 1 0;
-    min-width: 54px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 12px;
+    padding: 0 10px;
     border: none;
     border-radius: 4px;
     background: transparent;
     color: var(--interactive-normal, #b5bac1);
     cursor: pointer;
     font-family: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1;
+    font-size: 13px;
+    font-weight: 500;
     white-space: nowrap;
-    transition: background-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+    transition: background-color 0.12s ease, color 0.12s ease;
 }
-.dockview-compose-seg-item:hover {
+.dockview-attach-cancel:hover {
     color: var(--interactive-hover, #dbdee1);
-}
-/* Active segment: the raised thumb. A quiet neutral fill (no brand/blurple, so it
-   never fights the native header) + a hairline lift to read as the selected half. */
-.dockview-compose-seg-item-active,
-.dockview-compose-seg-item-active:hover {
-    color: var(--interactive-active, #f2f3f5);
-    background: var(--background-modifier-selected, rgba(255, 255, 255, 0.14));
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.06));
 }
 /* Keep the native Discord Button (Attach) from being stretched by the flex row. */
-.dockview-compose-attach { flex: 0 0 auto; }
+.dockview-attach-confirm { flex: 0 0 auto; }

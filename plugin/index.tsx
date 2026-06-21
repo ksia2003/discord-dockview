@@ -22,7 +22,7 @@ import managedStyle from "./style.css?managed";
 
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
-import { composeTextToFile, exposeDebug, onChannelSelect, onChannelSidebarView, onMemberSectionToggle, onUserProfileSidebarToggle, startPanel, stopPanel, unexposeDebug } from "./panel";
+import { exposeDebug, onChannelSelect, onChannelSidebarView, onMemberSectionToggle, onNewFile, onUserProfileSidebarToggle, startPanel, stopPanel, unexposeDebug } from "./panel";
 import { STRINGS } from "./strings";
 
 export default definePlugin({
@@ -60,21 +60,19 @@ export default definePlugin({
         }
     },
 
-    // "Text -> file" entry point in Discord's `+` composer menu (navId
-    // "channel-attach"), built entirely out of Discord's OWN UI: it converts the
-    // CURRENT COMPOSER TEXT into a `.md` file attachment (a native attachment
-    // chip), then clears the composer — exactly like Discord's native "Upload
-    // text as file" (UPLOAD_TEXT_AS_FILE), which sits right beside it and already
-    // covers the `.txt` case. No editor, no panel, no filename prompt: the user
-    // types in the real composer and this turns it into a markdown file.
-    // Registering this auto-adds the ContextMenu API as a dependency.
+    // "New file" entry point in Discord's `+` composer menu (navId
+    // "channel-attach"): opens the dock with an EMPTY editable surface (the same
+    // CodeMirror editor every viewer uses, in EDIT mode, default markdown). The
+    // user writes a brand-new file in the dock and attaches it via the second-row
+    // Attach toolbar — no original baseline, so it edits as a plain editor with no
+    // merge diff. Registering this auto-adds the ContextMenu API as a dependency.
     contextMenus: {
         "channel-attach": (children: any, props: any) => {
             children.push(
                 React.createElement(Menu.MenuItem, {
-                    id: "dockview-send-as-md",
-                    label: STRINGS.compose.menuItemMd,
-                    action: () => composeTextToFile(props?.channel ?? null, "md")
+                    id: "dockview-new-file",
+                    label: STRINGS.menu.newFile,
+                    action: () => onNewFile(props?.channel ?? null)
                 })
             );
         }

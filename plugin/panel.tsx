@@ -15,7 +15,7 @@
 import * as DataStore from "@api/DataStore";
 import { getCurrentChannel } from "@utils/discord";
 import { findByProps, findCssClasses } from "@webpack";
-import { Button, ChannelStore, ComponentDispatch, ContextMenuApi, createRoot, DraftStore, DraftType, Menu, React, SelectedChannelStore, UploadHandler } from "@webpack/common";
+import { Button, ChannelStore, ContextMenuApi, createRoot, DraftType, Menu, React, SelectedChannelStore, UploadHandler } from "@webpack/common";
 import type { Root } from "react-dom/client";
 
 // pdf.js — bundled into the renderer by esbuild. We ALSO import the worker
@@ -298,23 +298,18 @@ const content: PanelContent = {
     seq: 0
 };
 
-// --- compose (write) mode state ---------------------------------------------
-// A flag ORTHOGONAL to `content`: when active the body/header render a tiny
-// .txt/.md writer instead of a viewer (the viewer's `content` is left untouched
-// underneath, so closing compose returns to whatever was docked). Like every
-// other piece of panel state these live OUTSIDE React — the editor text is the
-// single source of truth, mutated in the textarea's onChange ONLY, never via a
-// forceRender (a re-render would remount the textarea and break Korean IME
-// composition). The live markdown preview is driven by postMessage instead.
-type ComposeExt = "txt" | "md";
-type ComposeView = "edit" | "preview";
-// `view` is the md Edit/Preview toggle (txt has no preview, so it stays "edit").
-// It replaces the old always-split editor|preview: the body shows EITHER the
-// editor OR a full-width rendered-markdown preview, never both side-by-side.
-const compose = { active: false, name: "", ext: "md" as ComposeExt, body: "", view: "edit" as ComposeView };
-// The channel the compose was opened for (from the `+` menu's props, or the
-// current channel). Resolved at open time, used as the attach target.
-let composeChannel: any = null;
+// --- new-file (empty editable surface) state --------------------------------
+// A brand-new file opened from the `+` composer menu: an EMPTY editable CM in
+// EDIT mode (default markdown), with NO original baseline (so it edits as a plain
+// editor — no merge diff). It IS a normal `content` (type markdown, empty source)
+// rather than a separate compose codebase, so every viewer affordance (find,
+// copy, the edit toggle) works on it unchanged. `isNewFile` flags it so the merge
+// diff is skipped and the attach filename defaults to `message.md`. The chosen
+// filename comes from the attach input (attachBarName) at attach time.
+// `newFileChannel` is the attach target resolved at open time (the menu's
+// props.channel, or the current channel).
+let isNewFile = false;
+let newFileChannel: any = null;
 
 // --- monotonic load token (race guard) --------------------------------------
 // Every load()/restoreDescriptor() bumps this and captures the value as its
@@ -1897,10 +1892,9 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
  *  restores it instantly from cache (no fetch); only a genuinely new file
  *  fetches. The view-state of the file we're leaving is snapshotted first. */
 export function load(opts: { name: string; html?: string | null; url?: string | null; type?: ContentType; noCache?: boolean }) {
-    // Viewing a file exits compose mode so renderBody() shows the file instead of
-    // the compose editor (renderBody short-circuits on compose.active). The draft
-    // body/name are preserved in memory; only the active flag is flipped off.
-    compose.active = false;
+    // Viewing a real file ends any new-file session (the empty editable surface),
+    // so the loaded file gets a fresh original baseline + the merge diff.
+    isNewFile = false;
     const result = showContent({ name: opts.name, html: opts.html, url: opts.url, type: detectType(opts), noCache: opts.noCache });
 
     // Open FIRST, then persist — so the saved per-channel state records open:true.
@@ -1910,7 +1904,7 @@ export function load(opts: { name: string; html?: string | null; url?: string | 
 }
 
 /** The shared "open the panel into the right slot" side-effects, run by both
- *  load() (chip click) and openCompose() (compose menu). Opens FIRST then
+ *  load() (chip click) and onNewFile() (the `+` menu's New file). Opens FIRST then
  *  persists, so the per-channel save records open:true; collapses the native
  *  thread/channel sidebar + member list / profile sidebar so the dock holds the
  *  exclusive right slot exactly like a real thread. Does NOT forceRender — the
@@ -1926,96 +1920,129 @@ function openPanelChrome() {
     syncNativeProfileSidebar(true);
 }
 
-/** Resolve the channel a composed file should attach to: the channel the compose
- *  menu was opened from, else the channel currently being viewed. */
-function resolveComposeChannel(): any {
-    return composeChannel
+/** Resolve the channel a staged file should attach to: the channel a new-file
+ *  session was opened from (if any), else the channel currently being viewed. */
+function resolveTargetChannel(): any {
+    return newFileChannel
         || getCurrentChannel()
         || ChannelStore.getChannel(SelectedChannelStore.getChannelId());
 }
 
-/** Open the dock panel in COMPOSE (write) mode for a new .txt/.md file. Called
- *  from the two `+` composer-menu items. `channel` is the menu's props.channel
- *  if present (else null -> resolve to the current channel at attach time). The
- *  format is sticky across opens but each menu item forces its own. */
-export function openCompose(channel: any | null, ext: ComposeExt = "md") {
-    compose.active = true;
-    compose.ext = ext;
-    compose.view = "edit"; // always open in the editor, not the preview
-    if (!compose.name) compose.name = "untitled";
-    composeChannel = channel ?? resolveComposeChannel();
+/** The `+`-menu "New file": open the dock with an EMPTY editable surface — the
+ *  same CodeMirror editor every text viewer uses (2b), in EDIT mode, default
+ *  markdown. It is a normal `content` (type markdown, empty source) so find / copy
+ *  / the edit toggle all apply unchanged; `isNewFile` flags it so it edits as a
+ *  plain editor (NO merge diff — there is no original baseline) and the attach
+ *  filename defaults to `message.md`. `channel` is the menu's props.channel if
+ *  present (else resolved to the current channel at attach time). */
+export function onNewFile(channel: any | null) {
+    // Leaving whatever was docked: snapshot its view-state so a later re-open of
+    // that file is unaffected (mirrors showContent's switch-away bookkeeping).
+    snapshotActiveView();
+    imgView.fullscreen = false;
+    loadSeq += 1; // supersede any in-flight loader
+
+    isNewFile = true;
+    newFileChannel = channel ?? resolveTargetChannel();
+
+    // A fresh empty markdown content with no url (so it's never cached) in edit
+    // mode. The CM seeds from the (empty) buffer; editSourceText() returns "".
+    resetPdf();
+    resetHtml();
+    resetCode();
+    content.name = STRINGS.attach.defaultNewName; // header title = the default name
+    content.type = "markdown";
+    content.url = null;
+    content.html = null;
+    content.frameHtml = null;
+    content.code = "";
+    content.codeLang = "markdown";
+    content.loading = false;
+    content.error = null;
+    content.binary = false;
+    content.seq += 1;
+    activeCacheKey = null;
+    activeDescriptor = null;
+    pendingScrollTop = null;
+    // open directly in edit mode (the decision: open default = view, but a NEW
+    // file = edit) with an empty buffer.
+    editView.mode = "edit";
+    editView.editBuffer = "";
+
     openPanelChrome();
     forceRender?.();
 }
 
-/** Build a File from the current compose buffer and stage it as a pending
- *  attachment on the target channel (promptToUpload -> review-before-send), then
- *  exit compose mode and close the panel. The filename gets a forced .txt/.md
- *  suffix and the matching text mime. The format stays sticky for the next open;
- *  the body + name reset. No channel -> no-op (we never had a target). */
-export function attachComposeFile() {
-    const { ext } = compose;
-    const mime = ext === "md" ? "text/markdown" : "text/plain";
-    const base = (compose.name || "untitled").trim() || "untitled";
-    // Force the extension: strip a trailing .txt/.md the user may have typed so
-    // we never produce "note.md.md", then append the canonical one.
-    const stripped = base.replace(/\.(txt|md)$/i, "");
-    const name = `${stripped}.${ext}`;
-    const file = new File([compose.body], name, { type: mime });
-
-    const channel = composeChannel || resolveComposeChannel();
-    if (!channel) return;
-    try {
-        UploadHandler.promptToUpload([file], channel, DraftType.ChannelMessage);
-    } catch { /* ignore — staging failed, leave compose open so nothing is lost */ }
-
-    // Exit compose: clear the buffer + name, reset the view, keep `ext` sticky.
-    compose.active = false;
-    compose.body = "";
-    compose.name = "";
-    compose.view = "edit";
-    composeChannel = null;
-    // Close the panel (the same path the header X uses).
-    closePanel();
+/** The pristine original text of the CURRENTLY-shown editable file, used as the
+ *  merge-diff baseline. A NEW file has none (it never had an original) → null, so
+ *  the editor mounts as a plain CM with no diff. Otherwise it's editSourceText()
+ *  (artifact html / code / csv-raw / markdown source). */
+function editOriginalText(): string | null {
+    if (isNewFile) return null;
+    return editSourceText();
 }
 
 /** ⋯-menu "Attach to message": stage the file CURRENTLY shown in the panel as a
  *  pending upload on the active channel (the native attachment chip → review-
- *  before-send), exactly like the compose Attach. The bytes come from what's
- *  ALREADY loaded — never an external fetch (the renderer's CSP blocks arbitrary
- *  URLs, and a re-fetch would be wasteful):
- *    - text family (code / csv / unknown-sniffed-as-text): `content.code`.
- *    - artifact (inline html with no url): `content.html`.
+ *  before-send). When the editable buffer has edits, the EDITED buffer is staged
+ *  (선인: "편집한거까지 해서 첨부") — the original Discord message is never touched.
+ *  `nameOverride` (from the attach filename input) renames the staged file; blank
+ *  → the file's own name. The bytes come from what's ALREADY loaded — never an
+ *  external fetch (the renderer's CSP blocks arbitrary URLs, a re-fetch is waste):
+ *    - editable text family WITH edits (code / csv / markdown / artifact): the
+ *      edited buffer, in memory.
+ *    - text family, no edits: `content.code` (the original text).
+ *    - artifact (inline html with no url), no edits: `content.html`.
  *    - everything else with a url (pdf / image / markdown / artifact-from-url):
  *      fetch the url and attach the blob. This is the SAME Discord-CDN fetch the
- *      loaders already do successfully; it is the file's own source, not an
- *      arbitrary external URL.
- *  Builds a File with the viewed filename + a best-effort mime, then hands it to
- *  the upload handler. Best-effort throughout: any failure is a silent no-op so
- *  nothing the user is viewing is disturbed. */
-export function attachActiveFile() {
-    const channel = resolveComposeChannel();
+ *      loaders already do successfully; it is the file's own source.
+ *  Best-effort throughout: any failure is a silent no-op so nothing is disturbed. */
+export function attachActiveFile(nameOverride?: string | null) {
+    const channel = resolveTargetChannel();
     if (!channel) return;
-    const name = (content.name as string | null) || "file";
+    const baseName = (content.name as string | null) || "file";
+    const name = (nameOverride && nameOverride.trim()) ? nameOverride.trim() : baseName;
 
     const stage = (file: File) => {
         try { UploadHandler.promptToUpload([file], channel, DraftType.ChannelMessage); } catch { /* ignore */ }
+        // a new-file session ends once attached (the editor was for that file).
+        if (isNewFile) { isNewFile = false; newFileChannel = null; }
     };
 
-    // 1) Text family — bytes already in memory, no fetch.
+    const hasEdits = editView.editBuffer != null;
+
+    // 1) Editable text family — attach the EDITED buffer (or the original text if
+    //    unedited). Covers code / csv / unknown-as-text (content.code) AND a NEW
+    //    file (empty content.code, buffer is the written text).
     if (content.code != null && (content.type === "code" || content.type === "csv" || content.type === "unknown")) {
-        stage(new File([content.code], name, { type: "text/plain" }));
+        const text = hasEdits ? editBufferText() : content.code;
+        stage(new File([text], name, { type: "text/plain" }));
         return;
     }
-    // 2) Inline artifact (no url) — the html source is in memory.
+    // 2) Markdown — the raw md source lives in content.code; attach the edited
+    //    buffer when edited, else the original source. (A new markdown file also
+    //    lands here: content.code = "" + the buffer holds the written markdown.)
+    if (content.type === "markdown" && content.code != null) {
+        const text = hasEdits ? editBufferText() : content.code;
+        stage(new File([text], name, { type: "text/markdown" }));
+        return;
+    }
+    // 3) Inline artifact (no url) — the html source is in memory; attach the
+    //    edited buffer when edited, else the original html.
     if (content.type === "html" && content.html != null && !content.url) {
+        const text = hasEdits ? editBufferText() : content.html;
         const base = /\.html?$/i.test(name) ? name : name + ".html";
-        stage(new File([content.html], base, { type: "text/html" }));
+        stage(new File([text], base, { type: "text/html" }));
         return;
     }
-    // 3) Has a url (pdf / image / markdown / artifact-from-url): attach the source
-    //    blob. This re-uses the file's OWN url (Discord CDN), which dvFetch already
-    //    reaches; it is NOT an arbitrary external fetch.
+    // 4) Has a url (pdf / image / markdown-from-url / artifact-from-url): if the
+    //    text family was edited (markdown/artifact have a buffer), attach the
+    //    buffer; otherwise attach the source blob from the file's OWN url.
+    if (hasEdits && (content.type === "markdown" || content.type === "html")) {
+        const mime = content.type === "markdown" ? "text/markdown" : "text/html";
+        stage(new File([editBufferText()], name, { type: mime }));
+        return;
+    }
     if (content.url) {
         const reqUrl = content.url;
         dvFetch(reqUrl)
@@ -2023,36 +2050,6 @@ export function attachActiveFile() {
             .then(blob => { stage(new File([blob], name, { type: blob.type || "application/octet-stream" })); })
             .catch(() => { /* fetch blocked / failed — silent no-op */ });
     }
-}
-
-/** Convert the channel's CURRENT COMPOSER TEXT into a file attachment, mirroring
- *  Discord's own "Upload text as file" (`UPLOAD_TEXT_AS_FILE`) flow — no editor,
- *  no panel, no filename prompt. We read the channel's live draft, wrap it in a
- *  `File` named like Discord (`message.md`/`message.txt`), stage it as a pending
- *  upload (the native attachment chip), then clear the composer — exactly as
- *  Discord does (its handler builds `new File([text], "message.<ext>")`, calls
- *  the upload handler, then dispatches CLEAR_TEXT). Empty composer -> graceful
- *  no-op (the native item hides itself when empty; we just bail). The only
- *  addition over Discord's native item is the `.md`/`text/markdown` variant —
- *  Discord's native always produces `.txt`/`text/plain`. */
-export function composeTextToFile(channel: any | null, ext: ComposeExt = "md") {
-    const ch = channel ?? resolveComposeChannel();
-    if (!ch) return;
-    // Read the live composer draft the same store Discord reads
-    // (DraftStore.getDraft(channelId, DraftType.ChannelMessage)).
-    let text = "";
-    try { text = (DraftStore as any)?.getDraft?.(ch.id, DraftType.ChannelMessage) ?? ""; } catch { /* fall through */ }
-    if (!text) return; // empty composer -> do nothing (matches native: item hidden)
-
-    const mime = ext === "md" ? "text/markdown" : "text/plain";
-    const file = new File([text], `message.${ext}`, { type: mime });
-    try {
-        UploadHandler.promptToUpload([file], ch, DraftType.ChannelMessage);
-    } catch { return; /* staging failed — leave the draft intact, nothing lost */ }
-
-    // Clear the composer so the text becomes the file (mirrors Discord's
-    // CLEAR_TEXT dispatch after a native text->file conversion).
-    try { ComponentDispatch.dispatch("CLEAR_TEXT"); } catch { /* best-effort */ }
 }
 
 /** Re-fetch the file currently shown, bypassing both the in-memory content cache
@@ -4417,108 +4414,8 @@ function LoadingBody() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Compose (write) mode body — a tiny .txt/.md scratch writer.
-//
-// Layout: the body is FULL WIDTH and shows EITHER the editor OR the rendered
-// markdown preview, switched by the Edit/Preview toggle in the compose toolbar
-// (compose.view). There is NO side-by-side split — a narrow side panel can't
-// afford two cramped columns. For .txt there is no preview at all (the editor
-// always fills the width).
-//
-// CRITICAL: the editor text lives in `compose.body` (module state) and is
-// mutated ONLY in the textarea's onChange — never via forceRender. A re-render
-// would remount the textarea mid-IME-composition and corrupt Korean input. The
-// preview is rendered ON DEMAND when the toggle flips to Preview: we bake the
-// current buffer into the iframe's srcDoc (markdownToHtml -> highlightMarkdownCode
-// -> wrapMarkdownDoc, the SAME static path the normal markdown viewer uses), so
-// there is no live-as-you-type update — a keystroke never re-renders React or
-// touches the iframe. Static-bake also sidesteps every CSP/postMessage issue the
-// old live preview fought (the normal viewer proves this path works).
-// ---------------------------------------------------------------------------
-
-/** Build the full preview document for the current compose buffer: the exact
- *  static markdown path the normal viewer uses (markdownToHtml -> highlight ->
- *  wrapMarkdownDoc), so the preview matches the real markdown viewer pixel-for-
- *  pixel and inherits its CSP-safe sandboxed-iframe rendering for free. */
-function composePreviewDoc(): string {
-    const { html, hasMath } = markdownToHtml(compose.body);
-    return wrapMarkdownDoc(highlightMarkdownCode(html), hasMath);
-}
-
-/** The compose body: full-width editor (edit mode) OR full-width rendered
- *  markdown (preview mode). The textarea is uncontrolled (defaultValue + onChange
- *  only — see the CRITICAL note above). The preview is a sandboxed iframe whose
- *  srcDoc is baked from the current buffer; switching to Preview re-renders this
- *  component (the toggle forceRenders), so the srcDoc is rebuilt fresh each time. */
-function ComposeBody() {
-    const isMd = compose.ext === "md";
-    const previewing = isMd && compose.view === "preview";
-
-    if (previewing) {
-        // Empty buffer -> a quiet centred empty-state instead of a blank iframe, so
-        // flipping to Preview with nothing written reads intentionally (matches the
-        // dock's other idle dead-ends).
-        if (!compose.body.trim()) {
-            return React.createElement(
-                "div",
-                { className: "dockview-compose" },
-                React.createElement(
-                    "div",
-                    { className: "dockview-compose-preview-empty" },
-                    STRINGS.compose.previewEmpty
-                )
-            );
-        }
-        // Static-baked preview iframe — same sandbox + srcDoc approach as the
-        // normal markdown viewer. Keyed on "preview" (NOT on width) so a resize
-        // drag never reloads it; flipping to Preview remounts it fresh from the
-        // current buffer.
-        return React.createElement(
-            "div",
-            { className: "dockview-compose" },
-            React.createElement("iframe", {
-                key: "compose-preview",
-                className: "dockview-compose-preview",
-                srcDoc: composePreviewDoc(),
-                sandbox: "allow-scripts allow-same-origin"
-            })
-        );
-    }
-
-    const editor = React.createElement("textarea", {
-        key: "editor",
-        className: "dockview-compose-editor",
-        // defaultValue (not value): the textarea is the live source of truth while
-        // mounted; reading `compose.body` as `value` would make it controlled and
-        // force a re-render per keystroke. We seed it once and read it back via
-        // onChange. The component only remounts when compose toggles edit/preview
-        // or txt/md — never per keystroke.
-        defaultValue: compose.body,
-        spellCheck: false,
-        placeholder: isMd ? STRINGS.compose.editorPlaceholderMd : STRINGS.compose.editorPlaceholderTxt,
-        onChange: (e: any) => { compose.body = e.target.value; },
-        onKeyDown: (e: any) => e.stopPropagation()
-    });
-
-    return React.createElement(
-        "div",
-        { className: "dockview-compose" },
-        editor
-    );
-}
-
-/** Body factory for compose mode. Keyed on ext+view so an edit<->preview or
- *  txt<->md flip cleanly remounts the right body (editor or preview iframe). */
-function renderComposeBody() {
-    return React.createElement(ComposeBody, { key: "compose-" + compose.ext + "-" + compose.view });
-}
-
 /** Body dispatcher: shared loading / error / placeholder, then route. */
 function renderBody() {
-    // Compose (write) mode is orthogonal to `content`: when active it owns the
-    // whole body (the viewer's content is left untouched underneath).
-    if (compose.active) return renderComposeBody();
     if (content.name == null) {
         // Native empty-state pattern: a centred muted glyph + one restrained line
         // of guidance (no illustration, no long copy). Reuses the unsupported-card
@@ -4995,7 +4892,10 @@ function DockMoreMenu() {
             id: "dockview-more-attach",
             label: STRINGS.menu.attach,
             icon: MENU_ICON.attach,
-            action: () => attachActiveFile()
+            // Open the inline filename bar (grammar rule 6) rather than attaching
+            // straight away — the user picks/keeps a name, then confirms. The bar's
+            // Attach stages the EDITED buffer when the file has edits.
+            action: () => openAttachBar()
         }));
     }
 
@@ -5070,104 +4970,101 @@ function DockMoreMenu() {
 }
 
 // ---------------------------------------------------------------------------
-// Compose-mode SECOND-ROW toolbar (filename input + Edit/Preview toggle + Attach).
+// ATTACH FILENAME BAR (2c-2) — a native inline filename input shown as a SECOND
+// header row when the user picks ⋯ → "첨부하기" (or attaches a brand-new file).
 //
-// The top header row is strictly Discord grammar (file-type glyph + a TYPE-LABEL
-// title + close X — identical structure to the PDF/code viewers). All compose-
-// specific controls live HERE, in a sub-toolbar directly below the top row, using
-// NATIVE Discord components: a brand (blurple) `Button` for Attach and a unified
-// segmented Edit/Preview control (one inset pill, two halves, the active one a
-// raised thumb — it reads as ONE control, not two buttons). This sits inside
-// `.dockview-header` after the
-// upper row, so the card's flex-column layout flows the body BELOW it naturally —
-// no pixel-offset math needed.
+// Discord grammar rule 6 (the "new thread name" pattern): the original filename
+// is the input's PLACEHOLDER, so leaving it blank reuses that name; typing renames
+// the staged file. A brand-new file (no original name) uses `message.md` as the
+// placeholder. This is a minimal NATIVE-style inline input (NOT a custom modal):
+// it occupies the same second-row strip the viewer controls use, so the card's
+// flex-column layout flows the body below it with no offset math. Confirm = the
+// real Discord primary (BRAND/blurple) Button (grammar rule 3); Cancel = a ghost
+// text button (rule 4).
 //
 // The filename field is UNCONTROLLED (defaultValue + onChange), so typing it never
-// re-renders — same IME-safety as the editor — and it keeps the onKeyDown
-// stopPropagation so the panel's single-key shortcuts never eat a keystroke. The
-// module mirror (`compose.name`) is the source the attach builder reads.
+// re-renders — IME-safe — and keeps the onKeyDown stopPropagation so the panel's
+// single-key shortcuts never eat a keystroke. `attachBarName` mirrors the typed
+// value; Enter confirms, Esc cancels.
 // ---------------------------------------------------------------------------
 
-/** The filename field. Uncontrolled (defaultValue, mutated in onChange only) so a
- *  keystroke never re-renders; keyed on ext so the seeded value refreshes when the
- *  format flips. */
-function ComposeFilenameInput() {
-    return React.createElement("input", {
-        key: "compose-name-" + compose.ext,
-        className: "dockview-compose-name",
-        type: "text",
-        placeholder: STRINGS.compose.namePlaceholder,
-        "aria-label": STRINGS.compose.namePlaceholder,
-        defaultValue: compose.name,
-        spellCheck: false,
-        onChange: (e: any) => { compose.name = e.target.value; },
-        onKeyDown: (e: any) => e.stopPropagation()
-    });
+// When true the second header row is the attach filename bar (overrides the
+// viewer controls strip). `attachBarName` mirrors the input's live value.
+let attachBarOpen = false;
+let attachBarName = "";
+
+/** Open the attach filename bar for the currently-shown file. The placeholder is
+ *  the file's own name; the user may rename or leave it blank. */
+function openAttachBar() {
+    attachBarOpen = true;
+    attachBarName = "";
+    forceRender?.();
+}
+function closeAttachBar() {
+    attachBarOpen = false;
+    attachBarName = "";
+    forceRender?.();
+}
+/** Confirm the attach bar: stage the (possibly edited) buffer under the chosen
+ *  name (blank → the file's own name), then close the bar. */
+function confirmAttachBar() {
+    attachActiveFile(attachBarName);
+    closeAttachBar();
 }
 
-/** One segment of the Edit/Preview control. NOT a bordered tool button (a border
- *  reads as a detached button) — these are border-less halves of
- *  ONE pill: the parent `.dockview-compose-seg` is the single frame; the active
- *  segment gets a raised "thumb" fill. role=tab + aria-selected so a screen reader
- *  hears one segmented control, not two buttons. */
-function composeSegItem(key: string, label: string, selected: boolean, onClick: () => void) {
-    return React.createElement(
-        "button",
-        {
-            key,
-            type: "button",
-            className: "dockview-compose-seg-item" + (selected ? " dockview-compose-seg-item-active" : ""),
-            role: "tab",
-            "aria-selected": selected,
-            "aria-label": label,
-            title: label,
-            onClick
-        },
-        label
-    );
+/** The placeholder for the attach filename input: the file's own name, or the
+ *  new-file default (`message.md`) when there is none. */
+function attachPlaceholderName(): string {
+    return (content.name as string | null) || STRINGS.attach.defaultNewName;
 }
 
-/** The Edit/Preview toggle — ONE Discord-native segmented control: a single inset
- *  pill frame holding two equal-width, border-less segments, the active one raised
- *  as a thumb. Flips `compose.view` and forceRenders so the body re-routes (editor
- *  <-> rendered preview). md only. */
-function composeViewToggle() {
-    const setView = (view: ComposeView) => {
-        if (compose.view === view) return;
-        compose.view = view;
-        forceRender?.();
-    };
-    const editing = compose.view === "edit";
+/** The attach filename sub-toolbar (second header row): a native filename input
+ *  (original name as placeholder, grammar rule 6) + a blurple Attach confirm + a
+ *  ghost Cancel. */
+function attachToolbar() {
+    const placeholder = attachPlaceholderName();
     return React.createElement(
         "div",
-        { className: "dockview-compose-seg", role: "tablist", "aria-label": STRINGS.compose.editTab + " / " + STRINGS.compose.previewTab },
-        composeSegItem("compose-edit", STRINGS.compose.editTab, editing, () => setView("edit")),
-        composeSegItem("compose-preview", STRINGS.compose.previewTab, !editing, () => setView("preview"))
-    );
-}
-
-/** The compose sub-toolbar (second header row): filename input + (md only) the
- *  Edit/Preview toggle + the native blurple Attach button. Attach builds the File
- *  and stages it (promptToUpload), then exits compose + closes. */
-function composeToolbar() {
-    const isMd = compose.ext === "md";
-    return React.createElement(
-        "div",
-        { className: "dockview-compose-toolbar" },
-        React.createElement(ComposeFilenameInput, null),
-        // md only: the Edit/Preview toggle (txt has no preview).
-        isMd ? composeViewToggle() : null,
-        // Attach: Discord's real primary (BRAND/blurple) button.
+        { className: "dockview-attach-toolbar" },
+        React.createElement("input", {
+            key: "attach-name-" + content.seq,
+            className: "dockview-attach-name",
+            type: "text",
+            placeholder,
+            "aria-label": STRINGS.attach.hint,
+            // autoFocus so the rename field is ready the instant the bar opens.
+            autoFocus: true,
+            defaultValue: "",
+            spellCheck: false,
+            onChange: (e: any) => { attachBarName = e.target.value; },
+            onKeyDown: (e: any) => {
+                e.stopPropagation();
+                if (e.key === "Enter") { e.preventDefault(); confirmAttachBar(); }
+                else if (e.key === "Escape") { e.preventDefault(); closeAttachBar(); }
+            }
+        }),
+        // Cancel: a ghost text button (grammar rule 4).
+        React.createElement(
+            "button",
+            {
+                key: "attach-cancel",
+                type: "button",
+                className: "dockview-attach-cancel",
+                onClick: () => closeAttachBar()
+            },
+            STRINGS.attach.cancel
+        ),
+        // Attach: Discord's real primary (BRAND/blurple) button (grammar rule 3).
         React.createElement(
             Button,
             {
-                className: "dockview-compose-attach",
+                className: "dockview-attach-confirm",
                 color: Button.Colors.BRAND,
                 size: Button.Sizes.SMALL,
-                "aria-label": STRINGS.compose.attachHint,
-                onClick: () => attachComposeFile()
+                "aria-label": STRINGS.attach.hint,
+                onClick: () => confirmAttachBar()
             },
-            STRINGS.compose.attach
+            STRINGS.attach.confirm
         )
     );
 }
@@ -5286,30 +5183,23 @@ function DockPanel() {
     }, []);
 
     const close = useCallback(() => {
-        // Exit compose first so X closes the writer and returns to whatever was
-        // docked underneath (or the empty placeholder) on the next open.
-        compose.active = false;
+        // X also dismisses any open attach bar so the next open is clean.
+        attachBarOpen = false;
         closePanel();
     }, []);
 
     const hasContent = content.name != null;
-    // Compose mode dresses the TOP row in pure Discord grammar — the file-type
-    // glyph + a TYPE-LABEL title ("New text file" / "New markdown file"), identical
-    // in structure to the viewers. The filename/Attach/toggle live in the SECOND
-    // row (the compose toolbar), never up here.
-    const title = compose.active
-        ? (compose.ext === "md" ? STRINGS.compose.menuItemMd : STRINGS.compose.menuItemTxt)
-        : hasContent ? (content.name as string) : "DockView";
+    // The TOP row is pure Discord grammar — the file-type glyph + the filename
+    // title. A new file shows its default name (message.md) like any other file;
+    // the rename/Attach controls live in the SECOND row, never up here.
+    const title = hasContent ? (content.name as string) : "DockView";
 
     // Leading file-type glyph (mirrors a real thread header's [thread glyph] +
     // title structure). One muted, single-colour, document-framed icon per
     // content type so the header reads as "a file is docked here" at a glance.
     // Paths are built lazily here (React is ready now) from the plain-data map.
-    // In compose the glyph is the file-type being written (markdown vs code/text).
-    const iconType = compose.active
-        ? (compose.ext === "md" ? "markdown" : "code")
-        : content.type;
-    const leadingIcon = (compose.active || hasContent)
+    const iconType = content.type;
+    const leadingIcon = hasContent
         ? React.createElement(
             "svg",
             {
@@ -5376,11 +5266,12 @@ function DockPanel() {
     );
 
     // The header grows to TWO rows whenever there's a second-row strip below the
-    // top row: compose's sub-toolbar, OR a viewer's relocated controls. The
-    // `--tworow` modifier releases the fixed 48px height so the section fits both
-    // rows; `--compose` additionally drives compose-only body layout (see CSS).
-    const showViewerRow = !compose.active && hasViewerControls();
-    const twoRow = compose.active || showViewerRow;
+    // top row: the attach filename bar (when open) OR a viewer's relocated
+    // controls. The `--tworow` modifier releases the fixed 48px height so the
+    // section fits both rows. The attach bar takes the slot over the controls.
+    const showAttachBar = attachBarOpen && hasContent;
+    const showViewerRow = !showAttachBar && hasViewerControls();
+    const twoRow = showAttachBar || showViewerRow;
 
     return React.createElement(
         "div",
@@ -5402,10 +5293,9 @@ function DockPanel() {
                     // needs to GROW to fit the second-row strip, otherwise the upper title
                     // row overflows upward and gets clipped past the card's top edge (the
                     // title + close X slice off). `--tworow` releases the fixed height and
-                    // top-aligns the rows; `--compose` adds compose-only layout (see CSS).
+                    // top-aligns the rows.
                     className: `${CLS.headerSection} dockview-header`
                         + (twoRow ? " dockview-header--tworow" : "")
-                        + (compose.active ? " dockview-header--compose" : "")
                 },
                 React.createElement(
                     "div",
@@ -5413,10 +5303,7 @@ function DockPanel() {
                     React.createElement(
                         "div",
                         { className: `${CLS.headerChildren} dockview-header-children` },
-                        // Top row is pure Discord grammar in BOTH modes: [file-type
-                        // glyph] + title. In compose the title is the TYPE LABEL and
-                        // the glyph is the format being written — no compose controls
-                        // up here (they live in the second-row toolbar below).
+                        // Top row is pure Discord grammar: [file-type glyph] + title.
                         leadingIcon,
                         React.createElement(
                             "h2",
@@ -5427,21 +5314,19 @@ function DockPanel() {
                     React.createElement(
                         "div",
                         { className: `${CLS.toolbar} dockview-header-actions` },
-                        // The top row is LOCKED to icon / name / ⋯ / X for every
-                        // viewer. ⋯ belongs to the viewer, not the writer — in compose
-                        // mode only the close (X, which exits compose) is shown.
-                        compose.active ? null : moreBtn,
+                        // The top row is LOCKED to icon / name / ⋯ / X for every viewer.
+                        moreBtn,
                         closeBtn
                     )
                 ),
-                // SECOND ROW. Compose: the filename + (md) Edit/Preview + Attach
-                // sub-toolbar. Viewers (pdf/image/code/csv): the per-type controls
-                // strip — relocated here so the top row stays icon/name/⋯/X. Both are
-                // a sibling of the upper row inside `.dockview-header`, so the card's
-                // flex-column layout flows the body below with no offset math.
-                // Artifact / markdown / unknown have NO second row (no controls).
-                compose.active
-                    ? composeToolbar()
+                // SECOND ROW. Attach bar (when open): the filename input + Attach +
+                // Cancel. Otherwise viewers (pdf/image/code/csv/md/artifact): the
+                // per-type controls strip — relocated here so the top row stays
+                // icon/name/⋯/X. Both are a sibling of the upper row inside
+                // `.dockview-header`, so the card's flex-column layout flows the body
+                // below with no offset math. Unknown has NO second row (no controls).
+                showAttachBar
+                    ? attachToolbar()
                     : showViewerRow
                         ? React.createElement(
                             "div",
@@ -5846,10 +5731,9 @@ function restoreHiddenMembers() {
     syncNativeProfileSidebar(false);
 }
 
-/** Close the panel — the side-effects shared by the header X (close useCallback)
- *  and compose's attach-then-close. Persists open:false, restores the native
- *  sidebars/member list we collapsed, and re-renders. Does NOT touch compose
- *  state; callers clear `compose.active` themselves. */
+/** Close the panel — the side-effects run by the header X (close useCallback).
+ *  Persists open:false, restores the native sidebars/member list we collapsed,
+ *  and re-renders. */
 function closePanel() {
     state.open = false;
     imgView.fullscreen = false; // never strand the lightbox over a closed panel
@@ -6134,7 +6018,12 @@ export function exposeDebug() {
         get selfProfileToggle() { return selfProfileToggle; },
         closeNativeChannelSidebar,
         onMemberSectionToggle, onUserProfileSidebarToggle, onChannelSidebarView, closeForExclusiveTakeover,
-        openCompose, attachComposeFile, attachActiveFile, composeTextToFile, get compose() { return compose; },
+        attachActiveFile, onNewFile,
+        // 2c attach + new-file debug surface: the attach filename bar + the
+        // new-file flags so CDP can drive the attach-edited-buffer + new-file paths.
+        openAttachBar, closeAttachBar, confirmAttachBar,
+        get attachBarOpen() { return attachBarOpen; }, set attachBarName(v: string) { attachBarName = v; },
+        get isNewFile() { return isNewFile; },
         // 2b editable-surface debug surface: the mode toggles + the buffer so CDP
         // can drive edit-mode + assert the temporary buffer / re-render loop.
         editView, csvView, toggleEditMode, toggleCsvMode, toggleCodeFind,
