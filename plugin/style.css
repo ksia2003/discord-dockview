@@ -263,19 +263,15 @@
    Discord chat colour, not black. Theme-aware: follows --background-base-lower
    (and any chat gradient) just like the native content area. */
 /* Wrapper around the scrolling body: the flex child + positioning context for
-   overlays (e.g. the PDF find bar) that must stay pinned while the body scrolls. */
+   overlays (the floating find box) that must stay pinned while the body scrolls.
+   The find box is absolutely positioned against THIS, so it floats over the
+   content top-right and never insets the body (grammar rule 7). */
 .dockview-body-wrap {
     flex: 1 1 auto;
     min-height: 0;
     position: relative;
     display: flex;
     flex-direction: column;
-}
-/* When the find dropdown is open it occupies a 38px row pinned to the top of the
-   body-wrap; inset the scrolling body by that height so no content hides under
-   the bar (the first PDF page stays fully visible). */
-.dockview-body-wrap.dockview-find-open .dockview-body {
-    margin-top: 38px;
 }
 .dockview-body {
     flex: 1 1 auto;
@@ -739,32 +735,50 @@
     user-select: none;
 }
 
-/* FIND BAR (reusable: PDF today, code next). A one-row dropdown surface pinned
-   to the top of the body, just under the header — a secondary "find" surface
-   that appears only when find is toggled on (spec §2.1: "찾기는 활성화 시에만 한
-   줄 드롭다운"). Spans the body width with a hairline under the header so it
-   reads as an extension of the header bar rather than a floating island.
-   Discord may intercept the global Ctrl+F, so this is our own UI. */
+/* FIND BOX — a FLOATING browser-style Ctrl+F panel (grammar rule 7), shared by
+   PDF + every CodeMirror surface. It is anchored TOP-RIGHT over the content
+   (small margin), floating above the body rather than consuming a header row.
+   The row-2 find icon toggles it; Ctrl+F opens it, Esc closes. Reads as a small
+   dark Discord popout: the elevated/floating surface token + a thin border + a
+   soft shadow, like Discord's own popouts. Discord may intercept the global
+   Ctrl+F, so this is our own UI. max-width caps it on a narrow dock; it never
+   covers more than a sliver of the top-right corner. */
 .dockview-find {
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
+    top: 8px;
+    right: 12px;
     z-index: 10;
     display: flex;
     align-items: center;
-    gap: 2px;
-    height: 38px;
-    padding: 0 6px 0 12px;
+    gap: 6px;
+    max-width: calc(100% - 24px);
+    padding: 5px 6px 5px 8px;
     box-sizing: border-box;
-    background: var(--background-base-low, var(--background-secondary, #2b2d31));
-    border-bottom: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    background: var(--background-floating, var(--background-base-low, #232428));
+    border: 1px solid var(--border-faint, var(--background-modifier-accent, rgba(255, 255, 255, 0.08)));
+    border-radius: 8px;
+    box-shadow: var(--shadow-high, 0 8px 16px rgba(0, 0, 0, 0.24));
+}
+/* The text field = a Discord-input-styled pill that holds the query + the live
+   counter at its right edge (the browser/VS Code look — the number sits IN the
+   field). The field itself carries the input chrome so the counter shares it. */
+.dockview-find-field {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 8px;
+    box-sizing: border-box;
+    background: var(--input-background, rgba(0, 0, 0, 0.2));
+    border-radius: 4px;
 }
 .dockview-find-input {
     flex: 1 1 auto;
     min-width: 0;
-    height: 28px;
+    width: 9rem;
+    height: 100%;
     border: none;
     outline: none;
     background: transparent;
@@ -775,23 +789,41 @@
 .dockview-find-input::placeholder { color: var(--text-muted, #87898c); }
 .dockview-find-count {
     flex: 0 0 auto;
-    min-width: 38px;
-    text-align: center;
+    text-align: right;
     font-size: 12px;
     font-variant-numeric: tabular-nums;
     color: var(--text-muted, #949ba4);
     user-select: none;
+    white-space: nowrap;
 }
-/* The "Aa" case-sensitivity toggle: a compact text button. Reuses
-   .dockview-tool-btn for hover/active; this just tightens it. */
+/* Trailing control cluster: Aa case toggle · prev · next · ✕. */
+.dockview-find-actions {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 1px;
+}
+/* Compact the shared tool buttons inside the box. Reuse .dockview-tool-btn for
+   the ghost-icon hover/active language; this just tightens the geometry. */
 .dockview-find .dockview-tool-btn {
     flex: 0 0 auto;
     height: 28px;
-    min-width: 28px;
+    min-width: 26px;
+    padding: 0 4px;
 }
+/* The "Aa" case-sensitivity toggle: a compact text button (universal find-box
+   convention — browsers, VS Code, Acrobat). */
 .dockview-find-case {
     font-size: 12px;
     font-weight: 600;
+}
+/* Hairline dividing the match-nav cluster from the close, like a browser box. */
+.dockview-find-sep {
+    flex: 0 0 auto;
+    width: 1px;
+    height: 18px;
+    margin: 0 3px;
+    background: var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
 }
 
 /* IMAGE renderer (content type "image"): a centered, fit(contain) image with

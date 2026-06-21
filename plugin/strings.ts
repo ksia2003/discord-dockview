@@ -80,10 +80,13 @@ export const STRINGS = {
         download: "Download"
     },
 
-    // --- find bar -----------------------------------------------------------
+    // --- find box -----------------------------------------------------------
+    // A floating, browser-style Ctrl+F box anchored top-right over the content
+    // (grammar rule 7). The input placeholder is a plain "Find" (rule 6 style —
+    // a quiet hint, not a sentence); the same word drives every find-capable body
+    // (PDF + every CodeMirror surface), so there's one placeholder, not per-type.
     find: {
-        placeholderPdf: "Find in document",
-        placeholderCode: "Find in file",
+        placeholder: "Find",
         matchCase: "Match case",
         prevMatch: "Previous match (Shift+Enter)",
         nextMatch: "Next match (Enter)",

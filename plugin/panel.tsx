@@ -3246,14 +3246,16 @@ function PdfBody() {
     });
 }
 
-// The FIND bar is a small one-row dropdown surface (input + counter + Aa +
-// prev/next + close). Discord may intercept the global Ctrl+F, so this is our
-// own UI. It is a GENERIC, reusable component (PERF-4 / CODE-2 prep): the PDF
-// viewer drives it today, the code viewer will reuse it verbatim. All behaviour
-// (query, counter, case, next/prev, close) is supplied through a `FindBarModel`
-// so the bar itself knows nothing about pdf.js vs code — only how to lay the
-// row out. No behaviour change from the old PdfFindBar: same fields, same keys,
-// same handlers, just parameterised.
+// The FIND box is a small FLOATING browser-style Ctrl+F panel (grammar rule 7):
+// a compact dark box anchored TOP-RIGHT over the content — input + match counter
+// + Aa + prev/next + ✕. It floats over the body (does NOT consume a header row,
+// the way the old in-header find dropdown did); the row-2 find ICON toggles it.
+// Discord may intercept the global Ctrl+F, so this is our own UI. It is a
+// GENERIC, reusable component: the PDF viewer and EVERY CodeMirror surface (code,
+// CSV-raw, markdown/artifact edit) drive the SAME box. All behaviour (query,
+// counter, case, next/prev, close) is supplied through a `FindBarModel`, so the
+// box itself knows nothing about pdf.js vs CM — only how to lay itself out. Same
+// fields/keys/handlers as before; only the chrome (floating top-right) changed.
 interface FindBarModel {
     query: string;
     matches: number;
@@ -3276,45 +3278,61 @@ function FindBar({ model }: { model: FindBarModel }) {
     const counter = model.matches > 0
         ? `${model.active}/${model.matches}`
         : (model.query ? "0/0" : "");
+    // Lay the floating box out as a browser Ctrl+F panel: a text input that holds
+    // the query + the live "cur/total" counter pinned at its right edge, then a
+    // trailing control cluster (Aa case toggle · prev · next) and a divided-off ✕
+    // close. Grouping the counter INSIDE the input (a `.dockview-find-field`
+    // wrapper) is the browser/VS Code look — the number sits in the field, not as a
+    // separate column.
     return React.createElement(
         "div",
         { className: "dockview-find" },
-        React.createElement("input", {
-            ref: inputRef,
-            className: "dockview-find-input",
-            type: "text",
-            placeholder: model.placeholder,
-            "aria-label": model.placeholder,
-            value: model.query,
-            onChange: (e: any) => model.setQuery(e.target.value),
-            onKeyDown: (e: any) => {
-                e.stopPropagation();
-                if (e.key === "Enter") { e.preventDefault(); if (e.shiftKey) model.prev(); else model.next(); }
-                else if (e.key === "Escape") { e.preventDefault(); model.close(); }
-            }
-        }),
-        React.createElement("span", { className: "dockview-find-count" }, counter),
-        // Case-sensitivity toggle (default off). Text "Aa" rather than an icon —
-        // the universal find-bar convention (browsers, VS Code, Acrobat).
-        React.createElement("button", {
-            key: "find-case",
-            type: "button",
-            className: "dockview-tool-btn dockview-find-case" + (model.caseSensitive ? " dockview-tool-btn-active" : ""),
-            "aria-label": STRINGS.find.matchCase,
-            "aria-pressed": model.caseSensitive,
-            title: STRINGS.find.matchCase,
-            onMouseDown: (e: any) => e.preventDefault(), // keep focus in the input
-            onClick: () => model.toggleCase()
-        }, "Aa"),
-        toolBtn("find-prev", STRINGS.find.prevMatch,
-            "M15.3 5.3a1 1 0 0 1 0 1.4L10 12l5.3 5.3a1 1 0 0 1-1.42 1.4l-6-6a1 1 0 0 1 0-1.4l6-6a1 1 0 0 1 1.42 0Z",
-            () => model.prev()),
-        toolBtn("find-next", STRINGS.find.nextMatch,
-            "M8.7 5.3a1 1 0 0 0 0 1.4L14 12l-5.3 5.3a1 1 0 0 0 1.42 1.4l6-6a1 1 0 0 0 0-1.4l-6-6a1 1 0 0 0-1.42 0Z",
-            () => model.next()),
-        toolBtn("find-close", STRINGS.find.close,
-            "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z",
-            () => model.close())
+        React.createElement(
+            "div",
+            { className: "dockview-find-field" },
+            React.createElement("input", {
+                ref: inputRef,
+                className: "dockview-find-input",
+                type: "text",
+                placeholder: model.placeholder,
+                "aria-label": model.placeholder,
+                value: model.query,
+                onChange: (e: any) => model.setQuery(e.target.value),
+                onKeyDown: (e: any) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") { e.preventDefault(); if (e.shiftKey) model.prev(); else model.next(); }
+                    else if (e.key === "Escape") { e.preventDefault(); model.close(); }
+                }
+            }),
+            React.createElement("span", { className: "dockview-find-count" }, counter)
+        ),
+        React.createElement(
+            "div",
+            { className: "dockview-find-actions" },
+            // Case-sensitivity toggle (default off). Text "Aa" rather than an icon —
+            // the universal find-bar convention (browsers, VS Code, Acrobat).
+            React.createElement("button", {
+                key: "find-case",
+                type: "button",
+                className: "dockview-tool-btn dockview-find-case" + (model.caseSensitive ? " dockview-tool-btn-active" : ""),
+                "aria-label": STRINGS.find.matchCase,
+                "aria-pressed": model.caseSensitive,
+                title: STRINGS.find.matchCase,
+                onMouseDown: (e: any) => e.preventDefault(), // keep focus in the input
+                onClick: () => model.toggleCase()
+            }, "Aa"),
+            toolBtn("find-prev", STRINGS.find.prevMatch,
+                "M15.3 5.3a1 1 0 0 1 0 1.4L10 12l5.3 5.3a1 1 0 0 1-1.42 1.4l-6-6a1 1 0 0 1 0-1.4l6-6a1 1 0 0 1 1.42 0Z",
+                () => model.prev()),
+            toolBtn("find-next", STRINGS.find.nextMatch,
+                "M8.7 5.3a1 1 0 0 0 0 1.4L14 12l-5.3 5.3a1 1 0 0 0 1.42 1.4l6-6a1 1 0 0 0 0-1.4l-6-6a1 1 0 0 0-1.42 0Z",
+                () => model.next()),
+            // a hairline divides the match-nav cluster from the close, like a browser
+            React.createElement("span", { key: "find-sep", className: "dockview-find-sep" }),
+            toolBtn("find-close", STRINGS.find.close,
+                "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z",
+                () => model.close())
+        )
     );
 }
 
@@ -3326,7 +3344,7 @@ function PdfFindBar() {
             matches: pdfView.findMatches,
             active: pdfView.findActive,
             caseSensitive: pdfView.findCase,
-            placeholder: STRINGS.find.placeholderPdf,
+            placeholder: STRINGS.find.placeholder,
             setQuery: (q: string) => pdfControls?.setFindQuery(q),
             next: () => pdfControls?.findNext(),
             prev: () => pdfControls?.findPrev(),
@@ -4157,7 +4175,7 @@ function CodeFindBar() {
             matches: codeView.findMatches,
             active: codeView.findActive,
             caseSensitive: codeView.findCase,
-            placeholder: STRINGS.find.placeholderCode,
+            placeholder: STRINGS.find.placeholder,
             setQuery: (q: string) => { codeView.findQuery = q; codeCtrl?.rebuildFind(q); },
             next: () => {
                 if (!codeView.findMatches) return;
@@ -4171,6 +4189,14 @@ function CodeFindBar() {
             close: () => toggleCodeFind()
         }
     });
+}
+
+/** Focus the floating find box's text input (if it's mounted). Used by the
+ *  Ctrl+F handler for the edge where the box is already open with no matches —
+ *  a fresh open self-focuses via the FindBar's mount effect. */
+function focusFindBox() {
+    const el = document.querySelector<HTMLInputElement>(`#${HOST_ID} .dockview-find-input`);
+    el?.focus();
 }
 
 /** Toggle the code find bar. Closing clears the query + highlights. */
@@ -5495,19 +5521,19 @@ function DockPanel() {
                         : null
             ),
             (() => {
-                // The find bar is a one-row dropdown pinned to the TOP of the
-                // body-wrap; when it's open we add a modifier so the scrolling
-                // body is inset below it (no content hidden under the bar). PDF and
-                // code share the same FindBar component, each wired to its viewer.
+                // The find box is a FLOATING browser-style Ctrl+F panel positioned
+                // top-right OVER the body (grammar rule 7) — it does NOT inset the
+                // scrolling body the way the old in-header find dropdown did. PDF and
+                // every CM surface share the same FindBar component, each wired to its
+                // viewer. The box sits last inside the (position:relative) body-wrap.
                 const pdfFind = hasContent && content.type === "pdf" && pdfView.findOpen && content.pdf.doc;
                 // Code find applies to plain code, a CSV viewed in RAW mode, and a
                 // markdown / .artifact in EDIT mode — every case whose body is the
                 // editable/read CM. The grid + rendered iframe views have no find.
                 const codeFind = hasContent && codeView.findOpen && cmBodyShown();
-                const findShown = pdfFind || codeFind;
                 return React.createElement(
                     "div",
-                    { className: "dockview-body-wrap" + (findShown ? " dockview-find-open" : "") },
+                    { className: "dockview-body-wrap" },
                     React.createElement(
                         "div",
                         {
@@ -6012,20 +6038,42 @@ export function startPanel() {
         const ae = document.activeElement as HTMLElement | null;
         const focused = host.contains(ae);
         if (!focused) return;
-        // Belt-and-braces: if focus is on a text field (the panel's own find /
-        // page-jump inputs, or anything editable), single-key shortcuts must not
-        // fire. The panel inputs also stopPropagation, this is the backstop.
-        if (isEditableTarget(ae)) return;
 
-        // PDF branch: Ctrl+F (our find, since Discord may eat the global one),
-        // and — with NO modifier — ←/→ or PageUp/PageDown for page nav, +/- zoom.
-        if (content.type === "pdf" && pdfControls) {
-            if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+        // Ctrl/Cmd+F — open (and focus) the floating find box, or jump to the next
+        // match if it's already open. This MUST run BEFORE the editable-target bail
+        // below: the CM body's `.cm-content` reports as editable (it's a read-only
+        // contenteditable), so a focus inside the code/CSV-raw/edit surface would
+        // otherwise swallow Ctrl+F and the box would never open while you're reading
+        // the file — the exact moment you want to find. Discord may eat the global
+        // Ctrl+F, so we own it whenever the dock holds focus. (Esc/Enter/Shift+Enter
+        // are handled by the find input itself once it's focused.)
+        if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+            if (content.type === "pdf" && pdfControls && content.pdf?.doc) {
                 e.preventDefault();
                 if (!pdfView.findOpen) pdfControls.toggleFind();
                 else pdfControls.findNext();
                 return;
             }
+            if (cmBodyShown()) {
+                e.preventDefault();
+                if (!codeView.findOpen) toggleCodeFind();
+                else if (codeView.findMatches) codeCtrl?.focusMatch(codeView.findActive % codeView.findMatches);
+                else focusFindBox();
+                return;
+            }
+            // any other body (image / md-rendered / csv-grid): no find target —
+            // fall through (the box never opens where the row-2 icon is dimmed).
+        }
+
+        // Belt-and-braces: if focus is on a text field (the panel's own find /
+        // page-jump inputs, or anything editable), single-key shortcuts must not
+        // fire. The panel inputs also stopPropagation, this is the backstop.
+        if (isEditableTarget(ae)) return;
+
+        // PDF branch: with NO modifier, ←/→ or PageUp/PageDown for page nav, +/-
+        // zoom. (Ctrl+F find is handled by the shared block above, before the
+        // editable bail, so it works whatever the dock-internal focus is.)
+        if (content.type === "pdf" && pdfControls) {
             if (e.ctrlKey || e.altKey || e.metaKey) return;
             if (e.key === "ArrowRight" || e.key === "PageDown") {
                 e.preventDefault(); pdfControls.nextPage();
@@ -6039,20 +6087,9 @@ export function startPanel() {
             return;
         }
 
-        // Code branch: Ctrl+F toggles our find (Discord may eat the global one);
-        // when find is already open Ctrl+F jumps to the next match, matching the
-        // PDF UX. The find input itself handles Enter/Shift+Enter/Esc once focused.
-        // Applies to every CM body: plain code, a CSV in RAW mode, and markdown /
-        // .artifact in EDIT mode (cmBodyShown covers all three).
-        if (cmBodyShown()) {
-            if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
-                e.preventDefault();
-                if (!codeView.findOpen) toggleCodeFind();
-                else if (codeView.findMatches) codeCtrl?.focusMatch(codeView.findActive % codeView.findMatches);
-                return;
-            }
-            return;
-        }
+        // CM bodies (code / CSV-raw / markdown-edit / artifact-edit) have no other
+        // single-key shortcuts; their Ctrl+F is handled by the shared block above.
+        if (cmBodyShown()) return;
 
         // Image zoom keys — only when no modifier.
         if (e.ctrlKey || e.altKey || e.metaKey) return;
