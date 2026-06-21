@@ -160,6 +160,93 @@
     cursor: ew-resize;
 }
 
+/* TAB STRIP (pin-driven multi-window). A browser-style row of tabs ABOVE the
+   per-window header, shown ONLY when ≥2 windows exist. Built from Discord's tab
+   grammar: a flush strip on the chat surface, ghost-fill inactive tabs, a darker
+   "selected" fill for the active tab (the member-list state-colour language), and
+   a faint divider below. Compact + horizontally scrollable for the narrow dock —
+   tabs shrink to a sane min then the strip scrolls. No invented chrome. */
+.dockview-tab-strip {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    padding: 4px 6px 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none; /* the strip itself never shows a bar (it's chrome) */
+    background: var(--background-base-lower, #1a1a1e);
+    border-bottom: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+}
+.dockview-tab-strip::-webkit-scrollbar { height: 0; width: 0; }
+.dockview-tab {
+    flex: 0 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 64px;
+    max-width: 180px;
+    height: 32px;
+    padding: 0 6px 0 10px;
+    border-radius: 6px 6px 0 0;
+    color: var(--interactive-normal, #b5bac1);
+    background: transparent;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+.dockview-tab:hover {
+    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.06));
+    color: var(--interactive-hover, #dbdee1);
+}
+/* Active tab: the member-list state-colour fill + brightened text, raised to read
+   as the foreground tab (no brand/blurple, matching the tool-btn-active grammar). */
+.dockview-tab-active,
+.dockview-tab-active:hover {
+    background: var(--background-base-low, var(--background-modifier-selected, rgba(255, 255, 255, 0.1)));
+    color: var(--text-strong, #f2f3f5);
+}
+.dockview-tab-icon {
+    flex: 0 0 auto;
+    opacity: 0.9;
+}
+.dockview-tab-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 13px;
+    font-weight: 500;
+}
+/* Per-tab close ✕: a ghost icon button (rule 10), only fully visible on
+   tab-hover/active so the resting strip stays calm (Discord tab-close pattern). */
+.dockview-tab-close {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease, background-color 0.12s ease;
+}
+.dockview-tab:hover .dockview-tab-close,
+.dockview-tab-active .dockview-tab-close {
+    opacity: 0.7;
+}
+.dockview-tab-close:hover {
+    opacity: 1;
+    background: var(--background-modifier-active, rgba(255, 255, 255, 0.12));
+}
+.dockview-tab-close svg { display: block; }
+
 /* Header: native classes give the 48px bar, padding, tint and border-bottom.
    The TOP row is LOCKED to Discord grammar — [glyph][filename] + [⋯ close] — for
    EVERY viewer; per-viewer controls live in a SECOND row below (.dockview-viewer-

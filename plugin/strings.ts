@@ -189,7 +189,21 @@ export const STRINGS = {
         attach: "Attach to message",
         // `+` composer-menu item: open an empty editable dock surface (a new
         // markdown file) and write it from scratch.
-        newFile: "New file"
+        newFile: "New file",
+        // Pin the active window so it becomes a persistent TAB that survives channel
+        // switches (the multi-window vision: the dock holds several windows you can
+        // switch between, like a browser). The item flips to Unpin once pinned.
+        pin: "Pin as a tab",
+        unpin: "Unpin tab"
+    },
+
+    // --- tab strip (pin-driven multi-window) --------------------------------
+    // The browser-style tab strip above the per-window header, shown only when ≥2
+    // windows exist. Each tab carries a file-type icon + name + a close ✕.
+    tabs: {
+        // {name} -> the file name shown in the tab.
+        select: (name: string) => `Switch to ${name}`,
+        close: "Close tab"
     },
 
     // --- attach (after edit) filename input ---------------------------------

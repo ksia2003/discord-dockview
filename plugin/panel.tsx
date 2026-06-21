@@ -324,7 +324,19 @@ interface PdfViewState {
     findCase: boolean; // case-sensitive toggle (false = case-insensitive, the default)
 }
 interface DockWindow {
-    // shared open/width state (kept outside React)
+    // stable identity within the windows[] collection (tab key, switch target).
+    id: string;
+    // PINNED windows are global: they persist across channel switches and show as
+    // a tab in EVERY channel. The single un-pinned window is TRANSIENT — bound to
+    // the channel it was opened in (`ownerChannelId`), saved/restored per channel
+    // like the old single-window `channelStates`, and replaced when a new file is
+    // opened. There is at most ONE transient window per channel.
+    pinned: boolean;
+    // the channel a TRANSIENT window belongs to (null for pinned/global windows).
+    ownerChannelId: string | null;
+    // shared open/width state (kept outside React). `width` is window-local but in
+    // the tab model only the active window's width drives the host; it is mirrored
+    // from the shared LS width so every window agrees.
     state: { open: boolean; width: number };
     // panel content state
     content: PanelContent;
@@ -339,67 +351,220 @@ interface DockWindow {
     activeDescriptor: ChannelDescriptor | null;
     // the content-cache key this window is currently mirroring (null = none)
     activeCacheKey: string | null;
+    // per-window new-file session flag (a brand-new empty editable surface that has
+    // no original baseline → no merge diff, default attach name message.md).
+    isNewFile: boolean;
+    // per-window attach target resolved when a new-file surface was opened.
+    newFileChannel: any;
 }
-const activeWindow: DockWindow = {
-    state: {
-        open: lsGet(LS_OPEN) === "1",
-        width: clampWidth(parseInt(lsGet(LS_WIDTH) || "", 10) || DEFAULT_WIDTH)
-    },
-    content: {
-        name: null,
-        type: "html",
-        html: null,
-        frameHtml: null,
-        pdf: { doc: null, pages: 0, renderToken: 0 },
-        code: null,
-        codeLang: "plaintext",
-        url: null,
-        loading: false,
-        error: null,
-        binary: false,
-        seq: 0
-    },
-    // scale === 1 means "fit" (contain); tx/ty pan when zoomed past fit. `fullscreen`
-    // flips into a self-rendered lightbox overlay, sharing the SAME zoom/pan.
-    imgView: { scale: 1, tx: 0, ty: 0, natW: 0, natH: 0, fullscreen: false },
-    // ordered channel-image list for prev/next nav (oldest→newest), keyed by channel.
-    gallery: {
-        channelId: null,
-        items: [],
-        hasMoreBefore: false,
-        hasMoreAfter: false,
-        loading: false
-    },
-    codeView: {
-        findOpen: false,
-        findQuery: "",
-        findMatches: 0,
-        findActive: 0,
-        findCase: false
-    },
-    csvView: {
-        mode: "grid",
-        delimiter: ","
-    },
-    editView: {
-        mode: "view",
-        editBuffer: null
-    },
-    pdfView: {
-        page: 1,
-        total: 0,
-        fit: "width",
-        zoom: 1,
-        dragMode: "text",
-        findOpen: false,
-        findQuery: "",
-        findMatches: 0,
-        findActive: 0,
-        findCase: false
-    },
-    activeDescriptor: null,
-    activeCacheKey: null
-};
+
+let windowSeq = 0;
+function nextWindowId(): string {
+    return `w${++windowSeq}`;
+}
+
+/** Build a fresh, empty DockWindow. `pinned`/`ownerChannelId` set by the caller.
+ *  Every window shares the same persisted open/width (the dock chrome is one). */
+function makeWindow(opts: { pinned: boolean; ownerChannelId: string | null }): DockWindow {
+    return {
+        id: nextWindowId(),
+        pinned: opts.pinned,
+        ownerChannelId: opts.ownerChannelId,
+        state: {
+            open: lsGet(LS_OPEN) === "1",
+            width: clampWidth(parseInt(lsGet(LS_WIDTH) || "", 10) || DEFAULT_WIDTH)
+        },
+        content: {
+            name: null,
+            type: "html",
+            html: null,
+            frameHtml: null,
+            pdf: { doc: null, pages: 0, renderToken: 0 },
+            code: null,
+            codeLang: "plaintext",
+            url: null,
+            loading: false,
+            error: null,
+            binary: false,
+            seq: 0
+        },
+        // scale === 1 means "fit" (contain); tx/ty pan when zoomed past fit. `fullscreen`
+        // flips into a self-rendered lightbox overlay, sharing the SAME zoom/pan.
+        imgView: { scale: 1, tx: 0, ty: 0, natW: 0, natH: 0, fullscreen: false },
+        // ordered channel-image list for prev/next nav (oldest→newest), keyed by channel.
+        gallery: {
+            channelId: null,
+            items: [],
+            hasMoreBefore: false,
+            hasMoreAfter: false,
+            loading: false
+        },
+        codeView: {
+            findOpen: false,
+            findQuery: "",
+            findMatches: 0,
+            findActive: 0,
+            findCase: false
+        },
+        csvView: {
+            mode: "grid",
+            delimiter: ","
+        },
+        editView: {
+            mode: "view",
+            editBuffer: null
+        },
+        pdfView: {
+            page: 1,
+            total: 0,
+            fit: "width",
+            zoom: 1,
+            dragMode: "text",
+            findOpen: false,
+            findQuery: "",
+            findMatches: 0,
+            findActive: 0,
+            findCase: false
+        },
+        activeDescriptor: null,
+        activeCacheKey: null,
+        isNewFile: false,
+        newFileChannel: null
+    };
+}
+
+// --- the window collection (pin-driven tabs) --------------------------------
+// `windows[]` is a module singleton (survives @me / channel switches), holding:
+//   - PINNED windows: global, persist everywhere, each shows as a tab.
+//   - at most ONE TRANSIENT window: channel-bound, replaced on each file open.
+// `activeWindow` is a live binding to the currently-shown window (reassigned by
+// setActiveWindow), so the hundreds of `activeWindow.*` call sites work unchanged
+// — they always read/write whichever window the tab strip has focused. The
+// initial single transient window reproduces today's behaviour exactly (no tab
+// strip is shown until a second window exists).
+const windows: DockWindow[] = [makeWindow({ pinned: false, ownerChannelId: null })];
+let activeWindowId: string = windows[0].id;
+let activeWindow: DockWindow = windows[0];
+
+/** The current transient (un-pinned) window, or null if there is none. There is
+ *  at most one (it's channel-bound; a pin frees the slot). */
+function transientWindow(): DockWindow | null {
+    return windows.find(w => !w.pinned) || null;
+}
+
+/** Point `activeWindow`/`activeWindowId` at a window (by id or object). Pure
+ *  binding swap — does NOT render or touch the DOM; callers re-render. */
+function setActiveWindow(w: DockWindow | string) {
+    const win = typeof w === "string" ? windows.find(x => x.id === w) : w;
+    if (!win) return;
+    activeWindow = win;
+    activeWindowId = win.id;
+}
+
+// --- tab actions (pin-driven multi-window) ----------------------------------
+// The tab strip is shown only when windows.length >= 2; until then the lone
+// transient behaves exactly like the historical single window.
+
+/** If the active window's content is stuck loading (its in-flight loader was
+ *  superseded by activity in another window — the loadSeq guard makes a loader
+ *  write ONLY the cache entry once superseded) but its cache entry has since
+ *  resolved, re-point content from the cache. This makes a window's body show its
+ *  file the moment we show it again, even if its original loader never wrote back.
+ *  Returns true if it reconciled. */
+function reconcileActiveFromCache(): boolean {
+    const key = activeWindow.activeCacheKey;
+    if (key == null) return false;
+    if (!activeWindow.content.loading && activeWindow.content.error == null) return false;
+    const e = contentCache.get(key);
+    if (!e || e.loading || e.error != null) return false;
+    mountFromCache(e);
+    return true;
+}
+
+/** Switch the visible tab to `id`: snapshot the leaving window's live view-state,
+ *  bind the active window, restore the new window's saved scroll, re-render. */
+function switchToWindow(id: string) {
+    if (id === activeWindowId) return;
+    const target = windows.find(w => w.id === id);
+    if (!target) return;
+    snapshotActiveView();
+    activeWindow.imgView.fullscreen = false; // never strand the lightbox over a hidden tab
+    setActiveWindow(target);
+    // the target keeps the dock open (a tab you can see is an open dock).
+    target.state.open = true;
+    loadSeq += 1; // any in-flight loader from the old window must not write here
+    // if this window's loader was superseded but its cache resolved, hydrate now.
+    reconcileActiveFromCache();
+    activeWindow.content.seq += 1; // force a fresh body identity for the new tab
+    applyOpenState();
+    forceRender?.();
+    // re-apply the target window's saved scroll once its body re-commits.
+    pendingScrollTop = activeWindow.activeCacheKey != null
+        ? (contentCache.get(activeWindow.activeCacheKey)?.view.scrollTop ?? null)
+        : null;
+}
+
+/** ⋯-menu 고정하기: pin the ACTIVE window so it becomes a persistent tab that
+ *  survives channel switches. If the active window was the (channel-bound)
+ *  transient, pinning it frees the transient slot for the next file open. */
+function pinActiveWindow() {
+    if (activeWindow.pinned) return;
+    activeWindow.pinned = true;
+    activeWindow.ownerChannelId = null; // pinned windows are global, not per-channel
+    activeWindow.state.open = true;
+    forceRender?.();
+}
+
+/** ⋯-menu 고정 해제: unpin the active window. It becomes the channel's transient
+ *  again (bound to the current channel). If a transient already exists, removing
+ *  this window instead (a channel can hold only ONE transient) — but since the
+ *  user explicitly unpinned THIS window, we keep it as the transient and clear any
+ *  other transient. */
+function unpinActiveWindow() {
+    if (!activeWindow.pinned) return;
+    // a channel holds at most one transient — drop any existing one first.
+    const existing = transientWindow();
+    if (existing && existing !== activeWindow) {
+        const i = windows.indexOf(existing);
+        if (i >= 0) windows.splice(i, 1);
+    }
+    activeWindow.pinned = false;
+    activeWindow.ownerChannelId = getCurrentChannelId();
+    forceRender?.();
+}
+
+/** Close a tab (the ✕ on a tab, or the lone-window header X delegates here for the
+ *  active window). A PINNED tab is removed entirely; a TRANSIENT tab is cleared
+ *  (its content detached, the window removed) so its channel reopens empty. After
+ *  removal the active window falls back to a sensible neighbour; if no windows
+ *  remain the dock fully closes (member-list restore runs). */
+function closeTab(id: string) {
+    const idx = windows.findIndex(w => w.id === id);
+    if (idx < 0) return;
+    const win = windows[idx];
+    // snapshot the active window's view before any binding change.
+    if (win.id === activeWindowId) snapshotActiveView();
+    // if it's the transient, also forget its per-channel memory so the channel
+    // reopens empty (closing a transient = clearing it).
+    if (!win.pinned && win.ownerChannelId) channelStates.delete(win.ownerChannelId);
+    windows.splice(idx, 1);
+
+    if (windows.length === 0) {
+        // last window closed → the whole dock closes (member-list restore).
+        closePanel();
+        return;
+    }
+    if (win.id === activeWindowId) {
+        // focus a neighbour (prefer the previous tab, else the first).
+        const next = windows[Math.max(0, idx - 1)];
+        setActiveWindow(next);
+        next.state.open = true;
+        loadSeq += 1;
+        activeWindow.content.seq += 1;
+    }
+    applyOpenState();
+    forceRender?.();
+}
 
 // --- new-file (empty editable surface) state --------------------------------
 // A brand-new file opened from the `+` composer menu: an EMPTY editable CM in
@@ -411,8 +576,14 @@ const activeWindow: DockWindow = {
 // filename comes from the attach input (attachBarName) at attach time.
 // `newFileChannel` is the attach target resolved at open time (the menu's
 // props.channel, or the current channel).
-let isNewFile = false;
-let newFileChannel: any = null;
+//
+// These live PER-WINDOW (on the DockWindow) so a pinned new-file tab keeps its
+// new-file identity across a tab switch / channel switch. The accessors below
+// read/write the ACTIVE window's flags so every existing call site is unchanged.
+function getIsNewFile(): boolean { return activeWindow.isNewFile; }
+function setIsNewFile(v: boolean) { activeWindow.isNewFile = v; }
+function getNewFileChannel(): any { return activeWindow.newFileChannel; }
+function setNewFileChannel(v: any) { activeWindow.newFileChannel = v; }
 
 // --- monotonic load token (race guard) --------------------------------------
 // Every load()/restoreDescriptor() bumps this and captures the value as its
@@ -2251,15 +2422,43 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
  *  restores it instantly from cache (no fetch); only a genuinely new file
  *  fetches. The view-state of the file we're leaving is snapshotted first. */
 export function load(opts: { name: string; html?: string | null; url?: string | null; type?: ContentType; noCache?: boolean }) {
+    // Opening a file always lands in the TRANSIENT window of the current channel
+    // (created if none) and never overwrites a pinned tab — pin-driven tabs.
+    focusTransientForOpen();
     // Viewing a real file ends any new-file session (the empty editable surface),
     // so the loaded file gets a fresh original baseline + the merge diff.
-    isNewFile = false;
+    setIsNewFile(false);
     const result = showContent({ name: opts.name, html: opts.html, url: opts.url, type: detectType(opts), noCache: opts.noCache });
 
     // Open FIRST, then persist — so the saved per-channel state records open:true.
     openPanelChrome();
     // A no-op didn't change the body; everything else needs a render.
     if (result !== "noop") forceRender?.();
+}
+
+/** Make the ACTIVE window the current channel's TRANSIENT window, ready to take a
+ *  freshly-opened file (so a chip click / New file replaces the transient content
+ *  and NEVER clobbers a pinned tab). If a transient window already exists it is
+ *  re-bound to the current channel and focused; otherwise a new one is appended.
+ *  Before swapping away from a pinned active window we snapshot its live view-state
+ *  so its tab keeps its scroll/zoom/edit-buffer. */
+function focusTransientForOpen() {
+    const channelId = getCurrentChannelId();
+    let t = transientWindow();
+    if (!t) {
+        // No transient slot (every window is pinned) → create one for this channel.
+        snapshotActiveView();
+        t = makeWindow({ pinned: false, ownerChannelId: channelId });
+        windows.push(t);
+    } else {
+        // Re-bind the lone transient to the channel we're opening in (it follows
+        // the current channel, exactly as the old single window did).
+        t.ownerChannelId = channelId;
+    }
+    if (activeWindow !== t) {
+        snapshotActiveView();
+        setActiveWindow(t);
+    }
 }
 
 /** The shared "open the panel into the right slot" side-effects, run by both
@@ -2282,7 +2481,7 @@ function openPanelChrome() {
 /** Resolve the channel a staged file should attach to: the channel a new-file
  *  session was opened from (if any), else the channel currently being viewed. */
 function resolveTargetChannel(): any {
-    return newFileChannel
+    return getNewFileChannel()
         || getCurrentChannel()
         || ChannelStore.getChannel(SelectedChannelStore.getChannelId());
 }
@@ -2295,14 +2494,17 @@ function resolveTargetChannel(): any {
  *  filename defaults to `message.md`. `channel` is the menu's props.channel if
  *  present (else resolved to the current channel at attach time). */
 export function onNewFile(channel: any | null) {
+    // A new file is a TRANSIENT open: it lands in the current channel's transient
+    // window (created if none) and never clobbers a pinned tab.
+    focusTransientForOpen();
     // Leaving whatever was docked: snapshot its view-state so a later re-open of
     // that file is unaffected (mirrors showContent's switch-away bookkeeping).
     snapshotActiveView();
     activeWindow.imgView.fullscreen = false;
     loadSeq += 1; // supersede any in-flight loader
 
-    isNewFile = true;
-    newFileChannel = channel ?? resolveTargetChannel();
+    setIsNewFile(true);
+    setNewFileChannel(channel ?? resolveTargetChannel());
 
     // A fresh empty markdown content with no url (so it's never cached) in edit
     // mode. The CM seeds from the (empty) buffer; editSourceText() returns "".
@@ -2337,7 +2539,7 @@ export function onNewFile(channel: any | null) {
  *  the editor mounts as a plain CM with no diff. Otherwise it's editSourceText()
  *  (artifact html / code / csv-raw / markdown source). */
 function editOriginalText(): string | null {
-    if (isNewFile) return null;
+    if (getIsNewFile()) return null;
     return editSourceText();
 }
 
@@ -2365,7 +2567,7 @@ export function attachActiveFile(nameOverride?: string | null) {
     const stage = (file: File) => {
         try { UploadHandler.promptToUpload([file], channel, DraftType.ChannelMessage); } catch { /* ignore */ }
         // a new-file session ends once attached (the editor was for that file).
-        if (isNewFile) { isNewFile = false; newFileChannel = null; }
+        if (getIsNewFile()) { setIsNewFile(false); setNewFileChannel(null); }
     };
 
     const hasEdits = activeWindow.editView.editBuffer != null;
@@ -2446,13 +2648,30 @@ export function clearArtifact() {
 // (see index.tsx) which calls onChannelSelect(newId).
 // ---------------------------------------------------------------------------
 
-/** Persist the panel state (open + active descriptor) for the current channel. */
+/** True when the dock has ANY window to show (≥1 exists): a pinned tab, or a
+ *  transient with content. This is the new "dock open" predicate for member-list
+ *  exclusivity — the dock holds the exclusive right slot whenever it shows a
+ *  window. Pinned windows persist across channels, so they keep the dock open;
+ *  the lone transient case reduces to today's single-window open flag. */
+function dockHasWindows(): boolean {
+    if (windows.some(w => w.pinned)) return true;
+    const t = transientWindow();
+    return !!t && t.state.open;
+}
+
+/** Persist the TRANSIENT window's state for the current channel. Pinned windows
+ *  are global (NOT per-channel), so they are never written here — only the lone
+ *  channel-bound transient slot is remembered per channel. */
 function saveCurrentChannelState() {
     if (currentChannelId == null) return;
-    channelStates.set(currentChannelId, {
-        open: activeWindow.state.open,
-        descriptor: activeWindow.activeDescriptor
-    });
+    const t = transientWindow();
+    if (t && t.ownerChannelId === currentChannelId && t.state.open && t.activeDescriptor) {
+        channelStates.set(currentChannelId, { open: true, descriptor: t.activeDescriptor });
+    } else if (t && t.ownerChannelId === currentChannelId) {
+        // transient bound to this channel but empty/closed → remember closed.
+        channelStates.set(currentChannelId, { open: t.state.open, descriptor: t.activeDescriptor });
+    }
+    // (No transient for this channel → leave any prior memory untouched.)
 }
 
 /** Load a remembered descriptor WITHOUT re-saving channel state (avoid loops).
@@ -2465,47 +2684,83 @@ function restoreDescriptor(d: ChannelDescriptor) {
 }
 
 /**
- * React to a Discord channel switch: save the OUTGOING channel's panel state,
- * then restore the INCOMING channel's (re-load its descriptor, or close if it
- * had nothing). Width stays global. Called from the plugin's Flux handler.
+ * React to a Discord channel switch. PINNED windows persist (stay in windows[],
+ * shown as tabs in every channel). The TRANSIENT window is channel-bound: save it
+ * for the leaving channel and drop it from windows[], then restore the entering
+ * channel's transient (recreated from its remembered descriptor). The visible set
+ * becomes pinned ∪ (this channel's transient). The active window defaults to the
+ * channel's transient if present, else the last-active pinned. Width stays global.
  */
 export function onChannelSelect(newId: string | null) {
     if (newId === currentChannelId) return;
-    // 1. save what the leaving channel had.
+    // 1. snapshot the active window's live view + save the leaving channel's
+    //    transient descriptor.
+    snapshotActiveView();
     saveCurrentChannelState();
-    // 2. switch.
-    currentChannelId = newId;
-    if (newId == null) return;
 
+    // 2. drop the channel-bound transient window — it's recreated per channel.
+    //    (Its content cache entry survives, so a return re-shows it instantly.)
+    const leaving = transientWindow();
+    if (leaving) {
+        const i = windows.indexOf(leaving);
+        if (i >= 0) windows.splice(i, 1);
+    }
+
+    // 3. switch channel.
+    currentChannelId = newId;
+    if (newId == null) {
+        // Going to @me / no real channel: keep the pinned windows in windows[]
+        // (they rehydrate when we return to a real channel), but there is no host
+        // to show them. Pick a sensible active window if any remain.
+        if (!windows.some(w => w.id === activeWindowId)) {
+            const fallback = windows[windows.length - 1];
+            if (fallback) setActiveWindow(fallback);
+        }
+        forceRender?.();
+        return;
+    }
+
+    // 4. restore the entering channel's transient (if it had an open file).
     const mem = channelStates.get(newId);
     if (mem && mem.open && mem.descriptor) {
-        // restore: open + re-load the remembered file (cache makes this instant).
+        const t = makeWindow({ pinned: false, ownerChannelId: newId });
+        windows.push(t);
+        setActiveWindow(t);
+        closeNativeChannelSidebar();
+        t.state.open = true;
+        lsSet(LS_OPEN, "1");
+        restoreDescriptor(mem.descriptor);
+    } else if (windows.some(w => w.pinned)) {
+        // No transient here, but pinned tabs persist → show the last-active pinned.
+        const pinned = windows.filter(w => w.pinned);
+        if (!pinned.some(w => w.id === activeWindowId)) setActiveWindow(pinned[pinned.length - 1]);
         closeNativeChannelSidebar();
         activeWindow.state.open = true;
         lsSet(LS_OPEN, "1");
-        restoreDescriptor(mem.descriptor);
+        // a pinned window whose loader was superseded earlier hydrates from cache.
+        if (reconcileActiveFromCache()) activeWindow.content.seq += 1;
+    } else {
+        // Nothing pinned, nothing remembered here → the dock is closed. Recreate
+        // an empty closed transient so the single-window invariants hold.
+        const t = makeWindow({ pinned: false, ownerChannelId: newId });
+        t.state.open = mem ? mem.open : false;
+        windows.push(t);
+        setActiveWindow(t);
+        lsSet(LS_OPEN, t.state.open ? "1" : "0");
+    }
+
+    // 5. apply the resulting dock-open state.
+    if (dockHasWindows()) {
         ensureHost();
         applyOpenState();
-        // The incoming channel may have its OWN member list shown — collapse it
-        // (this is an explicit edge, so re-collapsing here mirrors a thread
-        // re-collapsing the list on navigation; the prior channel's pending flag
-        // is irrelevant since each shown list gets collapsed in turn).
         syncNativeMemberList(true);
         syncNativeProfileSidebar(true);
-        forceRender?.();
     } else {
-        // nothing remembered (or it was closed) -> empty + closed panel. Snapshot
-        // the outgoing file's view first so returning to ITS channel restores it.
-        snapshotActiveView();
-        clearLoadedContent();
-        activeWindow.activeDescriptor = null;
-        activeWindow.state.open = mem ? mem.open : false;
-        lsSet(LS_OPEN, activeWindow.state.open ? "1" : "0");
         applyOpenState();
-        syncNativeMemberList(activeWindow.state.open); // restore the member list if we're closing here
-        syncNativeProfileSidebar(activeWindow.state.open);
-        forceRender?.();
+        syncNativeMemberList(false);
+        syncNativeProfileSidebar(false);
     }
+    forceRender?.();
 }
 
 /** Clear only the loaded body (not the descriptor / channel bookkeeping). The
@@ -5455,7 +5710,9 @@ const MENU_ICON = {
     copyLink: menuIcon("M9.88 13.41a1 1 0 0 1 0-1.41l2.12-2.12a1 1 0 0 1 1.42 1.41L11.3 13.4a1 1 0 0 1-1.42 0Zm-2.3 4.6a3 3 0 0 1 0-4.24l2.12-2.12a1 1 0 0 1 1.42 1.41l-2.12 2.12a1 1 0 0 0 1.41 1.42l2.12-2.13a1 1 0 0 1 1.42 1.42l-2.13 2.12a3 3 0 0 1-4.24 0Zm9.9-9.9a3 3 0 0 1 0 4.25l-2.13 2.12a1 1 0 0 1-1.41-1.41l2.12-2.13a1 1 0 0 0-1.41-1.41l-2.12 2.12a1 1 0 1 1-1.42-1.42l2.13-2.12a3 3 0 0 1 4.24 0Z"),
     fitWidth: menuIcon("M4 5a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1Zm16 0a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1ZM8.7 8.3a1 1 0 0 0-1.4 1.4l.29.3H7a1 1 0 0 0 0 2h.59l-.3.3a1 1 0 1 0 1.42 1.4l2-2a1 1 0 0 0 0-1.4l-2-2Zm6.6 0a1 1 0 0 1 1.4 1.4l-.29.3H17a1 1 0 1 1 0 2h-.59l.3.3a1 1 0 0 1-1.42 1.4l-2-2a1 1 0 0 1 0-1.4l2-2Z"),
     // Paperclip — the universal "attach a file" affordance (matches Discord's own).
-    attach: menuIcon("M16.5 6.3 8.8 14a2 2 0 1 0 2.83 2.83l7.07-7.07a4 4 0 1 0-5.66-5.66l-7.07 7.07a6 6 0 0 0 8.49 8.49l6.36-6.36a1 1 0 0 0-1.41-1.42l-6.37 6.37a4 4 0 0 1-5.65-5.66l7.07-7.07a2 2 0 0 1 2.83 2.83l-7.08 7.07a.99.99 0 0 1-1.4-1.41l7.7-7.7a1 1 0 0 0-1.42-1.41Z")
+    attach: menuIcon("M16.5 6.3 8.8 14a2 2 0 1 0 2.83 2.83l7.07-7.07a4 4 0 1 0-5.66-5.66l-7.07 7.07a6 6 0 0 0 8.49 8.49l6.36-6.36a1 1 0 0 0-1.41-1.42l-6.37 6.37a4 4 0 0 1-5.65-5.66l7.07-7.07a2 2 0 0 1 2.83 2.83l-7.08 7.07a.99.99 0 0 1-1.4-1.41l7.7-7.7a1 1 0 0 0-1.42-1.41Z"),
+    // Pushpin — Discord's own "Pinned messages" glyph tone; pins this window as a tab.
+    pin: menuIcon("M19.38 11.38a3 3 0 0 0 0-4.24l-2.52-2.52a3 3 0 0 0-4.24 0l-1.06 1.06a1 1 0 0 0 0 1.42l.7.7-4.6 4.6a1 1 0 0 0 0 1.41l.36.36-2.83 2.83a2 2 0 0 0-.44.68l-1 2.5a1 1 0 0 0 1.3 1.3l2.5-1a2 2 0 0 0 .68-.44l2.83-2.83.36.36a1 1 0 0 0 1.41 0l4.6-4.6.7.7a1 1 0 0 0 1.42 0l1.06-1.06Z")
 };
 
 // ---------------------------------------------------------------------------
@@ -5489,6 +5746,16 @@ function DockMoreMenu() {
             action: () => openAttachBar()
         }));
     }
+
+    // Pin / Unpin: promote the active window to a persistent TAB (survives channel
+    // switches), or demote a pinned window back to the channel-bound transient. The
+    // label flips with the window's pinned state. Shown whenever there's a window.
+    items.push(React.createElement(Menu.MenuItem, {
+        id: "dockview-more-pin",
+        label: activeWindow.pinned ? STRINGS.menu.unpin : STRINGS.menu.pin,
+        icon: MENU_ICON.pin,
+        action: () => { if (activeWindow.pinned) unpinActiveWindow(); else pinActiveWindow(); }
+    }));
 
     // PDF-only: "Fit to width" (reset zoom to 100%). A secondary control moved
     // off the header (spec §2.1 PDF "fit-width → ⋯"). Shown only when zoomed away
@@ -5657,6 +5924,68 @@ function attachToolbar() {
             },
             STRINGS.attach.confirm
         )
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Tab strip (pin-driven multi-window). A browser-style strip ABOVE the per-window
+// header, shown ONLY when ≥2 windows exist (the lone transient → no strip, so the
+// single-window case is byte-identical to before). Each tab = file-type glyph +
+// truncated name + a ✕. The active tab is highlighted with the member-list
+// state-colour grammar. Styled from Discord's existing tab/thread-strip patterns
+// (ghost icon buttons, hover bg) — no invented chrome. Compact + horizontally
+// scrollable for the narrow ~765px dock.
+// ---------------------------------------------------------------------------
+const TAB_CLOSE_PATH = "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z";
+
+/** A small file-type glyph for a tab (mirrors the header leading icon, 16px). */
+function tabIcon(type: ContentType) {
+    return React.createElement(
+        "svg",
+        { className: "dockview-tab-icon", width: 16, height: 16, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+        ...(FILE_TYPE_ICON[type] || FILE_TYPE_ICON.unknown).map(
+            ([d, extra]: IconPath, i: number) =>
+                React.createElement("path", { key: i, fill: "currentColor", d, ...(extra || {}) })
+        )
+    );
+}
+
+function DockTabStrip() {
+    return React.createElement(
+        "div",
+        { className: "dockview-tab-strip", role: "tablist" },
+        ...windows.map(w => {
+            const isActive = w.id === activeWindowId;
+            const label = (w.content.name as string | null) || STRINGS.empty.text;
+            return React.createElement(
+                "div",
+                {
+                    key: w.id,
+                    className: "dockview-tab" + (isActive ? " dockview-tab-active" : ""),
+                    role: "tab",
+                    "aria-selected": isActive,
+                    title: label,
+                    onClick: () => switchToWindow(w.id)
+                },
+                tabIcon(w.content.type),
+                React.createElement("span", { className: "dockview-tab-name" }, label),
+                React.createElement(
+                    "button",
+                    {
+                        type: "button",
+                        className: "dockview-tab-close",
+                        "aria-label": STRINGS.tabs.close,
+                        title: STRINGS.tabs.close,
+                        onClick: (e: any) => { e.stopPropagation(); closeTab(w.id); }
+                    },
+                    React.createElement(
+                        "svg",
+                        { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+                        React.createElement("path", { fill: "currentColor", d: TAB_CLOSE_PATH })
+                    )
+                )
+            );
+        })
     );
 }
 
@@ -5876,6 +6205,11 @@ function DockPanel() {
         React.createElement(
             "div",
             { className: `${CLS.card} dockview-card` },
+            // Tab strip ABOVE the header (browser-like): tabs on top → then the
+            // active window's icon/name/⋯/X top row → row2 → body. Shown only with
+            // ≥2 windows; the lone transient renders no strip (single-window =
+            // identical to before).
+            windows.length >= 2 ? React.createElement(DockTabStrip, null) : null,
             React.createElement(
                 "section",
                 {
@@ -6173,18 +6507,36 @@ function syncNativeProfileSidebar(open: boolean) {
  *  the user just asked for that sidebar, so we must NOT re-collapse it. We clear
  *  memberListRestorePending so the normal close machinery can't undo their choice. */
 function closeForExclusiveTakeover() {
-    if (!activeWindow.state.open) return;
+    if (!dockHasWindows()) return;
     // We owe no restore: the user explicitly wants the sidebar now. Clearing this
     // BEFORE closing stops syncNativeMemberList/restoreHiddenMembers from fighting
     // them by re-hiding the list they just opened.
     memberListRestorePending = false;
     profileSidebarRestorePending = false;
-    activeWindow.state.open = false;
+    // The whole dock vacates the slot: close every window (pinned + transient).
+    closeAllWindowsState();
     lsSet(LS_OPEN, "0");
-    activeWindow.imgView.fullscreen = false; // closing the panel drops the lightbox
     saveCurrentChannelState();
     applyOpenState(); // drops html.dockview-open → the sidebar is no longer CSS-hidden
     forceRender?.();
+}
+
+/** Mark every window closed + drop the lightbox + clear the transient slot's
+ *  remembered-open. Pinned windows are REMOVED (the dock is being vacated as a
+ *  whole — there is no per-tab close here). Used by the exclusive-takeover and
+ *  the header-X close paths so closing the dock leaves no window to show. */
+function closeAllWindowsState() {
+    activeWindow.imgView.fullscreen = false;
+    // Remove pinned tabs (the dock is closing entirely) and keep the lone
+    // transient marked closed/empty so the single-window invariants hold.
+    const transient = transientWindow();
+    windows.length = 0;
+    const t = transient || makeWindow({ pinned: false, ownerChannelId: currentChannelId });
+    t.pinned = false;
+    t.state.open = false;
+    t.imgView.fullscreen = false;
+    windows.push(t);
+    setActiveWindow(t);
 }
 
 /** Flux subscriber for CHANNEL_TOGGLE_MEMBERS_SECTION. Fires for BOTH our own
@@ -6197,7 +6549,7 @@ function closeForExclusiveTakeover() {
  *  against any spurious toggle that would hide rather than show. */
 export function onMemberSectionToggle() {
     if (selfMemberToggle) return;       // our own collapse/restore — ignore
-    if (!activeWindow.state.open) return;            // nothing of ours to evict
+    if (!dockHasWindows()) return;            // nothing of ours to evict
     // The aside isn't in the DOM yet at dispatch time; let Discord's store + render
     // settle, then confirm the member list is now shown before we yield the slot.
     // The mount lands ~a macrotask later, but the exact ordering vs. our timer is
@@ -6205,7 +6557,7 @@ export function onMemberSectionToggle() {
     // it on a single setTimeout(0) (a false negative = the panel wouldn't close).
     let tries = 0;
     const check = () => {
-        if (!activeWindow.state.open) return;        // closed meanwhile
+        if (!dockHasWindows()) return;        // closed meanwhile
         if (isMemberListShown()) { closeForExclusiveTakeover(); return; }
         if (++tries < 4) setTimeout(check, 24);
     };
@@ -6220,14 +6572,14 @@ export function onMemberSectionToggle() {
  *  profile sidebar, but without this the panel would otherwise just stay put.) */
 export function onUserProfileSidebarToggle() {
     if (selfProfileToggle) return;
-    if (!activeWindow.state.open) return;
+    if (!dockHasWindows()) return;
     closeForExclusiveTakeover();
 }
 
 /** Native thread/channel sidebar opened while DockView owns the right slot:
  *  vacate the slot and do not restore DockView when that sidebar later closes. */
 export function onChannelSidebarView() {
-    if (!activeWindow.state.open) return;
+    if (!dockHasWindows()) return;
     closeForExclusiveTakeover();
 }
 
@@ -6238,7 +6590,7 @@ function clearExclusiveRightSlotHidden(root: ParentNode = document) {
 
 function hideExclusiveRightSlot(inner: HTMLElement | null = findPageInner()) {
     clearExclusiveRightSlotHidden();
-    if (!activeWindow.state.open || !inner) return;
+    if (!dockHasWindows() || !inner) return;
 
     const host = document.getElementById(HOST_ID);
     const mark = (el: Element | null) => {
@@ -6286,7 +6638,7 @@ function applyOpenState() {
     // depends on this class because Discord may rewrite className while typing.
     if (inner) inner.classList.add("dockview-page-inner");
 
-    if (activeWindow.state.open) {
+    if (dockHasWindows()) {
         if (host) {
             // Drive open/closed via a class (display:block !important) instead of
             // inline display — Discord's layout code intermittently resets our
@@ -6332,8 +6684,9 @@ function restoreHiddenMembers() {
  *  Persists open:false, restores the native sidebars/member list we collapsed,
  *  and re-renders. */
 function closePanel() {
-    activeWindow.state.open = false;
-    activeWindow.imgView.fullscreen = false; // never strand the lightbox over a closed panel
+    // The header X closes the WHOLE dock (every tab — pinned + transient): "close"
+    // means no windows left, and the dock vacates the right slot.
+    closeAllWindowsState();
     lsSet(LS_OPEN, "0");
     saveCurrentChannelState();
     applyOpenState();
@@ -6343,16 +6696,23 @@ function closePanel() {
 }
 
 function toggle() {
-    const open = !activeWindow.state.open;
-    if (open) closeNativeChannelSidebar();
-    activeWindow.state.open = open;
-    lsSet(LS_OPEN, activeWindow.state.open ? "1" : "0");
-    if (!activeWindow.state.open) activeWindow.imgView.fullscreen = false; // closing the panel drops the lightbox
-    if (activeWindow.state.open) ensureHost();
+    const open = !dockHasWindows();
+    if (open) {
+        closeNativeChannelSidebar();
+        // Re-open the lone transient (the toggle never resurrects pinned tabs that
+        // were closed; pin-driven tabs are created by opening files + pinning).
+        const t = transientWindow() || (() => { const w = makeWindow({ pinned: false, ownerChannelId: currentChannelId }); windows.push(w); return w; })();
+        t.state.open = true;
+        setActiveWindow(t);
+        ensureHost();
+    } else {
+        closeAllWindowsState();
+    }
+    lsSet(LS_OPEN, open ? "1" : "0");
     saveCurrentChannelState();
     applyOpenState();
-    syncNativeMemberList(activeWindow.state.open); // collapse the member list like a thread / restore on close
-    syncNativeProfileSidebar(activeWindow.state.open);
+    syncNativeMemberList(open); // collapse the member list like a thread / restore on close
+    syncNativeProfileSidebar(open);
     forceRender?.();
 }
 
@@ -6371,7 +6731,7 @@ function attachObserver() {
     observer?.disconnect();
     observedParent = inner;
     observer = new MutationObserver(records => {
-        if (activeWindow.state.open && records.some(r =>
+        if (dockHasWindows() && records.some(r =>
             r.target === observedParent
             || Array.from(r.addedNodes).some(nodeMayContainExclusiveRightSlot)
         )) {
@@ -6434,7 +6794,7 @@ export function startPanel() {
             toggle();
             return;
         }
-        if (!activeWindow.state.open) return;
+        if (!dockHasWindows()) return;
         const host = document.getElementById(HOST_ID);
         if (!host) return;
         // The dock panel must hold keyboard focus (the user clicked/tabbed into
@@ -6579,8 +6939,14 @@ export function stopPanel() {
     observedParent = null;
     clearTimeout(debounce);
     debounce = null;
-    // 4. close panel state + restore the member list (mutual-exclusion undo)
-    activeWindow.state.open = false;
+    // 4. close panel state + restore the member list (mutual-exclusion undo).
+    //    Collapse the window collection back to a single closed transient so a
+    //    re-start begins from the clean single-window state.
+    windows.length = 0;
+    const w0 = makeWindow({ pinned: false, ownerChannelId: null });
+    w0.state.open = false;
+    windows.push(w0);
+    setActiveWindow(w0);
     restoreHiddenMembers();
     // 5. unmount React + remove the host DOM node. React 18's root.unmount()
     //    may defer; remove the host(s) in a microtask AFTER unmount settles so
@@ -6619,18 +6985,20 @@ export function stopPanel() {
 export function exposeDebug() {
     (window as any).__dockView = {
         // The DockWindow itself, plus the per-window fields mapped back onto it so
-        // the historical debug getters (state/content/*View) still read correctly.
-        activeWindow,
-        toggle, ensureHost, applyOpenState, state: activeWindow.state, DockPanel, CLS, findPageInner,
+        // the historical debug getters (state/content/*View) read the LIVE active
+        // window via getters (it's reassigned on every tab switch — a captured
+        // snapshot would go stale).
+        get activeWindow() { return activeWindow; },
+        toggle, ensureHost, applyOpenState, get state() { return activeWindow.state; }, DockPanel, CLS, findPageInner,
         onChannelSelect, getCurrentChannelId, channelStates,
-        load, retry: retryActiveLoad, clear: clearArtifact, popout: popoutArtifact, content: activeWindow.content, detectType,
+        load, retry: retryActiveLoad, clear: clearArtifact, popout: popoutArtifact, get content() { return activeWindow.content; }, detectType,
         // "Open in browser" (in-app Vesktop window) debug surface.
         openInVesktopWindow, vesktopWindowHtml,
         contentCache, get loadSeq() { return loadSeq; }, get activeCacheKey() { return activeWindow.activeCacheKey; },
-        pdfView: activeWindow.pdfView, get pdfControls() { return pdfControls; },
-        imgView: activeWindow.imgView, get imgControls() { return imgControls; },
+        get pdfView() { return activeWindow.pdfView; }, get pdfControls() { return pdfControls; },
+        get imgView() { return activeWindow.imgView; }, get imgControls() { return imgControls; },
         // image gallery (prev/next) debug surface: drive + assert the nav.
-        gallery: activeWindow.gallery, refreshGallery, galleryStep, galleryCanStep,
+        get gallery() { return activeWindow.gallery; }, refreshGallery, galleryStep, galleryCanStep,
         get galleryIndex() { return galleryCurrentIndex(); },
         get memberListShown() { return isMemberListShown(); },
         get memberListRestorePending() { return memberListRestorePending; },
@@ -6641,14 +7009,19 @@ export function exposeDebug() {
         closeNativeChannelSidebar,
         onMemberSectionToggle, onUserProfileSidebarToggle, onChannelSidebarView, closeForExclusiveTakeover,
         attachActiveFile, onNewFile,
+        // multi-window (pin-driven tabs) debug surface: the window collection +
+        // the tab actions so CDP can drive pin/unpin/switch/close + assert state.
+        get windows() { return windows; }, get activeWindowId() { return activeWindowId; },
+        get dockOpen() { return dockHasWindows(); },
+        switchToWindow, pinActiveWindow, unpinActiveWindow, closeTab, transientWindow,
         // 2c attach + new-file debug surface: the attach filename bar + the
         // new-file flags so CDP can drive the attach-edited-buffer + new-file paths.
         openAttachBar, closeAttachBar, confirmAttachBar,
         get attachBarOpen() { return attachBarOpen; }, set attachBarName(v: string) { attachBarName = v; },
-        get isNewFile() { return isNewFile; },
+        get isNewFile() { return getIsNewFile(); },
         // 2b editable-surface debug surface: the mode toggles + the buffer so CDP
         // can drive edit-mode + assert the temporary buffer / re-render loop.
-        editView: activeWindow.editView, csvView: activeWindow.csvView, toggleEditMode, toggleCsvMode, toggleCodeFind,
+        get editView() { return activeWindow.editView; }, get csvView() { return activeWindow.csvView; }, toggleEditMode, toggleCsvMode, toggleCodeFind,
         get editBuffer() { return editBufferText(); }, get codeCtrl() { return codeCtrl; }
     };
 }
