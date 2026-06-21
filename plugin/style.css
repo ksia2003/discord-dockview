@@ -562,7 +562,15 @@
     gap: 8px;
     padding: 8px 0;
     box-sizing: border-box;
-    width: 100%;
+    /* fit-content + min-width:100% so the column is viewport-width when pages fit
+       (centred), but GROWS to the widest page when one overflows — that grown width
+       is what gives the body a full horizontal scroll range, so a zoomed page can
+       be panned all the way to its left/right edge (a plain width:100% would clip
+       the centred overflow and leave scrollLeft pinned at the centre). When nothing
+       overflows this resolves to exactly 100%, so narrow pages stay centred as
+       before. */
+    width: fit-content;
+    min-width: 100%;
     /* pdf.js's setLayerDimensions sizes page/text boxes with
        `round(down, var(--total-scale-factor) * Npx, var(--scale-round-x))`.
        Define the rounding step (1px) here so those calc()s resolve cleanly to a
@@ -694,6 +702,41 @@
 .dockview-pdf-page-wrap .textLayer::highlight(dockview-pdf-find-active) {
     background-color: rgba(255, 145, 0, 0.7);
     color: transparent;
+}
+
+/* PDF body horizontal scroll. The shared .dockview-body keeps overflow-x:hidden
+   (Discord has no h-scroll; code wraps) — but a PDF page can't wrap, so a zoomed
+   page overflows the width and MUST be pannable. Only the PDF body opts into a
+   horizontal scroll axis (the drag-to-pan handler scrolls it, and a trackpad /
+   shift-wheel works too). scrollbar-gutter:stable is inherited from .dockview-body
+   so the fit-width measurement stays constant. */
+.dockview-body-pdf {
+    overflow-x: auto;
+}
+
+/* Drag-to-pan mode (PDF). When pan is active the container shows a grab cursor and
+   the pdf.js text layer is made non-interactive (pointer-events:none + user-select:
+   none) so a drag scrolls the page (handled in JS on the container) instead of
+   selecting text. While a pan drag is in progress .dockview-pdf-panning shows the
+   grabbing (closed-hand) cursor. In text mode (no class) the text layer keeps its
+   pointer-events:auto / user-select:text and selection works exactly as before —
+   this is a pure cursor + selection-suppression layer, the raster / text spans /
+   find are untouched. */
+.dockview-pdf-pan {
+    cursor: grab;
+}
+.dockview-pdf-pan.dockview-pdf-panning,
+.dockview-pdf-pan.dockview-pdf-panning .textLayer,
+.dockview-pdf-pan.dockview-pdf-panning .textLayer span {
+    cursor: grabbing;
+}
+.dockview-pdf-pan .textLayer,
+.dockview-pdf-pan .textLayer span,
+.dockview-pdf-pan .textLayer br {
+    pointer-events: none;
+    cursor: grab;
+    -webkit-user-select: none;
+    user-select: none;
 }
 
 /* FIND BAR (reusable: PDF today, code next). A one-row dropdown surface pinned

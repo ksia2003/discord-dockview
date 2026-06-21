@@ -335,6 +335,8 @@ interface CachedView {
     pdfPage?: number;
     pdfZoom?: number;
     pdfFit?: PdfFit;
+    // pdf: text-select vs pan drag mode the user left this file on (text default)
+    pdfDragMode?: PdfDragMode;
     // image
     imgScale?: number;
     imgTx?: number;
@@ -466,6 +468,7 @@ function snapshotActiveView() {
         e.view.pdfPage = pdfView.page;
         e.view.pdfZoom = pdfView.zoom;
         e.view.pdfFit = pdfView.fit;
+        e.view.pdfDragMode = pdfView.dragMode;
     } else if (e.type === "image") {
         e.view.imgScale = imgView.scale;
         e.view.imgTx = imgView.tx;
@@ -491,6 +494,7 @@ function applyCachedView(e: CacheEntry) {
         pdfView.fit = e.view.pdfFit ?? "width";
         pdfView.page = e.view.pdfPage ?? 1;
         pdfView.total = e.pdfPages ?? 0;
+        pdfView.dragMode = e.view.pdfDragMode ?? "text";
         pdfView.findOpen = false;
         pdfView.findQuery = "";
         pdfView.findMatches = 0;
@@ -688,6 +692,12 @@ function setEditBuffer(text: string) {
 // drives the in-panel search overlay. Module-scope so the header TOOLBAR and the
 // keyboard handler drive the same state the PdfBody renders.
 type PdfFit = "width" | "page";
+// Drag mode: how a mouse drag over the PDF body behaves. "text" (default) = the
+// pdf.js text layer captures the drag and SELECTS text (current behaviour). "pan"
+// = the drag scrolls the body on BOTH axes (grab/grabbing cursor, text selection
+// suppressed) so a zoomed PDF can be moved left/right + up/down — PDF can't wrap
+// like code, so a horizontally-overflowing page genuinely needs panning.
+type PdfDragMode = "text" | "pan";
 const PDF_MIN_ZOOM = 0.25;
 const PDF_MAX_ZOOM = 5;
 const pdfView = {
@@ -695,6 +705,7 @@ const pdfView = {
     total: 0,
     fit: "width" as PdfFit,
     zoom: 1,
+    dragMode: "text" as PdfDragMode, // default = current text-select behaviour
     // search state
     findOpen: false,
     findQuery: "",
@@ -707,6 +718,7 @@ function resetPdfView() {
     pdfView.total = 0;
     pdfView.fit = "width";
     pdfView.zoom = 1;
+    pdfView.dragMode = "text";
     pdfView.findOpen = false;
     pdfView.findQuery = "";
     pdfView.findMatches = 0;
@@ -721,6 +733,7 @@ interface PdfControls {
     zoomOut: () => void;
     setFit: (f: PdfFit) => void;
     fitWidth: () => void; // reset zoom to 1 (fit panel width) + ensure width mode
+    toggleDragMode: () => void; // flip text-select <-> pan for mouse drags
     toggleFind: () => void;
     toggleFindCase: () => void;
     setFindQuery: (q: string) => void;
@@ -3027,6 +3040,53 @@ function PdfBody() {
             forceRender?.();
         };
 
+        // --- drag-to-pan -----------------------------------------------------
+        // In "pan" mode a mouse drag over the PDF body scrolls the body scroller
+        // on BOTH axes (so a zoomed page can be moved left/right + up/down), and
+        // text selection is suppressed. In "text" mode (default) the drag is left
+        // to the pdf.js text layer, which selects text exactly as before. The mode
+        // is purely a class on the container (cursor + textLayer pointer-events/
+        // user-select, see .dockview-pdf-pan in style.css) plus this mousedown
+        // handler — it touches NOTHING about raster / text-layer build / find /
+        // resize anchoring. It only manipulates scrollLeft/scrollTop, the same
+        // numbers the scroll listener already reads.
+        const syncPanClass = () => {
+            host.classList.toggle("dockview-pdf-pan", pdfView.dragMode === "pan");
+            if (pdfView.dragMode !== "pan") host.classList.remove("dockview-pdf-panning");
+        };
+        // active drag bookkeeping (null = not panning). Captured at mousedown.
+        let panState: { x: number; y: number; left: number; top: number } | null = null;
+        const onPanMove = (e: MouseEvent) => {
+            if (!panState) return;
+            const sc = scroller();
+            if (!sc) return;
+            // drag delta -> opposite scroll delta (grab the page and move it).
+            sc.scrollLeft = panState.left - (e.clientX - panState.x);
+            sc.scrollTop = panState.top - (e.clientY - panState.y);
+            e.preventDefault();
+        };
+        const endPan = () => {
+            if (!panState) return;
+            panState = null;
+            host.classList.remove("dockview-pdf-panning");
+            window.removeEventListener("mousemove", onPanMove, true);
+            window.removeEventListener("mouseup", endPan, true);
+        };
+        const onPanDown = (e: MouseEvent) => {
+            // only the primary button, and only in pan mode.
+            if (pdfView.dragMode !== "pan" || e.button !== 0) return;
+            const sc = scroller();
+            if (!sc) return;
+            panState = { x: e.clientX, y: e.clientY, left: sc.scrollLeft, top: sc.scrollTop };
+            host.classList.add("dockview-pdf-panning"); // grabbing cursor
+            // suppress the would-be text selection / focus drag.
+            e.preventDefault();
+            window.addEventListener("mousemove", onPanMove, true);
+            window.addEventListener("mouseup", endPan, true);
+        };
+        host.addEventListener("mousedown", onPanDown);
+        syncPanClass();
+
         // Expose controls to the toolbar + keyboard while this PDF is mounted.
         const ctrls: PdfControls = {
             goToPage: (n: number) => scrollToPage(n),
@@ -3036,6 +3096,7 @@ function PdfBody() {
             zoomOut: () => { pdfView.zoom = Math.max(PDF_MIN_ZOOM, pdfView.zoom / 1.25); scheduleRerender(); forceRender?.(); },
             setFit: (f: PdfFit) => { if (pdfView.fit !== f) { pdfView.fit = f; pdfView.zoom = 1; scheduleRerender(); forceRender?.(); } },
             fitWidth: () => { if (pdfView.fit !== "width" || pdfView.zoom !== 1) { pdfView.fit = "width"; pdfView.zoom = 1; scheduleRerender(); forceRender?.(); } },
+            toggleDragMode: () => { pdfView.dragMode = pdfView.dragMode === "pan" ? "text" : "pan"; endPan(); syncPanClass(); forceRender?.(); },
             toggleFind: () => { pdfView.findOpen = !pdfView.findOpen; if (!pdfView.findOpen) { clearHighlights(); pdfView.findMatches = 0; pdfView.findActive = 0; pdfView.findQuery = ""; } forceRender?.(); },
             toggleFindCase: () => { pdfView.findCase = !pdfView.findCase; runFind(pdfView.findQuery, false); forceRender?.(); },
             setFindQuery: (qq: string) => { pdfView.findQuery = qq; runFind(qq, true); },
@@ -3160,6 +3221,8 @@ function PdfBody() {
             clearTimeout(zoomDebounce);
             if (scrollRaf) cancelAnimationFrame(scrollRaf);
             sc?.removeEventListener("scroll", onScroll);
+            host.removeEventListener("mousedown", onPanDown);
+            endPan(); // drop any window-level pan listeners + grabbing class
             ro.disconnect();
             ioRef.current?.disconnect();
             ioRef.current = null;
@@ -4610,6 +4673,9 @@ function toolBtn(key: string, label: string, path: string, onClick: () => void, 
 
 const ZOOM_OUT_PATH = "M19 11a1 1 0 0 1 0 2H5a1 1 0 1 1 0-2h14Z";
 const ZOOM_IN_PATH = "M13 5a1 1 0 1 0-2 0v6H5a1 1 0 1 0 0 2h6v6a1 1 0 1 0 2 0v-6h6a1 1 0 1 0 0-2h-6V5Z";
+// Open-hand "pan tool" glyph (Material "pan_tool" outline) for the PDF drag-mode
+// toggle: highlighted = pan (drag moves the page), dim = text-select.
+const PAN_HAND_PATH = "M21 11.5v5a4.5 4.5 0 0 1-4.5 4.5h-3.4a4.5 4.5 0 0 1-3.18-1.32l-4.9-4.9a1.4 1.4 0 0 1 1.98-1.98l1.5 1.5V5.5a1.25 1.25 0 0 1 2.5 0v5h.5v-7a1.25 1.25 0 0 1 2.5 0v7h.5v-6a1.25 1.25 0 0 1 2.5 0v6h.5v-4.5a1.25 1.25 0 0 1 2.5 0Z";
 
 /** The shared zoom group: [− %readout +]. Identical layout / icons / spacing for
  *  PDF + image (IMG-1 / spec §2.2 "zoom group unified"). `keyPrefix` keys the two
@@ -4684,6 +4750,20 @@ function PdfHeaderControls() {
         ),
         // zoom group (shared w/ image) — a CORE control, last to collapse.
         zoomGroup("pdf", pct, () => pdfControls?.zoomOut(), () => pdfControls?.zoomIn()),
+        // drag-mode toggle (state-colour, member-list grammar): a single hand icon
+        // button that HIGHLIGHTS when pan is active. Off = text-select (drag selects
+        // PDF text, the default + current behaviour); on (highlighted) = pan (drag
+        // scrolls the page on both axes so a zoomed PDF can be moved sideways). The
+        // colour state — not a label — says which mode is active. Always present
+        // (rule 9), never removed; mid priority so it collapses with find.
+        React.createElement(
+            "div",
+            { className: "dockview-tool-group dockview-collapse-mid" },
+            toolBtn("pdf-dragmode",
+                pdfView.dragMode === "pan" ? STRINGS.pdf.dragSelect : STRINGS.pdf.dragPan,
+                PAN_HAND_PATH,
+                () => pdfControls?.toggleDragMode(), pdfView.dragMode === "pan")
+        ),
         // find toggle (the only header toggle for PDF; fit-width is in ⋯).
         // Mid priority: collapses before the zoom group but after the arrows.
         React.createElement(
@@ -5430,7 +5510,13 @@ function DockPanel() {
                     { className: "dockview-body-wrap" + (findShown ? " dockview-find-open" : "") },
                     React.createElement(
                         "div",
-                        { className: "dockview-body" },
+                        {
+                            // PDF gets a modifier so its body can scroll horizontally
+                            // (a zoomed page overflows the width and must be pannable);
+                            // every other viewer keeps overflow-x hidden (no h-scroll).
+                            className: "dockview-body"
+                                + (hasContent && content.type === "pdf" ? " dockview-body-pdf" : "")
+                        },
                         renderBody()
                     ),
                     pdfFind ? React.createElement(PdfFindBar, null)

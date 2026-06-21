@@ -105,12 +105,21 @@ export const STRINGS = {
     },
 
     // --- PDF header controls -------------------------------------------------
+    // The drag-mode control is a single STATE-COLOUR toggle (Discord member-list
+    // grammar): one hand icon that highlights when PAN is active. Off (dim) = drag
+    // selects text (the default); on (highlighted) = drag pans the page on both
+    // axes so a zoomed PDF can be moved sideways. Tooltip names the action the
+    // click performs, so it flips with the state.
     pdf: {
         prevPage: "Previous page (←)",
         nextPage: "Next page (→)",
         goToPage: "Go to page",
         goToPageHint: "Type a page number, Enter to jump",
         pageIndicator: "Current page / total",
+        // shown while in text-select mode → clicking switches to pan
+        dragPan: "Pan the page",
+        // shown while in pan mode → clicking switches back to selecting text
+        dragSelect: "Select text",
         find: "Find (Ctrl+F)"
     },
 
