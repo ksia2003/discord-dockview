@@ -1014,6 +1014,21 @@ function ensureGallery(): number {
     return galleryCurrentIndex();
 }
 
+/** Load a gallery neighbour into the ACTIVE window IN PLACE. Gallery prev/next
+ *  must advance the SAME tab you're stepping in — NOT acquire/spawn the transient
+ *  window. The generic load() routes through focusTransientForOpen(), so on a
+ *  PINNED image tab it would load the next image into the transient and leave the
+ *  pinned tab unchanged (a silent jump to another window). Since the gallery state
+ *  is per-window and we only step the window that owns it (the active one), we call
+ *  showContent() directly here: it replaces the active window's content in place,
+ *  preserving the pinned tab. The panel is already open during gallery nav, so we
+ *  only need a render (no openPanelChrome / transient acquisition). */
+function galleryLoadInPlace(next: { name: string; url: string }) {
+    setIsNewFile(false);
+    const result = showContent({ name: next.name, url: next.url, type: "image" });
+    if (result !== "noop") forceRender?.();
+}
+
 /** Fetch one older/newer page into MessageStore, then rebuild the gallery. `dir`
  *  -1 = older (before the oldest loaded message), +1 = newer (after the newest).
  *  After it resolves we re-read getMessages and step onto the neighbour that is
@@ -1049,7 +1064,7 @@ function galleryLoadMore(dir: -1 | 1) {
             const target = idx + dir;
             if (idx >= 0 && target >= 0 && target < activeWindow.gallery.items.length) {
                 const next = activeWindow.gallery.items[target];
-                load({ name: next.name, url: next.url, type: "image" });
+                galleryLoadInPlace(next); // replace the SAME (active) tab, never spawn a transient
             } else {
                 forceRender?.();
             }
@@ -1065,7 +1080,7 @@ function galleryStep(dir: -1 | 1) {
     const target = idx + dir;
     if (target >= 0 && target < activeWindow.gallery.items.length) {
         const next = activeWindow.gallery.items[target];
-        load({ name: next.name, url: next.url, type: "image" });
+        galleryLoadInPlace(next); // replace the SAME (active) tab in place, never spawn a transient
         return;
     }
     // Past the loaded end → try to fetch more in that direction.
