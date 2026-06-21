@@ -1292,17 +1292,113 @@ function openExternalLink(href: string) {
     }
 }
 
-/** Pop the current (or given) artifact out into a standalone browser window. */
+/** Open `html` in a real, IN-APP Vesktop window. The empty-window + document.write
+ *  path rides Chromium's always-allowed about:blank window.open rule in the Vesktop
+ *  fork's setWindowOpenHandler, so it opens an in-app BrowserWindow RELIABLY,
+ *  independent of the user's "Open Links in app" setting. (window.open(httpUrl)
+ *  only opens in-app when that setting is on, so it is NOT reliable — we always go
+ *  through the empty window + write the document ourselves.) Best-effort: a null
+ *  return (popup blocked) is a silent no-op. */
+function openVesktopWindow(html: string, name: string) {
+    const w = window.open("", name, "width=900,height=700,menubar=no,toolbar=no");
+    if (!w) return;
+    try {
+        w.document.open();
+        w.document.write(html);
+        w.document.close();
+        w.document.title = name;
+    } catch {
+        /* the window opened but writing failed — leave it (it's still in-app) */
+    }
+}
+
+// Minimal dark page chrome shared by the per-type "open in browser" shells so the
+// popped-out window reads like the dock (dark bg, no margins, fills the viewport).
+const VESKTOP_WINDOW_CSS =
+    "html,body{margin:0;padding:0;height:100%;background:#1e1f22;color:#dbdee1;"
+    + "font-family:'gg sans','Noto Sans',Helvetica,Arial,sans-serif;}";
+
+/** The HTML document to show when opening the CURRENT file in a Vesktop window,
+ *  picked per content type. URL-backed types embed by their WORKING url (the same
+ *  url the panel loaded + copy-link copies — correction-batch item (3)); text-ish
+ *  types write their content directly. Returns null when there's nothing to show. */
+function vesktopWindowHtml(): string | null {
+    const type = content.type;
+    const url = content.url ? absUrl(content.url) : null;
+
+    // .artifact / inline HTML — the artifact document itself (today's popout). When
+    // edited, show the edited buffer; else the original html.
+    if (type === "html") {
+        const html = (editView.editBuffer != null) ? editBufferText() : content.html;
+        return html || null;
+    }
+    // Markdown — the SAME rendered dark document the viewer iframe shows (reuse the
+    // render pipeline). Edited buffer when edited, else the raw source.
+    if (type === "markdown") {
+        const md = (editView.editBuffer != null) ? editBufferText() : (content.code || "");
+        return renderMarkdownDoc(md);
+    }
+    // Code / CSV-raw / unknown-as-text — the raw text in a <pre> (basic dark page).
+    if (type === "code" || type === "csv" || type === "unknown") {
+        const text = (content.code != null)
+            ? ((editView.editBuffer != null) ? editBufferText() : content.code)
+            : "";
+        const pre = `<pre style="margin:0;padding:16px;white-space:pre-wrap;word-break:break-word;`
+            + `font-family:Menlo,Consolas,'Courier New',monospace;font-size:13px;line-height:1.5;`
+            + `color:#dbdee1;">${escapeHtml(text)}</pre>`;
+        return `<!doctype html><html><head><meta charset="utf-8"><style>${VESKTOP_WINDOW_CSS}</style></head><body>${pre}</body></html>`;
+    }
+    // PDF — embed the file by url (the working url). <embed> renders the PDF via the
+    // built-in viewer; <iframe> is the fallback the browser uses if <embed> fails.
+    if (type === "pdf" && url) {
+        const body = `<embed src="${escapeHtml(url)}" type="application/pdf" `
+            + `style="position:fixed;inset:0;width:100%;height:100%;border:none;">`;
+        return `<!doctype html><html><head><meta charset="utf-8"><style>${VESKTOP_WINDOW_CSS}</style></head><body>${body}</body></html>`;
+    }
+    // Image — the file centered on a dark backdrop (the working url).
+    if (type === "image" && url) {
+        const body = `<div style="position:fixed;inset:0;display:flex;align-items:center;`
+            + `justify-content:center;background:#1e1f22;">`
+            + `<img src="${escapeHtml(url)}" alt="" style="max-width:100%;max-height:100%;object-fit:contain;"></div>`;
+        return `<!doctype html><html><head><meta charset="utf-8"><style>${VESKTOP_WINDOW_CSS}</style></head><body>${body}</body></html>`;
+    }
+    return null;
+}
+
+/** Open an arbitrary file URL in a real in-app Vesktop window. Used by the state
+ *  cards (error / unsupported), where there is NO in-memory content to write but
+ *  there is a working url. We still go through the empty-window + write path (so it
+ *  stays in-app regardless of the "Open Links in app" setting) and embed the url in
+ *  a full-bleed <iframe>; the browser falls back to a download for non-renderable
+ *  types, exactly like opening the link would. */
+function openUrlInVesktopWindow(url: string, name: string) {
+    const abs = absUrl(url);
+    const body = `<iframe src="${escapeHtml(abs)}" `
+        + `style="position:fixed;inset:0;width:100%;height:100%;border:none;background:#1e1f22;"></iframe>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><style>${VESKTOP_WINDOW_CSS}</style></head><body>${body}</body></html>`;
+    openVesktopWindow(html, name);
+}
+
+/** Open the CURRENTLY-shown file in a real in-app Vesktop window (the default
+ *  "Open in browser" per 선인 — an in-app window, NOT the external browser). One
+ *  reliable path for every viewer: build the per-type shell, then open the empty
+ *  window and write it. Falls back to embedding the url (state-card path) when
+ *  there's a url but no renderable in-memory content (e.g. a still-loading file). */
+export function openInVesktopWindow() {
+    const html = vesktopWindowHtml();
+    const name = (content.name as string | null) || "file";
+    if (html) { openVesktopWindow(html, name); return; }
+    if (content.url) openUrlInVesktopWindow(content.url, name);
+}
+
+/** Pop the current (or given) artifact out into a standalone in-app Vesktop
+ *  window. Kept for the artifact-modal popout button + the debug surface; it now
+ *  shares the one reliable empty-window+write path. */
 export function popoutArtifact(html?: string | null, name?: string | null) {
     const h = html ?? content.html;
     const n = name ?? content.name ?? "artifact";
     if (!h) return;
-    const popup = window.open("", n, "width=900,height=700,menubar=no,toolbar=no");
-    if (!popup) return;
-    popup.document.open();
-    popup.document.write(h);
-    popup.document.close();
-    popup.document.title = n;
+    openVesktopWindow(h, n);
 }
 
 /** Resolve a url to its absolute form against the host page (for download/copy). */
@@ -4690,7 +4786,10 @@ function renderErrorBody(raw: string) {
                 key: "open",
                 type: "button",
                 className: "dockview-unsupported-btn",
-                onClick: () => { if (url) openExternalLink(absUrl(url)); }
+                // "Open in browser" = an in-app Vesktop window (unified path), not
+                // the external OS browser. The file failed to load so there's no
+                // in-memory content; embed its url in the in-app window.
+                onClick: () => { if (url) openUrlInVesktopWindow(url, name); }
             },
             STRINGS.actions.openInNewWindow
         ));
@@ -4765,7 +4864,11 @@ function renderUnsupportedBody() {
                 {
                     type: "button",
                     className: "dockview-unsupported-btn",
-                    onClick: () => { if (url) openExternalLink(absUrl(url)); }
+                    // "Open in browser" = an in-app Vesktop window (unified path).
+                    // A binary file we can't preview has no in-memory content; embed
+                    // its url in the in-app window (the browser downloads it if it
+                    // can't render — same as opening the link, but in-app).
+                    onClick: () => { if (url) openUrlInVesktopWindow(url, name); }
                 },
                 STRINGS.actions.openInNewWindow
             )
@@ -5335,21 +5438,21 @@ function DockMoreMenu() {
         }));
     }
 
-    // Open in new window: reuse the artifact popout for HTML, else open the file
-    // url in the user's EXTERNAL browser. NOTE: a bare window.open() returns null
-    // and does nothing in this Electron renderer (popups are intercepted), so the
-    // old `window.open(absUrl(url), ...)` here was a silent no-op — the reported
-    // "Open in new window does nothing" bug. openExternalLink() goes through
-    // VencordNative.native.openExternal (Electron shell.openExternal), which
-    // reliably hands the url to the OS browser.
+    // Open in browser: open the CURRENT file in a real IN-APP Vesktop window (선인's
+    // default — an in-app window, NOT the external browser). ONE reliable path for
+    // every viewer (correction-batch item (2)): openInVesktopWindow() builds the
+    // per-type shell (artifact html / rendered markdown / <pre> text / <embed> pdf /
+    // <img> image, embedding url-backed types by their working url — consolidating
+    // copy-link's url, item (3)) and opens it via the empty-window + document.write
+    // path, which rides Chromium's always-allowed about:blank rule so it's in-app
+    // regardless of the "Open Links in app" setting. (The OLD code sent non-HTML
+    // types to openExternalLink → the external OS browser, and a bare window.open
+    // was a silent no-op — both fixed here.)
     items.push(React.createElement(Menu.MenuItem, {
         id: "dockview-more-popout",
         label: STRINGS.menu.openInNewWindow,
         icon: MENU_ICON.popout,
-        action: () => {
-            if (isHtml && content.html != null) popoutArtifact();
-            else if (url) openExternalLink(absUrl(url));
-        }
+        action: () => openInVesktopWindow()
     }));
 
     if (url) {
@@ -6454,6 +6557,8 @@ export function exposeDebug() {
         toggle, ensureHost, applyOpenState, state, DockPanel, CLS, findPageInner,
         onChannelSelect, getCurrentChannelId, channelStates,
         load, retry: retryActiveLoad, clear: clearArtifact, popout: popoutArtifact, content, detectType,
+        // "Open in browser" (in-app Vesktop window) debug surface.
+        openInVesktopWindow, vesktopWindowHtml,
         contentCache, get loadSeq() { return loadSeq; }, get activeCacheKey() { return activeCacheKey; },
         pdfView, get pdfControls() { return pdfControls; },
         imgView, get imgControls() { return imgControls; },
