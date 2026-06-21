@@ -507,11 +507,11 @@ function switchToWindow(id: string) {
 /** ⋯-menu 고정하기: pin the ACTIVE window so it becomes a persistent tab that
  *  survives channel switches. If the active window was the (channel-bound)
  *  transient, pinning it frees the transient slot for the next file open. */
-function pinActiveWindow() {
-    if (activeWindow.pinned) return;
-    activeWindow.pinned = true;
-    activeWindow.ownerChannelId = null; // pinned windows are global, not per-channel
-    activeWindow.state.open = true;
+function pinActiveWindow(w: DockWindow = activeWindow) {
+    if (w.pinned) return;
+    w.pinned = true;
+    w.ownerChannelId = null; // pinned windows are global, not per-channel
+    w.state.open = true;
     forceRender?.();
 }
 
@@ -520,16 +520,16 @@ function pinActiveWindow() {
  *  this window instead (a channel can hold only ONE transient) — but since the
  *  user explicitly unpinned THIS window, we keep it as the transient and clear any
  *  other transient. */
-function unpinActiveWindow() {
-    if (!activeWindow.pinned) return;
+function unpinActiveWindow(w: DockWindow = activeWindow) {
+    if (!w.pinned) return;
     // a channel holds at most one transient — drop any existing one first.
     const existing = transientWindow();
-    if (existing && existing !== activeWindow) {
+    if (existing && existing !== w) {
         const i = windows.indexOf(existing);
         if (i >= 0) windows.splice(i, 1);
     }
-    activeWindow.pinned = false;
-    activeWindow.ownerChannelId = getCurrentChannelId();
+    w.pinned = false;
+    w.ownerChannelId = getCurrentChannelId();
     forceRender?.();
 }
 
@@ -1077,17 +1077,17 @@ function resetEditView() {
 /** The ORIGINAL (unedited) source text for the current editable type. Code/CSV-raw
  *  edit content.code; markdown edits its raw source (stored in content.code by the
  *  markdown loader, NOT the rendered html); .artifact edits content.html. */
-function editSourceText(): string {
-    if (activeWindow.content.type === "html") return activeWindow.content.html || ""; // .artifact HTML source
-    return activeWindow.content.code || ""; // code / csv-raw / markdown-source
+function editSourceText(w: DockWindow = activeWindow): string {
+    if (w.content.type === "html") return w.content.html || ""; // .artifact HTML source
+    return w.content.code || ""; // code / csv-raw / markdown-source
 }
 
 /** The current EDITABLE text = the buffer if the user has edited, else the
  *  original source. This is what the editable CM is seeded from and what the
  *  renderers (markdown re-render, artifact re-render, CSV grid re-parse) derive
  *  from on a toggle back to the view mode. */
-function editBufferText(): string {
-    return activeWindow.editView.editBuffer != null ? activeWindow.editView.editBuffer : editSourceText();
+function editBufferText(w: DockWindow = activeWindow): string {
+    return w.editView.editBuffer != null ? w.editView.editBuffer : editSourceText(w);
 }
 
 /** Record a CM edit into the temporary buffer + mirror it into the active cache
@@ -1557,26 +1557,26 @@ const VESKTOP_WINDOW_CSS =
  *  picked per content type. URL-backed types embed by their WORKING url (the same
  *  url the panel loaded + copy-link copies — correction-batch item (3)); text-ish
  *  types write their content directly. Returns null when there's nothing to show. */
-function vesktopWindowHtml(): string | null {
-    const type = activeWindow.content.type;
-    const url = activeWindow.content.url ? absUrl(activeWindow.content.url) : null;
+function vesktopWindowHtml(w: DockWindow = activeWindow): string | null {
+    const type = w.content.type;
+    const url = w.content.url ? absUrl(w.content.url) : null;
 
     // .artifact / inline HTML — the artifact document itself (today's popout). When
     // edited, show the edited buffer; else the original html.
     if (type === "html") {
-        const html = (activeWindow.editView.editBuffer != null) ? editBufferText() : activeWindow.content.html;
+        const html = (w.editView.editBuffer != null) ? editBufferText(w) : w.content.html;
         return html || null;
     }
     // Markdown — the SAME rendered dark document the viewer iframe shows (reuse the
     // render pipeline). Edited buffer when edited, else the raw source.
     if (type === "markdown") {
-        const md = (activeWindow.editView.editBuffer != null) ? editBufferText() : (activeWindow.content.code || "");
+        const md = (w.editView.editBuffer != null) ? editBufferText(w) : (w.content.code || "");
         return renderMarkdownDoc(md);
     }
     // Code / CSV-raw / unknown-as-text — the raw text in a <pre> (basic dark page).
     if (type === "code" || type === "csv" || type === "unknown") {
-        const text = (activeWindow.content.code != null)
-            ? ((activeWindow.editView.editBuffer != null) ? editBufferText() : activeWindow.content.code)
+        const text = (w.content.code != null)
+            ? ((w.editView.editBuffer != null) ? editBufferText(w) : w.content.code)
             : "";
         const pre = `<pre style="margin:0;padding:16px;white-space:pre-wrap;word-break:break-word;`
             + `font-family:Menlo,Consolas,'Courier New',monospace;font-size:13px;line-height:1.5;`
@@ -1619,11 +1619,11 @@ function openUrlInVesktopWindow(url: string, name: string) {
  *  reliable path for every viewer: build the per-type shell, then open the empty
  *  window and write it. Falls back to embedding the url (state-card path) when
  *  there's a url but no renderable in-memory content (e.g. a still-loading file). */
-export function openInVesktopWindow() {
-    const html = vesktopWindowHtml();
-    const name = (activeWindow.content.name as string | null) || "file";
+export function openInVesktopWindow(w: DockWindow = activeWindow) {
+    const html = vesktopWindowHtml(w);
+    const name = (w.content.name as string | null) || "file";
     if (html) { openVesktopWindow(html, name); return; }
-    if (activeWindow.content.url) openUrlInVesktopWindow(activeWindow.content.url, name);
+    if (w.content.url) openUrlInVesktopWindow(w.content.url, name);
 }
 
 /** Pop the current (or given) artifact out into a standalone in-app Vesktop
@@ -2558,40 +2558,43 @@ function editOriginalText(): string | null {
  *      fetch the url and attach the blob. This is the SAME Discord-CDN fetch the
  *      loaders already do successfully; it is the file's own source.
  *  Best-effort throughout: any failure is a silent no-op so nothing is disturbed. */
-export function attachActiveFile(nameOverride?: string | null) {
-    const channel = resolveTargetChannel();
+export function attachActiveFile(nameOverride?: string | null, w: DockWindow = activeWindow) {
+    // A non-active tab's ⋯ attaches THAT window's file. Resolve the target channel
+    // from the window's own new-file target (if any) before falling back to the
+    // current channel, so a pinned tab attaches to where you are now.
+    const channel = w.newFileChannel || getCurrentChannel() || ChannelStore.getChannel(SelectedChannelStore.getChannelId());
     if (!channel) return;
-    const baseName = (activeWindow.content.name as string | null) || "file";
+    const baseName = (w.content.name as string | null) || "file";
     const name = (nameOverride && nameOverride.trim()) ? nameOverride.trim() : baseName;
 
     const stage = (file: File) => {
         try { UploadHandler.promptToUpload([file], channel, DraftType.ChannelMessage); } catch { /* ignore */ }
         // a new-file session ends once attached (the editor was for that file).
-        if (getIsNewFile()) { setIsNewFile(false); setNewFileChannel(null); }
+        if (w.isNewFile) { w.isNewFile = false; w.newFileChannel = null; }
     };
 
-    const hasEdits = activeWindow.editView.editBuffer != null;
+    const hasEdits = w.editView.editBuffer != null;
 
     // 1) Editable text family — attach the EDITED buffer (or the original text if
     //    unedited). Covers code / csv / unknown-as-text (content.code) AND a NEW
     //    file (empty content.code, buffer is the written text).
-    if (activeWindow.content.code != null && (activeWindow.content.type === "code" || activeWindow.content.type === "csv" || activeWindow.content.type === "unknown")) {
-        const text = hasEdits ? editBufferText() : activeWindow.content.code;
+    if (w.content.code != null && (w.content.type === "code" || w.content.type === "csv" || w.content.type === "unknown")) {
+        const text = hasEdits ? editBufferText(w) : w.content.code;
         stage(new File([text], name, { type: "text/plain" }));
         return;
     }
     // 2) Markdown — the raw md source lives in content.code; attach the edited
     //    buffer when edited, else the original source. (A new markdown file also
     //    lands here: content.code = "" + the buffer holds the written markdown.)
-    if (activeWindow.content.type === "markdown" && activeWindow.content.code != null) {
-        const text = hasEdits ? editBufferText() : activeWindow.content.code;
+    if (w.content.type === "markdown" && w.content.code != null) {
+        const text = hasEdits ? editBufferText(w) : w.content.code;
         stage(new File([text], name, { type: "text/markdown" }));
         return;
     }
     // 3) Inline artifact (no url) — the html source is in memory; attach the
     //    edited buffer when edited, else the original html.
-    if (activeWindow.content.type === "html" && activeWindow.content.html != null && !activeWindow.content.url) {
-        const text = hasEdits ? editBufferText() : activeWindow.content.html;
+    if (w.content.type === "html" && w.content.html != null && !w.content.url) {
+        const text = hasEdits ? editBufferText(w) : w.content.html;
         const base = /\.html?$/i.test(name) ? name : name + ".html";
         stage(new File([text], base, { type: "text/html" }));
         return;
@@ -2599,13 +2602,13 @@ export function attachActiveFile(nameOverride?: string | null) {
     // 4) Has a url (pdf / image / markdown-from-url / artifact-from-url): if the
     //    text family was edited (markdown/artifact have a buffer), attach the
     //    buffer; otherwise attach the source blob from the file's OWN url.
-    if (hasEdits && (activeWindow.content.type === "markdown" || activeWindow.content.type === "html")) {
-        const mime = activeWindow.content.type === "markdown" ? "text/markdown" : "text/html";
-        stage(new File([editBufferText()], name, { type: mime }));
+    if (hasEdits && (w.content.type === "markdown" || w.content.type === "html")) {
+        const mime = w.content.type === "markdown" ? "text/markdown" : "text/html";
+        stage(new File([editBufferText(w)], name, { type: mime }));
         return;
     }
-    if (activeWindow.content.url) {
-        const reqUrl = activeWindow.content.url;
+    if (w.content.url) {
+        const reqUrl = w.content.url;
         dvFetch(reqUrl)
             .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.blob(); })
             .then(blob => { stage(new File([blob], name, { type: blob.type || "application/octet-stream" })); })
@@ -5719,48 +5722,57 @@ const MENU_ICON = {
 // Header "⋯ more" context menu — Discord-native Menu (ContextMenuApi). Holds
 // only SECONDARY actions; the per-type toolbar already exposes zoom/page/etc.
 // ---------------------------------------------------------------------------
-function DockMoreMenu() {
-    const url = activeWindow.content.url;
-    const name = activeWindow.content.name as string | null;
-    const type = activeWindow.content.type;
+function DockMoreMenu({ win }: { win?: DockWindow } = {}) {
+    // The ⋯ menu is PARAMETERIZED by the tab's window `w`. A non-active tab's ⋯
+    // opens this menu for THAT window and every action operates on it IN PLACE —
+    // opening the menu never switches the active tab (no setActiveWindow). When no
+    // window is passed (the lone-window header ⋯) it targets the active window.
+    const w = win || activeWindow;
+    const isActive = w === activeWindow;
+    const url = w.content.url;
+    const name = w.content.name as string | null;
+    const type = w.content.type;
     const isHtml = type === "html";
     const isImage = type === "image";
     const isPdf = type === "pdf";
 
     const items: any[] = [];
 
-    // Attach to message: stage the CURRENTLY-VIEWED file as a pending upload on the
-    // active channel (the native attachment chip). Shown whenever there's a file to
-    // attach — text in memory (code/csv/unknown), inline artifact html, or a url
-    // (pdf/image/markdown/artifact-from-url). attachActiveFile() picks the source.
-    const canAttach = !activeWindow.content.loading && !activeWindow.content.error && activeWindow.content.name != null
-        && (activeWindow.content.code != null || (isHtml && activeWindow.content.html != null) || url != null);
+    // Attach to message: stage THIS window's file as a pending upload on the active
+    // channel (the native attachment chip). Shown whenever there's a file to attach
+    // — text in memory (code/csv/unknown), inline artifact html, or a url
+    // (pdf/image/markdown/artifact-from-url). attachActiveFile(w) picks the source.
+    const canAttach = !w.content.loading && !w.content.error && w.content.name != null
+        && (w.content.code != null || (isHtml && w.content.html != null) || url != null);
     if (canAttach) {
         items.push(React.createElement(Menu.MenuItem, {
             id: "dockview-more-attach",
             label: STRINGS.menu.attach,
             icon: MENU_ICON.attach,
-            // Open the inline filename bar (grammar rule 6) rather than attaching
-            // straight away — the user picks/keeps a name, then confirms. The bar's
-            // Attach stages the EDITED buffer when the file has edits.
-            action: () => openAttachBar()
+            // For the ACTIVE window, open the inline filename bar (grammar rule 6) —
+            // it's active-window header chrome — so the user picks/keeps a name. For
+            // a NON-active tab there is no inline bar in its (hidden) header, so
+            // attach THAT window's file directly under its own name.
+            action: () => { if (isActive) openAttachBar(); else attachActiveFile(null, w); }
         }));
     }
 
-    // Pin / Unpin: promote the active window to a persistent TAB (survives channel
+    // Pin / Unpin: promote THIS window to a persistent TAB (survives channel
     // switches), or demote a pinned window back to the channel-bound transient. The
-    // label flips with the window's pinned state. Shown whenever there's a window.
+    // label reflects THIS window's pinned state. Shown whenever there's a window.
     items.push(React.createElement(Menu.MenuItem, {
         id: "dockview-more-pin",
-        label: activeWindow.pinned ? STRINGS.menu.unpin : STRINGS.menu.pin,
+        label: w.pinned ? STRINGS.menu.unpin : STRINGS.menu.pin,
         icon: MENU_ICON.pin,
-        action: () => { if (activeWindow.pinned) unpinActiveWindow(); else pinActiveWindow(); }
+        action: () => { if (w.pinned) unpinActiveWindow(w); else pinActiveWindow(w); }
     }));
 
     // PDF-only: "Fit to width" (reset zoom to 100%). A secondary control moved
     // off the header (spec §2.1 PDF "fit-width → ⋯"). Shown only when zoomed away
     // from fit, since at 100% it's a no-op. The header keeps the zoom group +/-.
-    if (isPdf && activeWindow.content.pdf.doc != null && Math.round(activeWindow.pdfView.zoom * 100) !== 100) {
+    // The shared `pdfControls` only drive the VISIBLE active viewer, so this item
+    // is offered only for the active window (a hidden tab has no live viewer).
+    if (isActive && isPdf && w.content.pdf.doc != null && Math.round(w.pdfView.zoom * 100) !== 100) {
         items.push(React.createElement(Menu.MenuItem, {
             id: "dockview-more-fit-width",
             label: STRINGS.menu.fitToWidth,
@@ -5783,7 +5795,7 @@ function DockMoreMenu() {
         id: "dockview-more-popout",
         label: STRINGS.menu.openInNewWindow,
         icon: MENU_ICON.popout,
-        action: () => openInVesktopWindow()
+        action: () => openInVesktopWindow(w)
     }));
 
     if (url) {
@@ -5934,17 +5946,20 @@ function attachToolbar() {
 // case is byte-identical to before the multi-window work).
 //
 // "header = tab" model: each tab carries its OWN ⋯ + ✕ — there is NO shared
-// far-right cluster when tabs are showing.
-//   - ACTIVE tab: file glyph + name + inline ⋯ (opens THIS window's ⋯ menu, which
-//     is `activeWindow`'s menu since the active tab IS the active window) + ✕
-//     (closes the active window → a neighbour activates).
-//   - INACTIVE tab: file glyph + name + a ✕ revealed on hover only (no ⋯); the ✕
-//     closes THAT window directly WITHOUT switching to it first (closeTab leaves
-//     the active binding alone for a non-active tab).
-// Switching tabs moves the visible ⋯ to the new active tab — per-window, never
-// shared. Tabs are FLAT (icon + name), not boxed: the active tab gets a subtle
-// rounded selected-item highlight (Discord's --background-modifier-selected, the
-// channel/DM/member-list selected look), NOT a bordered pill. No invented chrome.
+// far-right cluster when tabs are showing. The controls are PERSISTENT on EVERY
+// tab (active AND inactive), always rendered at rest with NO hover/active gating,
+// so every tab's width is STABLE — hovering or switching the active tab never
+// changes any tab's width (no layout shift, the thing 선인 hates).
+//   - EVERY tab: file glyph + name + ⋯ (opens THAT window's ⋯ menu IN PLACE) + ✕
+//     (closes THAT window). Active vs inactive is shown ONLY by the underline +
+//     bright/muted text, never by showing/hiding controls.
+//   - ⋯ on a tab opens the menu PARAMETERIZED by THAT window — it does NOT switch
+//     the active tab (no setActiveWindow), so a non-active tab's pin/attach/open
+//     act on that window in place (선인: pressing ⋯ need not jump to that tab).
+//   - ✕ closes THAT window directly (closeTab leaves the active binding alone for
+//     a non-active tab, so it never switches to it first).
+// Tabs are FLAT (icon + name), not boxed: the active tab gets a subtle underline +
+// brighter text (Option B), NOT a bordered pill. No invented chrome.
 // ---------------------------------------------------------------------------
 const TAB_CLOSE_PATH = "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z";
 const TAB_MORE_PATH = "M7 12.001C7 13.105 6.105 14 5 14C3.895 14 3 13.105 3 12.001C3 10.896 3.895 10.001 5 10.001C6.105 10.001 7 10.896 7 12.001ZM14 12.001C14 13.105 13.105 14 12 14C10.895 14 10 13.105 10 12.001C10 10.896 10.895 10.001 12 10.001C13.105 10.001 14 10.896 14 12.001ZM19 14C20.105 14 21 13.105 21 12.001C21 10.896 20.105 10.001 19 10.001C17.895 10.001 17 10.896 17 12.001C17 13.105 17.895 14 19 14Z";
@@ -5983,10 +5998,11 @@ function tabCtrlBtn(opts: { key: string; cls: string; label: string; path: strin
     );
 }
 
-/** Tabs row. `onMore`/`onCloseActive` drive the ACTIVE tab's inline ⋯/✕ (the same
- *  handlers the lone-window far-right cluster uses, so behaviour is unchanged —
- *  only WHERE the buttons render moved from a shared cluster to per-tab). */
-function DockTabs({ onMore, onCloseActive }: { onMore: (e: any) => void; onCloseActive: (e: any) => void; }) {
+/** Tabs row. Every tab carries its OWN persistent ⋯ + ✕ acting on THAT window.
+ *  `onCloseActive` is the active window's close path (resets the attach bar before
+ *  closing) — the active tab's ✕ uses it; an inactive tab's ✕ uses closeTab(w.id)
+ *  directly (no attach bar to reset on a hidden window). */
+function DockTabs({ onCloseActive }: { onCloseActive: (e: any) => void; }) {
     return React.createElement(
         "div",
         { className: "dockview-tabs", role: "tablist" },
@@ -6001,40 +6017,35 @@ function DockTabs({ onMore, onCloseActive }: { onMore: (e: any) => void; onClose
                     role: "tab",
                     "aria-selected": isActive,
                     title: label,
+                    // Clicking the tab BODY (icon/name area) switches active.
                     onClick: () => switchToWindow(w.id)
                 },
                 tabIcon(w.content.type),
                 React.createElement("span", { className: "dockview-tab-name" }, label),
-                // Per-tab controls (never a shared cluster):
-                //   ACTIVE → inline ⋯ (this window's menu) + ✕ (close active, a
-                //     neighbour activates). Both always visible on the active tab.
-                //   INACTIVE → just a ✕ revealed on hover; closes THAT window
-                //     directly (closeTab leaves the active binding alone for a
-                //     non-active tab, so it never switches to it first).
-                isActive
-                    ? tabCtrlBtn({
-                        key: "more",
-                        cls: "dockview-tab-more",
-                        label: STRINGS.header.more,
-                        path: TAB_MORE_PATH,
-                        onClick: (e: any) => { e.stopPropagation(); onMore(e); }
-                    })
-                    : null,
-                isActive
-                    ? tabCtrlBtn({
-                        key: "close",
-                        cls: "dockview-tab-close",
-                        label: STRINGS.header.close,
-                        path: TAB_CLOSE_PATH,
-                        onClick: (e: any) => { e.stopPropagation(); onCloseActive(e); }
-                    })
-                    : tabCtrlBtn({
-                        key: "close",
-                        cls: "dockview-tab-close",
-                        label: STRINGS.header.close,
-                        path: TAB_CLOSE_PATH,
-                        onClick: (e: any) => { e.stopPropagation(); closeTab(w.id); }
-                    })
+                // Per-tab controls — PERSISTENT on every tab (no hover/active gating),
+                // so tab widths are stable (no layout shift). The ⋯ opens THIS
+                // window's menu IN PLACE (parameterized by `w`, NEVER setActiveWindow
+                // → no tab switch). The ✕ closes THIS window.
+                tabCtrlBtn({
+                    key: "more",
+                    cls: "dockview-tab-more",
+                    label: STRINGS.header.more,
+                    path: TAB_MORE_PATH,
+                    onClick: (e: any) => {
+                        e.stopPropagation();
+                        ContextMenuApi.openContextMenu(e, () => React.createElement(DockMoreMenu, { win: w }));
+                    }
+                }),
+                tabCtrlBtn({
+                    key: "close",
+                    cls: "dockview-tab-close",
+                    label: STRINGS.header.close,
+                    path: TAB_CLOSE_PATH,
+                    onClick: (e: any) => {
+                        e.stopPropagation();
+                        if (isActive) onCloseActive(e); else closeTab(w.id);
+                    }
+                })
             );
         })
     );
@@ -6291,11 +6302,10 @@ function DockPanel() {
                         // it is the plain [file-type glyph] + title (byte-identical to
                         // before the multi-window work — no tab chrome, no highlight).
                         // With ≥2 windows the SAME slot holds the flat tabs; each tab
-                        // carries its OWN ⋯/✕ (the active tab's inline, an inactive
-                        // tab's ✕ on hover), so there is NO shared far-right cluster.
+                        // carries its OWN PERSISTENT ⋯/✕ acting on THAT window in
+                        // place, so there is NO shared far-right cluster.
                         ...(windows.length >= 2
                             ? [React.createElement(DockTabs, {
-                                onMore: (e: any) => ContextMenuApi.openContextMenu(e, () => React.createElement(DockMoreMenu)),
                                 onCloseActive: close
                             })]
                             : [

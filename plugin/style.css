@@ -174,10 +174,11 @@
    Discord profile-tab indicator). Inactive tabs = muted text, no underline,
    transparent bg; hover = a faint brighten only (no bg fill).
 
-   Each tab carries its OWN ⋯/✕: the active tab shows both inline; an inactive
-   tab shows a ✕ on hover only. There is NO shared far-right cluster when tabs
-   are showing. The row scrolls horizontally on overflow within the slot. No
-   invented chrome. */
+   Each tab carries its OWN ⋯/✕, PERSISTENT on every tab (active AND inactive,
+   always visible at rest — no hover/active gating) so tab widths never change on
+   hover or active-switch (no layout shift). The ⋯ acts on THAT window in place.
+   There is NO shared far-right cluster when tabs are showing. The row scrolls
+   horizontally on overflow within the slot. No invented chrome. */
 .dockview-tabs {
     flex: 1 1 auto;
     min-width: 0;
@@ -287,20 +288,16 @@
     background: var(--background-modifier-active, rgba(255, 255, 255, 0.12));
 }
 .dockview-tab-ctrl svg { display: block; }
-/* The ACTIVE tab's ⋯ and ✕ are always visible (that window's own controls). */
+/* PERSISTENT controls: every tab's ⋯ + ✕ are ALWAYS visible at rest (no hover /
+   active gating). This keeps each tab's WIDTH constant whether it is active,
+   inactive, hovered, or at rest — hovering or switching the active tab never
+   reflows the strip (no layout shift). Active vs inactive is conveyed ONLY by the
+   underline + bright/muted text, never by showing/hiding the controls. The active
+   tab's controls sit slightly brighter to match its brighter text. */
+.dockview-tab-ctrl { opacity: 0.65; }
+.dockview-tab-ctrl:hover { opacity: 1; }
 .dockview-tab-active .dockview-tab-ctrl { opacity: 0.8; }
 .dockview-tab-active .dockview-tab-ctrl:hover { opacity: 1; }
-/* An INACTIVE tab's ✕ is hidden at rest and revealed on hover only — the Discord
-   tab-close pattern, so the resting strip stays calm. (Inactive tabs have no ⋯.) */
-.dockview-tab:not(.dockview-tab-active) .dockview-tab-close {
-    opacity: 0;
-}
-.dockview-tab:not(.dockview-tab-active):hover .dockview-tab-close {
-    opacity: 0.7;
-}
-.dockview-tab:not(.dockview-tab-active) .dockview-tab-close:hover {
-    opacity: 1;
-}
 
 /* Header: native classes give the 48px bar, padding, tint and border-bottom.
    The TOP row is LOCKED to Discord grammar — [glyph][filename] + [⋯ close] — for
