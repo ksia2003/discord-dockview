@@ -95,6 +95,34 @@ const MIN_WIDTH = 360;
 const DEFAULT_WIDTH = 420;
 const MAX_WIDTH_FRAC = 0.6; // of window width
 
+// The dock width is a DOCK-LEVEL (global) property, NOT per-window: every tab is
+// the same dock chrome, so they all share ONE width. It lives in a single module
+// singleton (persisted to LS_WIDTH), and every window's `state.width` is a getter/
+// setter proxy onto it (see makeWindow) — so switching tabs can NEVER change the
+// width (the old per-window seed-from-LS drifted: a window created before a resize
+// kept a stale width and made the dock jump on switch). All reads/writes funnel
+// through this one value. It is SEEDED from LS in makeWindow's first call (which
+// runs after persistCache/lsGet exist — reading LS here at module-init would hit
+// persistCache's TDZ and throw, killing the whole plugin) and corrected by
+// loadPersistedState() from DataStore at startPanel().
+let dockWidth = DEFAULT_WIDTH;
+function getDockWidth(): number { return dockWidth; }
+function setDockWidth(w: number) { dockWidth = w; }
+// `seeded` makes the LS read happen exactly once (the first makeWindow call), so a
+// later makeWindow (a new tab) doesn't re-clobber a width the user has since set.
+let dockWidthSeeded = false;
+function seedDockWidthFromLS() {
+    if (dockWidthSeeded) return;
+    dockWidthSeeded = true;
+    dockWidth = clampWidthRaw(parseInt(lsGet(LS_WIDTH) || "", 10) || DEFAULT_WIDTH);
+}
+// clampWidth() (below) reads window.innerWidth and is the public clamp; this raw
+// helper is identical (it is a function declaration, so it is hoisted).
+function clampWidthRaw(w: number): number {
+    const max = Math.max(MIN_WIDTH, Math.floor((window.innerWidth || 1280) * MAX_WIDTH_FRAC));
+    return Math.min(max, Math.max(MIN_WIDTH, w));
+}
+
 // ---------------------------------------------------------------------------
 // Discord native class resolution (theme-aware, update-robust). Fallbacks are
 // the literal classes from the build we extracted on (2026-06).
@@ -334,9 +362,10 @@ interface DockWindow {
     pinned: boolean;
     // the channel a TRANSIENT window belongs to (null for pinned/global windows).
     ownerChannelId: string | null;
-    // shared open/width state (kept outside React). `width` is window-local but in
-    // the tab model only the active window's width drives the host; it is mirrored
-    // from the shared LS width so every window agrees.
+    // shared open/width state (kept outside React). `open` is per-window. `width`
+    // is a GETTER/SETTER PROXY onto the single global `dockWidth` (see makeWindow):
+    // the dock is one chrome, so every window reports/writes the same width and
+    // switching tabs never changes it.
     state: { open: boolean; width: number };
     // panel content state
     content: PanelContent;
@@ -366,13 +395,20 @@ function nextWindowId(): string {
 /** Build a fresh, empty DockWindow. `pinned`/`ownerChannelId` set by the caller.
  *  Every window shares the same persisted open/width (the dock chrome is one). */
 function makeWindow(opts: { pinned: boolean; ownerChannelId: string | null }): DockWindow {
+    // Seed the global dock width from LS on the first window (safe here: persistCache
+    // exists by the time any makeWindow runs, unlike module-init).
+    seedDockWidthFromLS();
     return {
         id: nextWindowId(),
         pinned: opts.pinned,
         ownerChannelId: opts.ownerChannelId,
+        // `open` is genuinely per-window (a pinned tab stays open while a transient
+        // may not); `width` is a PROXY onto the single global dockWidth so every
+        // window agrees and switching tabs never changes the dock width.
         state: {
             open: lsGet(LS_OPEN) === "1",
-            width: clampWidth(parseInt(lsGet(LS_WIDTH) || "", 10) || DEFAULT_WIDTH)
+            get width() { return getDockWidth(); },
+            set width(w: number) { setDockWidth(w); }
         },
         content: {
             name: null,
@@ -1157,7 +1193,8 @@ let pdfControls: PdfControls | null = null;
 // Each channel id remembers the descriptor of whatever was last loaded into the
 // panel + whether the panel was open there. On CHANNEL_SELECT we save the
 // outgoing channel's state and restore the incoming one (re-load by descriptor;
-// no rendered-DOM cache). Width is global (shared, in `state.width`).
+// no rendered-DOM cache). Width is global (the single module `dockWidth`, which
+// every window's `state.width` proxies).
 interface ChannelDescriptor {
     name: string;
     url: string;
@@ -2781,8 +2818,7 @@ function clearLoadedContent() {
 }
 
 function clampWidth(w: number): number {
-    const max = Math.max(MIN_WIDTH, Math.floor(window.innerWidth * MAX_WIDTH_FRAC));
-    return Math.min(max, Math.max(MIN_WIDTH, w));
+    return clampWidthRaw(w);
 }
 
 /** The PAGE INNER div = the page__'s child that directly contains chat_. */
