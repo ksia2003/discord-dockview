@@ -7291,6 +7291,10 @@ let mcpReconnect: any = null;
 // resources/read correlation: ws read id -> the render directive awaiting its HTML.
 let mcpReadSeq = 0;
 const mcpPendingReads = new Map<number, { resourceUri: string; tool: any; result: any }>();
+// Claude-artifact runtime source, fetched lazily (NEVER at module eval) from the
+// bridge's http server on first `artifact` directive and cached for reuse so the
+// ~1.7MB runtime is sent over the wire at most once per session.
+let mcpRuntime: string | null = null;
 
 /** Resolve the currently-selected channel id (store first, URL fallback). */
 export function getCurrentChannelId(): string | null {
@@ -7303,6 +7307,24 @@ export function getCurrentChannelId(): string | null {
     }
     const m = /\/channels\/[^/]+\/(\d+)/.exec(location.pathname);
     return m ? m[1] : null;
+}
+
+/** Render a Claude-artifact directive's TSX `code` with the cached runtime. Inlines
+ *  the runtime + a call to window.__renderArtifact(code, {}) into a self-contained
+ *  HTML doc and renders it through renderMcpApp (sandboxed iframe, allow-scripts only,
+ *  nonced inline scripts). The runtime (mcpRuntime) is already "<script"-neutralized
+ *  by the bridge, so loadMcpApp→injectNonce only stamps the real top-level <script>
+ *  we add here. The TSX `code` is "</script"-neutralized so a literal closing tag in
+ *  the source can't break the HTML parser (\/=/, identical to the browser). The
+ *  dormant MCP-Apps handshake is harmless: no tool-input/result is pushed. */
+function renderArtifactCode(msg: any) {
+    if (mcpRuntime == null) return;
+    const code = String(msg.code).replaceAll("</script", "<\\/script");
+    const body = "<!doctype html><html><head><meta charset=utf-8></head>"
+        + "<body style=\"margin:0;background:#1e1f22\"><div id=\"root\">loading…</div>"
+        + "<script>" + mcpRuntime + "\nwindow.__renderArtifact(" + JSON.stringify(code) + ",{});</script>"
+        + "</body></html>";
+    try { renderMcpApp({ id: "artifact:" + (msg.name || "artifact"), html: body }); } catch { /* ignore */ }
 }
 
 /** Open (or re-open) the MCP bridge WebSocket. Reads the enable toggle / token /
@@ -7373,6 +7395,21 @@ function startMcpClient() {
             // open ordinary content (html/markdown/code/pdf/image/csv) the same way
             // a chip click / __dockView.load would — no widget handshake involved.
             try { load({ name: msg.name || "artifact", html: msg.html ?? null, url: msg.url ?? null, type: msg.type2 ?? undefined }); } catch { /* ignore */ }
+        } else if (msg.type === "artifact" && typeof msg.code === "string") {
+            // Claude-artifact push: render TSX `msg.code` with the artifact runtime.
+            // The runtime is large (~1.7MB), so fetch it lazily on the first artifact
+            // and cache it — later artifacts reuse the cached source and never re-fetch.
+            if (mcpRuntime != null) {
+                renderArtifactCode(msg);
+            } else {
+                // The runtime lives on the bridge's http server, which is the ws port
+                // + 1 (the bridge's PUSH_PORT — settings only stores the ws port).
+                const httpPort = (settings.store.mcpBridgePort || 9820) + 1;
+                fetch(`http://127.0.0.1:${httpPort}/runtime.js`)
+                    .then(r => r.text())
+                    .then(t => { mcpRuntime = t; renderArtifactCode(msg); })
+                    .catch(e => console.debug("[dockview] mcp: runtime fetch failed", e));
+            }
         }
     });
     const reschedule = () => {
