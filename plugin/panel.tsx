@@ -2562,11 +2562,15 @@ export function load(opts: { name: string; html?: string | null; url?: string | 
     if (result !== "noop") forceRender?.();
 }
 
-/** Render an AI-pushed MCP app: a sandboxed HTML widget driven over the bridge.
- *  Routes through load() (which focuses the transient window, opens the chrome and
- *  re-renders) with the mcpapp type; `id` is threaded through so loadMcpApp can key
- *  the postMessage registry by it. */
-export function renderMcpApp({ id, html }: { id: string; html: string }) {
+/** Render an MCP app: a sandboxed HTML widget driven over the bridge as an MCP
+ *  Apps host. Routes through load() (which focuses the transient window, opens the
+ *  chrome and re-renders) with the mcpapp type; `id` (= the ui:// resource uri) is
+ *  threaded through so loadMcpApp keys the postMessage registry by it. The launching
+ *  tool's arguments + CallToolResult are stashed on a fresh session record and are
+ *  flushed to the frame as tool-input/tool-result once it finishes the handshake. */
+export function renderMcpApp({ id, html, toolArguments, toolResult }: { id: string; html: string; toolArguments?: any; toolResult?: any; }) {
+    // Fresh session for this app id: discard any prior frame/handshake state.
+    mcpSessions.set(id, { win: null, initialized: false, toolArguments, toolResult });
     load({ name: id, html, type: "mcpapp", id });
 }
 
@@ -2969,11 +2973,24 @@ function findChat(inner: HTMLElement): HTMLElement | null {
  *  the instant it loads (we just clear the timer). */
 const IFRAME_LOAD_TIMEOUT = 8000;
 
-// Live registry of mounted MCP-app iframe windows, keyed by app id. The bridge's
-// host→frame posts (`toframe`) look the contentWindow up here, and the frame→host
-// `__dockViewMcp` forwarding scans it to find which app owns an event.source. A
-// plain Map literal is a safe module-top value (no lazy proxy / TDZ involved).
+// Live registry of mounted MCP-app iframe windows, keyed by app id (= the ui://
+// resource uri). The host routes JSON-RPC by matching a frame→host message's
+// event.source against these contentWindows. A plain Map literal is a safe
+// module-top value (no lazy proxy / TDZ involved).
 const mcpFrames = new Map<string, Window>();
+
+// Per-app MCP-Apps session state, keyed by app id. Tracks the handshake (so we
+// only push tool-input/result AFTER ui/notifications/initialized) and stashes the
+// launching tool's args + result delivered by the bridge's `render` directive so
+// they can be flushed once the frame is initialized. Plain Map literal: safe at
+// module top (no lazy proxy / side effects).
+interface McpSession {
+    win: Window | null;
+    initialized: boolean;
+    toolArguments: any;
+    toolResult: any;
+}
+const mcpSessions = new Map<string, McpSession>();
 
 function HtmlBody() {
     const { useRef, useState, useEffect } = React;
@@ -3039,12 +3056,12 @@ function renderHtmlBody() {
     return React.createElement(HtmlBody, { key: activeWindow.content.seq });
 }
 
-/** The MCP-app body: the AI-pushed HTML widget in a HARD-sandboxed iframe (sandbox
- *  is "allow-scripts" ONLY — NO allow-same-origin, so the frame is a null origin
- *  and can't reach the host). On mount we register the frame's contentWindow in the
- *  module `mcpFrames` registry keyed by the current appId so the bridge can post to
- *  it (`toframe`) and attribute its `__dockViewMcp` posts back (frame→host); the
- *  cleanup drops it. */
+/** The MCP-app body: the widget HTML in a HARD-sandboxed iframe (sandbox is
+ *  "allow-scripts" ONLY — NO allow-same-origin, so the frame is a null origin and
+ *  can't reach the host). On mount we register the frame's contentWindow in the
+ *  module `mcpFrames` registry keyed by the current appId so the host can post
+ *  JSON-RPC into it and attribute its JSON-RPC posts back (frame→host) by matching
+ *  event.source; the cleanup drops the frame + its session. */
 function McpAppBody() {
     const { useRef, useEffect } = React;
     const ref = useRef(null as HTMLIFrameElement | null);
@@ -3052,8 +3069,8 @@ function McpAppBody() {
     useEffect(() => {
         const appId = activeWindow.mcpView.appId;
         const win = ref.current?.contentWindow;
-        if (appId && win) mcpFrames.set(appId, win);
-        return () => { if (appId) mcpFrames.delete(appId); };
+        if (appId && win) bindMcpFrame(appId, win);
+        return () => { if (appId) unbindMcpFrame(appId); };
     }, []);
 
     const onLoad = () => {
@@ -3061,7 +3078,7 @@ function McpAppBody() {
         // parses, so keep the registry pointing at the live window.
         const appId = activeWindow.mcpView.appId;
         const win = ref.current?.contentWindow;
-        if (appId && win) mcpFrames.set(appId, win);
+        if (appId && win) bindMcpFrame(appId, win);
     };
 
     return React.createElement("iframe", {
@@ -3077,6 +3094,144 @@ function McpAppBody() {
 /** Body factory for the MCP-app iframe path (keeps the dispatcher tidy). */
 function renderMcpAppBody() {
     return React.createElement(McpAppBody, { key: activeWindow.content.seq });
+}
+
+// ---------------------------------------------------------------------------
+// MCP Apps (SEP-1865) HOST surface. The dock is the host; the bridge ws peer is
+// the MCP server. iframe ↔ host is raw JSON-RPC 2.0 over postMessage (the message
+// IS the JSON-RPC object, no wrapper). We never gate on event.origin (the
+// sandbox has no allow-same-origin, so the origin string is "null"); the sender
+// is identified by event.source === a registered frame contentWindow.
+// ---------------------------------------------------------------------------
+const MCP_PROTOCOL_VERSION = "2026-01-26";
+const MCP_HOST_INFO = { name: "discord-dockview", version: "1.0.0" };
+
+/** Correlate a ws tools/call proxy with the iframe request that triggered it, so
+ *  the bridge's call.res can be replied to the right frame + JSON-RPC id. Lazy
+ *  module value; the counter is a plain number (no module-top side effects). */
+let mcpCallSeq = 0;
+const mcpPendingCalls = new Map<number, { win: Window; rpcId: any }>();
+
+/** Register a live MCP-app frame window + ensure its session record exists. */
+function bindMcpFrame(appId: string, win: Window) {
+    mcpFrames.set(appId, win);
+    const s = mcpSessions.get(appId);
+    if (s) s.win = win;
+    else mcpSessions.set(appId, { win, initialized: false, toolArguments: undefined, toolResult: undefined });
+}
+
+/** Drop a frame + its session (panel switch / unmount). Any pending ws calls
+ *  targeting its window are abandoned. */
+function unbindMcpFrame(appId: string) {
+    const win = mcpFrames.get(appId);
+    mcpFrames.delete(appId);
+    mcpSessions.delete(appId);
+    if (win) {
+        for (const [id, p] of mcpPendingCalls) {
+            if (p.win === win) mcpPendingCalls.delete(id);
+        }
+    }
+}
+
+/** Reverse-lookup the appId that owns a frame contentWindow (event.source). */
+function mcpAppIdForSource(src: any): string | null {
+    for (const [id, win] of mcpFrames) {
+        if (win === src) return id;
+    }
+    return null;
+}
+
+/** Post a JSON-RPC 2.0 message into a frame (targetOrigin "*"). */
+function mcpPostToFrame(win: Window, msg: any) {
+    try { win.postMessage(msg, "*"); } catch { /* frame gone */ }
+}
+function mcpReplyResult(win: Window, id: any, result: any) {
+    mcpPostToFrame(win, { jsonrpc: "2.0", id, result });
+}
+function mcpReplyError(win: Window, id: any, code: number, message: string) {
+    mcpPostToFrame(win, { jsonrpc: "2.0", id, error: { code, message } });
+}
+
+/** After a frame's ui/notifications/initialized, push the launching tool's args
+ *  (ui/notifications/tool-input) and its CallToolResult (ui/notifications/
+ *  tool-result). Called once the handshake completes; tool params delivered before
+ *  init are stashed on the session and flushed here. */
+function mcpFlushTool(s: McpSession) {
+    if (!s.win || !s.initialized) return;
+    if (s.toolArguments !== undefined) {
+        mcpPostToFrame(s.win, {
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-input",
+            params: { arguments: s.toolArguments }
+        });
+    }
+    if (s.toolResult !== undefined) {
+        // params IS the CallToolResult.
+        mcpPostToFrame(s.win, {
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-result",
+            params: s.toolResult
+        });
+    }
+}
+
+/** Route a JSON-RPC 2.0 message that arrived from an MCP-app frame. Requests
+ *  (have an id) get a result/error reply; notifications (no id) are handled and
+ *  not replied to. Unknown methods get -32601. */
+function handleMcpFrameMessage(appId: string, win: Window, d: any) {
+    const method: string = d.method;
+    const isRequest = d.id != null;
+    const params = d.params || {};
+
+    // Notifications (no reply).
+    if (!isRequest) {
+        if (method === "ui/notifications/initialized") {
+            const s = mcpSessions.get(appId);
+            if (s) { s.initialized = true; mcpFlushTool(s); }
+        } else if (method === "ui/notifications/size-changed") {
+            // intentionally ignored (no relayout yet)
+        }
+        return;
+    }
+
+    // Requests (must reply with result/error).
+    if (method === "ui/initialize") {
+        mcpReplyResult(win, d.id, {
+            protocolVersion: MCP_PROTOCOL_VERSION,
+            hostInfo: MCP_HOST_INFO,
+            hostCapabilities: { serverTools: {}, openLinks: {} },
+            hostContext: { theme: "dark", displayMode: "inline" }
+        });
+        return;
+    }
+    if (method === "tools/call") {
+        // Proxy to the bridge (MCP server) and reply to this frame when call.res
+        // returns. With the bridge gone we report a tool error result.
+        if (!mcpSocket || mcpSocket.readyState !== WebSocket.OPEN) {
+            mcpReplyResult(win, d.id, { content: [{ type: "text", text: "MCP bridge not connected" }], isError: true });
+            return;
+        }
+        const callId = ++mcpCallSeq;
+        mcpPendingCalls.set(callId, { win, rpcId: d.id });
+        try {
+            mcpSocket.send(JSON.stringify({ type: "call", id: callId, name: params.name, arguments: params.arguments || {} }));
+        } catch {
+            mcpPendingCalls.delete(callId);
+            mcpReplyResult(win, d.id, { content: [{ type: "text", text: "MCP bridge send failed" }], isError: true });
+        }
+        return;
+    }
+    if (method === "ui/request-display-mode") {
+        // No real relayout yet: echo the requested mode back.
+        mcpReplyResult(win, d.id, { mode: params.mode });
+        return;
+    }
+    if (method === "ui/open-link") {
+        if (typeof params.url === "string") openExternalLink(params.url);
+        mcpReplyResult(win, d.id, {});
+        return;
+    }
+    mcpReplyError(win, d.id, -32601, "method not found");
 }
 
 /** pdf.js's own pixel-quantization helpers (ported verbatim from the viewer's
@@ -7133,6 +7288,9 @@ let onMessage: ((e: MessageEvent) => void) | null = null;
 // it down from stopPanel).
 let mcpSocket: WebSocket | null = null;
 let mcpReconnect: any = null;
+// resources/read correlation: ws read id -> the render directive awaiting its HTML.
+let mcpReadSeq = 0;
+const mcpPendingReads = new Map<number, { resourceUri: string; tool: any; result: any }>();
 
 /** Resolve the currently-selected channel id (store first, URL fallback). */
 export function getCurrentChannelId(): string | null {
@@ -7151,10 +7309,12 @@ export function getCurrentChannelId(): string | null {
  *  port from Vencord settings AT CONNECT TIME (never at module eval) — Discord
  *  deletes localStorage in the renderer, so the connect info lives in Vencord's
  *  own store. With the bridge disabled or no token we just log and stay
- *  disconnected. Sends the hello handshake on open, routes `render` to
- *  renderMcpApp and `toframe` into the addressed iframe, and schedules a single
- *  reconnect on close/error (unless we're shutting down). Guards against a double
- *  connect when a socket is already OPEN/CONNECTING. */
+ *  disconnected. Sends the hello handshake on open, then speaks the MCP-Apps host
+ *  ws protocol: on `render` it fetches the ui:// resource via `read`, renders it
+ *  with renderMcpApp, and (after the frame's handshake) pushes tool-input/result;
+ *  `call.res` resolves a proxied tools/call by replying to the originating frame.
+ *  Schedules a single reconnect on close/error (unless we're shutting down).
+ *  Guards against a double connect when a socket is already OPEN/CONNECTING. */
 function startMcpClient() {
     if (!active) return; // don't reconnect after stopPanel
     if (mcpSocket && (mcpSocket.readyState === WebSocket.OPEN || mcpSocket.readyState === WebSocket.CONNECTING)) return;
@@ -7182,11 +7342,32 @@ function startMcpClient() {
         let msg: any;
         try { msg = JSON.parse(ev.data); } catch { return; }
         if (!msg || typeof msg !== "object") return;
-        if (msg.type === "render" && msg.app) {
-            try { renderMcpApp({ id: msg.app.id, html: msg.app.html }); } catch { /* ignore */ }
-        } else if (msg.type === "toframe") {
-            const win = mcpFrames.get(msg.appId);
-            try { win?.postMessage({ __dockViewHost: true, payload: msg.payload }, "*"); } catch { /* ignore */ }
+        if (msg.type === "render" && msg.resourceUri) {
+            // Fetch the ui:// resource's HTML; remember the launching tool so it can
+            // be pushed to the frame once it renders + completes its handshake.
+            const readId = ++mcpReadSeq;
+            mcpPendingReads.set(readId, { resourceUri: msg.resourceUri, tool: msg.tool || null, result: msg.result });
+            try { sock.send(JSON.stringify({ type: "read", id: readId, uri: msg.resourceUri })); } catch { mcpPendingReads.delete(readId); }
+        } else if (msg.type === "read.res") {
+            const req = mcpPendingReads.get(msg.id);
+            if (!req) return;
+            mcpPendingReads.delete(msg.id);
+            const c = Array.isArray(msg.contents) ? msg.contents[0] : null;
+            const html = c && typeof c.text === "string" ? c.text : null;
+            if (html == null) return;
+            try {
+                renderMcpApp({
+                    id: req.resourceUri,
+                    html,
+                    toolArguments: req.tool ? req.tool.arguments : undefined,
+                    toolResult: req.result
+                });
+            } catch { /* ignore */ }
+        } else if (msg.type === "call.res") {
+            const pending = mcpPendingCalls.get(msg.id);
+            if (!pending) return;
+            mcpPendingCalls.delete(msg.id);
+            mcpReplyResult(pending.win, pending.rpcId, msg.result);
         }
     });
     const reschedule = () => {
@@ -7199,12 +7380,15 @@ function startMcpClient() {
     sock.addEventListener("error", reschedule);
 }
 
-/** Tear the MCP bridge down: cancel any pending reconnect and close the socket. */
+/** Tear the MCP bridge down: cancel any pending reconnect and close the socket.
+ *  In-flight ws read/call correlations are dropped (no socket to answer them). */
 function stopMcpClient() {
     clearTimeout(mcpReconnect);
     mcpReconnect = null;
     try { mcpSocket?.close(); } catch { /* ignore */ }
     mcpSocket = null;
+    mcpPendingReads.clear();
+    mcpPendingCalls.clear();
 }
 
 /** Reconnect the bridge after a settings change. No-op safe when the panel
@@ -7358,19 +7542,15 @@ export function startPanel() {
             openExternalLink(d.__dockViewOpenLink);
             return;
         }
-        // MCP-app frame → host bridge. The sandbox has no allow-same-origin, so the
-        // origin is the string "null"; identify the message by its __dockViewMcp flag
-        // AND by matching event.source to a registered app iframe contentWindow, then
-        // forward it up the bridge socket as a typed event.
-        if (d && typeof d === "object" && d.__dockViewMcp) {
-            let appId: string | null = null;
-            for (const [id, win] of mcpFrames) {
-                if (win === e.source) { appId = id; break; }
-            }
-            if (appId && mcpSocket && mcpSocket.readyState === WebSocket.OPEN) {
-                try {
-                    mcpSocket.send(JSON.stringify({ type: "event", appId, method: d.method, params: d.params }));
-                } catch { /* ignore */ }
+        // MCP-app frame → host. iframe ↔ host is raw JSON-RPC 2.0 over postMessage
+        // (the message IS the JSON-RPC object). The sandbox has no allow-same-origin,
+        // so event.origin is "null" — never gate on it; identify the sending app by
+        // matching event.source to a registered frame contentWindow, then route the
+        // request/notification through the MCP-Apps host handler.
+        if (d && typeof d === "object" && d.jsonrpc === "2.0" && typeof d.method === "string") {
+            const appId = mcpAppIdForSource(e.source);
+            if (appId) {
+                handleMcpFrameMessage(appId, e.source as Window, d);
             }
         }
     };
@@ -7410,6 +7590,7 @@ export function stopPanel() {
     //     so no callback re-opens it).
     stopMcpClient();
     mcpFrames.clear();
+    mcpSessions.clear();
     // 3. observer + its debounce
     observer?.disconnect();
     observer = null;
@@ -7500,8 +7681,11 @@ export function exposeDebug() {
         // can drive edit-mode + assert the temporary buffer / re-render loop.
         get editView() { return activeWindow.editView; }, get csvView() { return activeWindow.csvView; }, toggleEditMode, toggleCsvMode, toggleCodeFind,
         get editBuffer() { return editBufferText(); }, get codeCtrl() { return codeCtrl; },
-        // MCP app surface debug: render an AI-pushed widget + drive/inspect the bridge.
-        renderMcpApp, startMcpClient, stopMcpClient, restartMcpClient, get mcpView() { return activeWindow.mcpView; }
+        // MCP Apps host surface debug: render a widget + drive/inspect the bridge +
+        // peek the live frame/session registries and pending ws correlations.
+        renderMcpApp, startMcpClient, stopMcpClient, restartMcpClient, get mcpView() { return activeWindow.mcpView; },
+        get mcpFrames() { return mcpFrames; }, get mcpSessions() { return mcpSessions; },
+        get mcpPendingReads() { return mcpPendingReads; }, get mcpPendingCalls() { return mcpPendingCalls; }
     };
 }
 export function unexposeDebug() {
