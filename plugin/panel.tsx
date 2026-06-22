@@ -7368,6 +7368,11 @@ function startMcpClient() {
             if (!pending) return;
             mcpPendingCalls.delete(msg.id);
             mcpReplyResult(pending.win, pending.rpcId, msg.result);
+        } else if (msg.type === "open") {
+            // Plain artifact push (not an MCP App): the server asks the dock to
+            // open ordinary content (html/markdown/code/pdf/image/csv) the same way
+            // a chip click / __dockView.load would — no widget handshake involved.
+            try { load({ name: msg.name || "artifact", html: msg.html ?? null, url: msg.url ?? null, type: msg.type2 ?? undefined }); } catch { /* ignore */ }
         }
     });
     const reschedule = () => {
