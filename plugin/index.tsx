@@ -23,6 +23,7 @@ import managedStyle from "./style.css?managed";
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
 import { exposeDebug, onChannelSelect, onChannelSidebarView, onMemberSectionToggle, onNewFile, onUserProfileSidebarToggle, startPanel, stopPanel, unexposeDebug } from "./panel";
+import { settings } from "./settings";
 import { STRINGS } from "./strings";
 
 export default definePlugin({
@@ -30,6 +31,12 @@ export default definePlugin({
     description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images (Ctrl+Alt+P to toggle; mutually exclusive with the member list; remembers per channel; PDF refits on resize).",
     authors: [{ name: "seonin", id: 0n }],
     target: "DESKTOP",
+
+    // MCP bridge connect info (enable toggle + token + port) persists through
+    // Vencord's settings store, NOT localStorage — Discord deletes
+    // window.localStorage in the renderer, so a localStorage-backed token never
+    // survived. Read at connect time inside startMcpClient(); see settings.ts.
+    settings,
 
     // Managed style: Vencord auto-enables this CSS when the plugin starts and
     // disables it on stop (so style.css is tied to the plugin's on/off state).

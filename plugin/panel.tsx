@@ -18,6 +18,10 @@ import { findByProps, findCssClasses } from "@webpack";
 import { Button, ChannelStore, ContextMenuApi, createRoot, DraftType, Menu, MessageActions, MessageStore, React, SelectedChannelStore, UploadHandler } from "@webpack/common";
 import type { Root } from "react-dom/client";
 
+// MCP bridge connect info (enable/token/port) — persisted by Vencord, read at
+// connect time in startMcpClient(). See settings.ts for why NOT localStorage.
+import { settings } from "./settings";
+
 // pdf.js — bundled into the renderer by esbuild. We ALSO import the worker
 // module and register it on globalThis.pdfjsWorker so pdf.js runs the worker
 // message handler ON THE MAIN THREAD (its "fake worker" path) using THIS
@@ -7143,24 +7147,29 @@ export function getCurrentChannelId(): string | null {
     return m ? m[1] : null;
 }
 
-/** Open (or re-open) the MCP bridge WebSocket. Reads the connect token from
- *  localStorage AT CONNECT TIME (never at module eval); with no token we just log
- *  and stay disconnected. Sends the hello handshake on open, routes `render` to
+/** Open (or re-open) the MCP bridge WebSocket. Reads the enable toggle / token /
+ *  port from Vencord settings AT CONNECT TIME (never at module eval) — Discord
+ *  deletes localStorage in the renderer, so the connect info lives in Vencord's
+ *  own store. With the bridge disabled or no token we just log and stay
+ *  disconnected. Sends the hello handshake on open, routes `render` to
  *  renderMcpApp and `toframe` into the addressed iframe, and schedules a single
  *  reconnect on close/error (unless we're shutting down). Guards against a double
  *  connect when a socket is already OPEN/CONNECTING. */
 function startMcpClient() {
     if (!active) return; // don't reconnect after stopPanel
     if (mcpSocket && (mcpSocket.readyState === WebSocket.OPEN || mcpSocket.readyState === WebSocket.CONNECTING)) return;
-    let token: string | null = null;
-    try { token = localStorage.getItem("dockview_mcp_token"); } catch { /* ignore */ }
+    if (!settings.store.mcpBridgeEnabled) {
+        console.debug("[dockview] mcp: bridge disabled in settings — not connecting");
+        return;
+    }
+    const token = settings.store.mcpBridgeToken;
     if (!token) {
-        console.debug("[dockview] mcp: no dockview_mcp_token — not connecting");
+        console.debug("[dockview] mcp: no bridge token in settings — not connecting");
         return;
     }
     let sock: WebSocket;
     try {
-        sock = new WebSocket("ws://127.0.0.1:9820");
+        sock = new WebSocket(`ws://127.0.0.1:${settings.store.mcpBridgePort || 9820}`);
     } catch (e) {
         console.debug("[dockview] mcp: connect failed", e);
         return;
@@ -7196,6 +7205,15 @@ function stopMcpClient() {
     mcpReconnect = null;
     try { mcpSocket?.close(); } catch { /* ignore */ }
     mcpSocket = null;
+}
+
+/** Reconnect the bridge after a settings change. No-op safe when the panel
+ *  isn't running (the `active` guard means stop+start collapse to just stop).
+ *  Called from settings.ts's onChange via a lazy import (cycle-free). */
+export function restartMcpClient() {
+    if (!active) return;
+    stopMcpClient();
+    startMcpClient();
 }
 
 /** Start the panel: heartbeat, observer, hotkey + resize listeners. */
@@ -7358,7 +7376,7 @@ export function startPanel() {
     };
     window.addEventListener("message", onMessage);
 
-    // Open the MCP bridge (no-op when no token is set in localStorage).
+    // Open the MCP bridge (no-op when disabled or no token is set in settings).
     startMcpClient();
 
     // Mount immediately if a chat layout is already present.
@@ -7483,7 +7501,7 @@ export function exposeDebug() {
         get editView() { return activeWindow.editView; }, get csvView() { return activeWindow.csvView; }, toggleEditMode, toggleCsvMode, toggleCodeFind,
         get editBuffer() { return editBufferText(); }, get codeCtrl() { return codeCtrl; },
         // MCP app surface debug: render an AI-pushed widget + drive/inspect the bridge.
-        renderMcpApp, startMcpClient, stopMcpClient, get mcpView() { return activeWindow.mcpView; }
+        renderMcpApp, startMcpClient, stopMcpClient, restartMcpClient, get mcpView() { return activeWindow.mcpView; }
     };
 }
 export function unexposeDebug() {
