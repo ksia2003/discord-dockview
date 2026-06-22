@@ -49,6 +49,15 @@ import hljs from "highlight.js";
 // Single catalogue of every user-facing string (one English voice).
 import { STRINGS } from "./strings";
 
+// Embedded Claude-artifact runtime (react-runner + Sucrase + React + recharts +
+// lucide + shadcn + twind, Discord-dark) as a plain string — a static import with
+// no side effects (no fetch, no module-top execution). A React/TSX `.artifact`
+// attachment is rendered fully OFFLINE by inlining this into a sandboxed iframe
+// that calls window.__renderArtifact(code, scope). The string is already
+// `<script`-neutralized for the inline-iframe trap, so it passes through
+// injectNonce untouched (see buildArtifactFrameHtml).
+import ARTIFACT_RUNTIME from "./artifact-runtime-src";
+
 // --- runtime polyfill: Map/WeakMap upsert helpers ---------------------------
 // pdf.js v6 uses the TC39 "Upsert" methods Map/WeakMap.prototype.getOrInsert &
 // getOrInsertComputed internally. They are NOT yet shipped in this
@@ -913,6 +922,10 @@ function mountFromCache(e: CacheEntry): boolean {
     // CSV: the delimiter isn't persisted (cheap to re-derive) — re-sniff it from
     // the restored text so the grid parses identically on a cache return.
     if (e.type === "csv") activeWindow.csvView.delimiter = csvDelimiterFor(e.name, e.url, e.code ?? "");
+    // mcpapp (= a TSX `.artifact` rendered via the embedded runtime): restore the
+    // frame id so McpAppBody re-binds the iframe on a cache return (the artifact
+    // self-renders offline, so this only keeps the frame registry consistent).
+    if (e.type === "mcpapp") activeWindow.mcpView.appId = e.name || "artifact";
     activeWindow.activeCacheKey = e.key;
     cacheTouch(e);
     return true;
@@ -1598,6 +1611,29 @@ function setArtifactHtml(html: string) {
     activeWindow.content.frameHtml = nonce ? injectNonce(html, nonce) : html;
 }
 
+/** Is a fetched `.artifact` payload a React/TSX artifact (not an HTML document)?
+ *  HTML artifacts begin with `<!doctype`/`<html`/`<` and have no `export default`;
+ *  a TSX artifact is a module with a default-export component (and usually imports
+ *  React). Any of these signals is enough. */
+function isReactArtifact(text: string): boolean {
+    return /(^|[\n;])\s*export\s+default\b/.test(text)
+        || /\bfrom\s+["']react["']/.test(text)
+        || /^\s*import\b/.test(text);
+}
+
+/** Wrap a TSX artifact's source in the offline runtime iframe doc. The runtime
+ *  string is already `<script`-neutralized, so the ONLY <script>/</script> tags
+ *  injectNonce can match are the real top-level pair this adds — it nonces exactly
+ *  that one inline script and corrupts nothing. We neutralize `</script` in the
+ *  artifact CODE so a literal closing tag inside the source can't break out. */
+function buildArtifactFrameHtml(code: string): string {
+    return "<!doctype html><html><head><meta charset=utf-8></head>"
+        + "<body style=\"margin:0;background:#1e1f22\"><div id=\"root\">loading…</div>"
+        + "<script>" + ARTIFACT_RUNTIME
+        + "\nwindow.__renderArtifact(" + JSON.stringify(code.replaceAll("</script", "<\\/script")) + ",{});</script>"
+        + "</body></html>";
+}
+
 /** Open a URL in the user's external browser (markdown / artifact links).
  *  Prefers VencordNative's native opener (desktop), falls back to window.open. */
 function openExternalLink(href: string) {
@@ -1870,6 +1906,35 @@ function loadHtml(opts: { name: string; html?: string | null; url?: string | nul
                 return r.text();
             })
             .then(text => {
+                // A `.artifact` payload is EITHER a React/TSX module (default-export
+                // component) OR a plain HTML document. A TSX artifact is rendered by
+                // the EMBEDDED runtime inside the SECURE (allow-scripts ONLY) iframe —
+                // we retype it to "mcpapp" so renderBody routes it to McpAppBody (the
+                // null-origin sandbox), mirroring renderMcpApp's frame. An HTML
+                // artifact keeps the existing iframe path verbatim (backward compat).
+                if (isReactArtifact(text)) {
+                    const frame = buildArtifactFrameHtml(text);
+                    const nonce = pageNonce();
+                    const framed = nonce ? injectNonce(frame, nonce) : frame;
+                    // Stash the PRISTINE source in code/codeLang; the entry's TYPE
+                    // becomes "mcpapp" so a cache return re-mounts it as an mcpapp
+                    // (mountFromCache copies entry.type into content.type).
+                    if (entry) { entry.type = "mcpapp"; entry.html = null; entry.frameHtml = framed; entry.code = text; entry.codeLang = "tsx"; entry.loading = false; entry.error = null; }
+                    if (token !== loadSeq) return;
+                    activeWindow.content.type = "mcpapp";
+                    activeWindow.content.html = null;
+                    activeWindow.content.frameHtml = framed;
+                    activeWindow.content.code = text;
+                    activeWindow.content.codeLang = "tsx";
+                    activeWindow.content.loading = false;
+                    activeWindow.content.error = null;
+                    // Register a frame id so McpAppBody binds on mount (the artifact
+                    // self-renders offline, so no host messaging is required — this
+                    // just keeps the registry consistent with renderMcpApp).
+                    activeWindow.mcpView.appId = opts.name || "artifact";
+                    forceRender?.();
+                    return;
+                }
                 // Stash the PRISTINE html source in code/codeLang (immutable merge
                 // baseline + edit source), separate from the rendered html payload.
                 if (entry) { entry.html = text; const nonce = pageNonce(); entry.frameHtml = nonce ? injectNonce(text, nonce) : text; entry.code = text; entry.codeLang = "html"; entry.loading = false; entry.error = null; }
@@ -2496,7 +2561,12 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
         activeWindow.content.seq += 1; // new body identity (different file)
         hit.name = name; // honour the (possibly fresh) display name
         mountFromCache(hit);
-        activeWindow.activeDescriptor = { name, url: hit.url, type: hit.type };
+        // The descriptor must re-PRODUCE this entry's cache key on a later restore,
+        // so it carries the key's ROUTING type — not the entry's RENDER type. They
+        // differ for a TSX `.artifact`: it's keyed/fetched as "html" (loadHtml re-
+        // detects + re-wraps the source) but RENDERS as "mcpapp". Using hit.type
+        // here would key a restore as "mcpapp|url" (miss → loadMcpApp with no html).
+        activeWindow.activeDescriptor = { name, url: hit.url, type: detectType({ url: hit.url, name }) };
         return "cache";
     }
 
