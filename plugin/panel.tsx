@@ -3095,7 +3095,12 @@ function HtmlBody() {
         key: "frame",
         className: "dockview-frame",
         srcDoc: activeWindow.content.frameHtml,
-        sandbox: "allow-scripts allow-same-origin",
+        // allow-scripts ONLY (no allow-same-origin): a srcDoc frame with
+        // allow-same-origin inherits THIS document's origin, so a script in an
+        // untrusted-authored artifact could reach the host DOM and escape the
+        // sandbox. Markdown/HTML here is inert and the link bridge is postMessage
+        // (origin-agnostic), so a null origin loses nothing. Mirrors McpAppBody.
+        sandbox: "allow-scripts",
         onLoad,
         onError,
         // Keep the frame mounted (so it actually loads) but hidden behind the
