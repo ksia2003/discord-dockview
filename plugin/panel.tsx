@@ -1616,6 +1616,11 @@ function setArtifactHtml(html: string) {
  *  a TSX artifact is a module with a default-export component (and usually imports
  *  React). Any of these signals is enough. */
 function isReactArtifact(text: string): boolean {
+    // An HTML document (e.g. a self-contained artifact that inlines the runtime +
+    // TSX source) is never a bare TSX module, even though its embedded source
+    // contains `export default`/`import`. Recognize it first so routing to the TSX
+    // runtime path can't misfire on the inlined source.
+    if (/^\s*(?:<!doctype\s+html|<html[\s>])/i.test(text)) return false;
     return /(^|[\n;])\s*export\s+default\b/.test(text)
         || /\bfrom\s+["']react["']/.test(text)
         || /^\s*import\b/.test(text);
