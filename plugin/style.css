@@ -1521,3 +1521,15 @@ html.dockview-open .dockview-page-inner {
 }
 /* Keep the native Discord Button (Attach) from being stretched by the flex row. */
 .dockview-attach-confirm { flex: 0 0 auto; }
+
+/* ---------------------------------------------------------------------------
+ * Suppress Discord's bulky inline source preview for non-image (code / text /
+ * .html artifact) attachments. The DockView plugin opens these in the dock on
+ * click, so the inline preview — which for a self-contained .html artifact is a
+ * ~50 KB minified-runtime dump — is pure noise. Hide ONLY the preview scroller
+ * (`textContainer`); the filename chip + controls (its sibling) stay clickable.
+ * Scoped under `nonVisualMediaItem`, so images / audio / links are untouched.
+ * --------------------------------------------------------------------------- */
+[class*="nonVisualMediaItem"] [class*="textContainer"] {
+    display: none !important;
+}
