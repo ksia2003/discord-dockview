@@ -226,12 +226,15 @@ function resolvePanelClick(target: EventTarget | null): { url: string; anchor: H
     el = target as HTMLElement | null;
     for (let i = 0; i < 12 && el; i++) {
         const cls = String(el.className || "");
-        if (/attachment|fileName|nonMediaAttachment|wrapperAudio|message-attachment/i.test(cls)) {
+        // Discord wraps a non-image attachment (incl. the inline code preview it
+        // shows for .html/.md/code) in `nonVisualMediaItem`; the `fileName` div
+        // matches first but holds no link, so DON'T break — keep climbing to the
+        // container that actually carries the download <a>.
+        if (/attachment|fileName|nonMediaAttachment|nonVisualMediaItem|wrapperAudio|message-attachment/i.test(cls)) {
             const anchors = el.querySelectorAll<HTMLAnchorElement>("a[href]");
             for (const a of Array.from(anchors)) {
                 if (isPanelUrl(a.href)) return { url: a.href, anchor: a };
             }
-            break;
         }
         el = el.parentElement;
     }
