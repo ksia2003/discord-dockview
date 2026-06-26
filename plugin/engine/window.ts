@@ -131,6 +131,28 @@ export function setActiveWindow(w: DockWindow | string): void {
     activeWindowId = win.id;
 }
 
+/** Collapse the window collection back to a SINGLE closed transient bound to
+ *  `channelId`, dropping every pinned tab (the dock is being VACATED as a whole —
+ *  the header-X close and the exclusive-takeover both use this, where "close" means
+ *  no windows left and the dock yields the right slot). A lone transient is reused
+ *  if one exists (so its identity/scroll survives), else a fresh one is made; it is
+ *  marked closed + active. The engine owns this collection-reset primitive; the host
+ *  drives the surrounding open-state/persist/sidebar side-effects.
+ *
+ *  Returns the surviving (closed) transient so the host can clear viewer-owned slots
+ *  on it (e.g. the image lightbox) without reaching back into the collection. */
+export function resetToClosedTransient(channelId: string | null): DockWindow {
+    const existing = transientWindow();
+    windows.length = 0;
+    const t = existing || makeWindow({ pinned: false, ownerChannelId: channelId });
+    t.pinned = false;
+    t.ownerChannelId = existing ? t.ownerChannelId : channelId;
+    t.state.open = false;
+    windows.push(t);
+    setActiveWindow(t);
+    return t;
+}
+
 /** If the active window's content is stuck loading (its in-flight loader was
  *  superseded by activity in another window — the load-token guard makes a loader
  *  write ONLY the cache entry once superseded) but its cache entry has since

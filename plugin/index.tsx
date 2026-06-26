@@ -1,30 +1,126 @@
 /*
- * DockView — Vencord userplugin.
+ * DockView — Vencord userplugin (modular rewrite entry).
  * ---------------------------------------------------------------------------
- * Ported from the Vesktop fork's right-docked multi-format viewer. Clicking a
- * panel-renderable attachment chip (.artifact/.html, .pdf, code/text, .md)
- * opens it in a right-docked panel that clones Discord's native thread sidebar:
- *   - HTML artifact -> interactive nonce-stamped sandbox iframe
- *   - PDF           -> pdf.js canvases (main-thread worker, CSP-safe)
- *   - code/text     -> highlight.js <pre><code> (selectable, scrollable)
- *   - markdown      -> marked -> dark-themed sandbox iframe
- * Toggle with Ctrl+Alt+P; mutually exclusive with the member list. LaTeX in
- * Discord markdown is rendered via KaTeX.
+ * The manifest + lifecycle + Flux wiring for the from-scratch modular DockView.
+ * It mounts the host (the right-docked, native-style panel), registers the host
+ * with the engine bridge, restores the persisted width/open state, binds the
+ * Ctrl+Alt+P toggle, and exposes window.__dockView for console / CDP driving.
  *
- * target DESKTOP: the artifact/PDF/markdown renderers rely on the CSP nonce
- * trick + main-thread pdf worker that only hold under the desktop client.
+ * Phase 2 reality: NO viewers are registered yet (viewers/registry.ts is empty),
+ * so the dock comes alive as an EMPTY shell — open it with Ctrl+Alt+P (or
+ * __dockView.toggle()) and it shows the empty-state card; __dockView.load() routes
+ * through the engine and lands on the unsupported card (no viewer for the type yet).
+ * Chip-click loading (embed.ts) is re-wired in P3; for now loading is driven over
+ * CDP via __dockView.load().
+ *
+ * target DESKTOP: the eventual artifact/PDF/markdown renderers rely on the CSP
+ * nonce trick + main-thread pdf worker that only hold under the desktop client.
+ *
+ * CRITICAL: this entry does NOT import the old panel.tsx or embed.ts. Those flat
+ * files stay on disk untouched (port source for P3+), just unreferenced.
  */
 
 import definePlugin from "@utils/types";
-import { Menu, React } from "@webpack/common";
 
 import managedStyle from "./style.css?managed";
 
-import { startEmbed, stopEmbed } from "./embed";
+import { clearArtifact, load, retryActiveLoad } from "./engine/load";
+import { clearContentCache } from "./engine/cache";
+import { detectType } from "./engine/detectType";
+import { requestRender } from "./engine/forceRender";
+import {
+    dockHasWindows, getChannelStates, onChannelSelect, setCurrentChannelMemId
+} from "./engine/channelMemory";
+import { loadPersistedState } from "./engine/persist";
+import { closeTab, pinActiveWindow, switchToWindow, unpinActiveWindow } from "./engine/tabs";
+import {
+    getActiveWindow, getActiveWindowId, getWindows, resetToClosedTransient, transientWindow
+} from "./engine/window";
+import { getCurrentChannelId } from "./host/channel";
+import {
+    closeNativeChannelSidebar, getMemberListRestorePending, getProfileSidebarRestorePending,
+    getSelfMemberToggle, getSelfProfileToggle, isMemberListShown, isUserProfileSidebarShown,
+    onChannelSidebarView, onMemberSectionToggle, onUserProfileSidebarToggle,
+    syncNativeMemberList, syncNativeProfileSidebar
+} from "./host/exclusivity";
+import { applyHostWidth, clampWidth } from "./host/layout";
+import { applyOpenState, ensureHost } from "./host/mount";
+import { closePanel, registerHost, startHost, stopHost, toggle } from "./host/open";
+import { openExternalLink } from "./external/openExternal";
 import { startLatex, stopLatex } from "./latex";
-import { exposeDebug, onChannelSelect, onChannelSidebarView, onMemberSectionToggle, onNewFile, onUserProfileSidebarToggle, startPanel, stopPanel, unexposeDebug } from "./panel";
 import { settings } from "./settings";
-import { STRINGS } from "./strings";
+
+// --- window key handlers (lifecycle-scoped, removed on stop) ----------------
+let onKeyDown: ((e: KeyboardEvent) => void) | null = null;
+let onResize: (() => void) | null = null;
+let onMessage: ((e: MessageEvent) => void) | null = null;
+
+/** Apply the persisted width/open state once DataStore resolves. Width is applied
+ *  to the active window + the host geometry; `open` is only ever forced TRUE from
+ *  storage (a channel switch during the async gap must not be slammed shut). */
+async function applyPersisted(): Promise<void> {
+    const { openStr, widthStr } = await loadPersistedState();
+    if (typeof widthStr === "string") {
+        const w = clampWidth(parseInt(widthStr, 10) || getActiveWindow().state.width);
+        if (w !== getActiveWindow().state.width) {
+            getActiveWindow().state.width = w;
+            if (getActiveWindow().state.open) applyHostWidth();
+        }
+    }
+    if (openStr === "1" && !getActiveWindow().state.open) {
+        closeNativeChannelSidebar();
+        getActiveWindow().state.open = true;
+        ensureHost();
+        applyOpenState();
+        syncNativeMemberList(true); // restored open across a restart → collapse like a thread
+        syncNativeProfileSidebar(true);
+    }
+    // Re-render with the restored state. The DockPanel keeps `width` in local React
+    // state (write-only, drives persistence on a user drag); a bump never reseeds it,
+    // so this can't clobber the width we just restored onto state.width.
+    requestRender();
+}
+
+/** The neutral console / CDP handle. Ported from the old exposeDebug surface so the
+ *  CDP verification harness keeps working. Getters read the LIVE active window (it's
+ *  reassigned on every tab switch — a captured snapshot would go stale). */
+function exposeDebug(): void {
+    (window as any).__dockView = {
+        // active window + the historical per-window getters mapped onto it.
+        get activeWindow() { return getActiveWindow(); },
+        get state() { return getActiveWindow().state; },
+        get content() { return getActiveWindow().content; },
+        get activeCacheKey() { return getActiveWindow().activeCacheKey; },
+
+        // open / close / toggle.
+        toggle, ensureHost, applyOpenState, closePanel,
+        get dockOpen() { return dockHasWindows(); },
+
+        // content router + channel memory.
+        load, retry: retryActiveLoad, clear: clearArtifact, detectType,
+        onChannelSelect, getCurrentChannelId,
+        get channelStates() { return getChannelStates(); },
+
+        // exclusivity (member list / profile sidebar) — drive + assert.
+        closeNativeChannelSidebar,
+        onMemberSectionToggle, onUserProfileSidebarToggle, onChannelSidebarView,
+        get memberListShown() { return isMemberListShown(); },
+        get memberListRestorePending() { return getMemberListRestorePending(); },
+        get profileSidebarShown() { return isUserProfileSidebarShown(); },
+        get profileSidebarRestorePending() { return getProfileSidebarRestorePending(); },
+        get selfMemberToggle() { return getSelfMemberToggle(); },
+        get selfProfileToggle() { return getSelfProfileToggle(); },
+
+        // multi-window (pin-driven tabs): the collection + the tab verbs.
+        get windows() { return getWindows(); },
+        get activeWindowId() { return getActiveWindowId(); },
+        switchToWindow, pinActiveWindow, unpinActiveWindow, closeTab, transientWindow
+    };
+}
+
+function unexposeDebug(): void {
+    try { delete (window as any).__dockView; } catch { /* ignore */ }
+}
 
 export default definePlugin({
     name: "DockView",
@@ -32,26 +128,20 @@ export default definePlugin({
     authors: [{ name: "seonin", id: 0n }],
     target: "DESKTOP",
 
-    // MCP bridge connect info (enable toggle + token + port) persists through
-    // Vencord's settings store, NOT localStorage — Discord deletes
-    // window.localStorage in the renderer, so a localStorage-backed token never
-    // survived. Read at connect time inside startMcpClient(); see settings.ts.
+    // MCP bridge connect info persists through Vencord's settings store, NOT
+    // localStorage (Discord deletes window.localStorage in the renderer). The MCP
+    // surface itself is parked (P9); the settings keys stay grouped here.
     settings,
 
     // Managed style: Vencord auto-enables this CSS when the plugin starts and
-    // disables it on stop (so style.css is tied to the plugin's on/off state).
+    // disables it on stop.
     managedStyle,
 
-    // Per-channel panel memory: Discord fires CHANNEL_SELECT on every channel
-    // switch. We save the leaving channel's panel state and restore the entered
-    // channel's (re-load its remembered file, or leave the panel closed/empty).
-    //
-    // Reverse member-list parity: the member list / DM user-profile sidebar share
-    // the exclusive right slot with a thread (and with our panel). Clicking those
-    // header buttons fires these toggle actions — when our panel holds the slot we
-    // close it so the sidebar can take over, exactly as opening members evicts a
-    // thread. (Our own open/close member-list toggles are filtered inside the
-    // handler via a self-dispatch flag.)
+    // Per-channel panel memory + reverse sidebar exclusivity, routed to the new
+    // engine/host modules. CHANNEL_SELECT saves the leaving channel's transient and
+    // restores the entered channel's; the three toggle actions vacate the dock when
+    // a native sidebar takes the exclusive right slot (our own toggles are filtered
+    // inside the handlers via the self-dispatch flags).
     flux: {
         CHANNEL_SELECT({ channelId }: { channelId: string | null; }) {
             onChannelSelect(channelId ?? null);
@@ -67,34 +157,73 @@ export default definePlugin({
         }
     },
 
-    // "New file" entry point in Discord's `+` composer menu (navId
-    // "channel-attach"): opens the dock with an EMPTY editable surface (the same
-    // CodeMirror editor every viewer uses, in EDIT mode, default markdown). The
-    // user writes a brand-new file in the dock and attaches it via the second-row
-    // Attach toolbar — no original baseline, so it edits as a plain editor with no
-    // merge diff. Registering this auto-adds the ContextMenu API as a dependency.
-    contextMenus: {
-        "channel-attach": (children: any, props: any) => {
-            children.push(
-                React.createElement(Menu.MenuItem, {
-                    id: "dockview-new-file",
-                    label: STRINGS.menu.newFile,
-                    action: () => onNewFile(props?.channel ?? null)
-                })
-            );
-        }
-    },
+    // The "+" composer-menu "New file" entry is a cross-cutting edit/ concern (an
+    // empty editable markdown surface) that lands in P8 — omitted here (no-op TODO).
 
     start() {
-        startPanel();
-        startEmbed();
+        // 1. mount the host + register it with the engine bridge (so the engine's
+        //    open/close/channel/tab paths drive real DOM) + seed the channel mem.
+        startHost();
+        registerHost();
+        // 2. restore persisted width/open from DataStore (async; applies on resolve).
+        applyPersisted();
+
+        // 3. Ctrl+Alt+P toggle (works anywhere — it's a modifier combo). The viewer
+        //    single-key shortcuts (image zoom, PDF page-nav/find) ride the viewers
+        //    and arrive in P3+; P2 owns only the dock toggle.
+        onKeyDown = (e: KeyboardEvent) => {
+            if (e.ctrlKey && e.altKey && (e.key === "p" || e.key === "P" || e.code === "KeyP")) {
+                e.preventDefault();
+                toggle();
+            }
+        };
+        window.addEventListener("keydown", onKeyDown);
+
+        // 4. On window resize: re-clamp the persisted width to the window bound and
+        //    re-evaluate the docked/floating geometry (a narrowing window must flip a
+        //    wide dock to floating even if the intended width doesn't change).
+        onResize = () => {
+            if (!dockHasWindows()) return;
+            const w = clampWidth(getActiveWindow().state.width);
+            if (w !== getActiveWindow().state.width) getActiveWindow().state.width = w;
+            applyHostWidth();
+        };
+        window.addEventListener("resize", onResize);
+
+        // 5. Sandbox iframes postMessage link clicks up to us; open them externally
+        //    instead of navigating inside the (null-origin) sandbox. (The viewers that
+        //    emit these land in P5; the listener is harmless until then.)
+        onMessage = (e: MessageEvent) => {
+            const d = e?.data;
+            if (d && typeof d === "object" && typeof d.__dockViewOpenLink === "string") {
+                openExternalLink(d.__dockViewOpenLink);
+            }
+        };
+        window.addEventListener("message", onMessage);
+
+        // 6. chat-side KaTeX (separate concern, kept) + the debug surface.
         startLatex();
         exposeDebug();
     },
 
     stop() {
-        stopEmbed();
-        stopPanel();
+        // 1. window listeners.
+        if (onKeyDown) { window.removeEventListener("keydown", onKeyDown); onKeyDown = null; }
+        if (onResize) { window.removeEventListener("resize", onResize); onResize = null; }
+        if (onMessage) { window.removeEventListener("message", onMessage); onMessage = null; }
+        // 2. tear down the host (heartbeat/observer/React unmount + triple sweep +
+        //    native-sidebar restore). Marks inactive first so no callback re-injects.
+        stopHost();
+        // 3. collapse the window collection back to a single closed transient (so a
+        //    re-start begins from the clean single-window state) + drop the content
+        //    cache + per-channel memory (in-memory only). We do NOT persist a closed
+        //    flag — the user's last open/closed choice + width stay in DataStore so a
+        //    re-start restores them.
+        resetToClosedTransient(null);
+        clearContentCache();
+        getChannelStates().clear();
+        setCurrentChannelMemId(null);
+        // 4. chat-side KaTeX teardown + remove the debug handle.
         stopLatex();
         unexposeDebug();
     }

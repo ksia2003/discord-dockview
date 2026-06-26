@@ -19,12 +19,13 @@
 import { definePluginSettings } from "@api/Settings";
 import { OptionType } from "@utils/types";
 
-// Reconnect the bridge after a setting changes — but only via a lazy import so
-// this module never statically depends on panel.tsx (cycle-free). restartMcpClient
-// is itself guarded by the panel's `active` flag, so this is a no-op when the
-// plugin isn't running.
+// Reconnect the bridge after a setting changes. The MCP bridge is PARKED in the
+// rewrite (it lands isolated under mcp/ in P9), so this is a no-op for now — and
+// crucially it no longer lazy-imports the OLD panel.tsx, which would otherwise drag
+// the whole legacy monolith (+ its heavy deps) into the build as a dynamic chunk.
+// When mcp/ is wired this reaches mcp/index.ts's restartMcpClient lazily instead.
 function reconnectBridge() {
-    import("./panel").then(m => m.restartMcpClient?.()).catch(() => { /* ignore */ });
+    /* parked until P9 (mcp/) */
 }
 
 export const settings = definePluginSettings({
