@@ -92,13 +92,27 @@ export function makeWindow(opts: { pinned: boolean; ownerChannelId: string | nul
 }
 
 // --- the window collection --------------------------------------------------
-const windows: DockWindow[] = [makeWindow({ pinned: false, ownerChannelId: null })];
-let activeWindowId: string = windows[0].id;
-let activeWindow: DockWindow = windows[0];
+// The first window is created LAZILY on first access — NEVER at module-eval. A
+// module-top makeWindow() calls allViewers(), and during the engine↔viewer import
+// cycle (registry imports CodeViewer → CodeBody → back into this module) that runs
+// BEFORE the registry's VIEWERS map is initialised, so `VIEWERS.values()` is read
+// off undefined and the whole plugin fails to load. Deferring it past eval avoids
+// the cycle entirely.
+let windows: DockWindow[] = [];
+let activeWindowId = "";
+let activeWindow: DockWindow = null as unknown as DockWindow;
 
-export function getWindows(): DockWindow[] { return windows; }
-export function getActiveWindow(): DockWindow { return activeWindow; }
-export function getActiveWindowId(): string { return activeWindowId; }
+function ensureInit(): void {
+    if (windows.length) return;
+    const w = makeWindow({ pinned: false, ownerChannelId: null });
+    windows = [w];
+    activeWindowId = w.id;
+    activeWindow = w;
+}
+
+export function getWindows(): DockWindow[] { ensureInit(); return windows; }
+export function getActiveWindow(): DockWindow { ensureInit(); return activeWindow; }
+export function getActiveWindowId(): string { ensureInit(); return activeWindowId; }
 
 // Give the cache a way to read the live window set / active window without
 // importing this module (which imports the cache) — closes that loop one-way.
@@ -107,7 +121,7 @@ registerWindowRegistry({ getWindows, getActiveWindow });
 /** The current transient (un-pinned) window, or null if there is none. There is
  *  at most one (it's channel-bound; a pin frees the slot). */
 export function transientWindow(): DockWindow | null {
-    return windows.find(w => !w.pinned) || null;
+    return getWindows().find(w => !w.pinned) || null;
 }
 
 /** Append a window to the collection (used by the open / channel-switch paths). */
@@ -125,6 +139,7 @@ export function removeWindow(w: DockWindow): number {
 /** Point `activeWindow`/`activeWindowId` at a window (by id or object). Pure
  *  binding swap — does NOT render or touch the DOM; callers re-render. */
 export function setActiveWindow(w: DockWindow | string): void {
+    ensureInit();
     const win = typeof w === "string" ? windows.find(x => x.id === w) : w;
     if (!win) return;
     activeWindow = win;
@@ -142,6 +157,7 @@ export function setActiveWindow(w: DockWindow | string): void {
  *  Returns the surviving (closed) transient so the host can clear viewer-owned slots
  *  on it (e.g. the image lightbox) without reaching back into the collection. */
 export function resetToClosedTransient(channelId: string | null): DockWindow {
+    ensureInit();
     const existing = transientWindow();
     windows.length = 0;
     const t = existing || makeWindow({ pinned: false, ownerChannelId: channelId });
