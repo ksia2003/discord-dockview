@@ -1,6 +1,6 @@
 # DockView
 
-Open PDFs, images, code, and interactive files in a side panel — right inside Discord.
+Open PDFs, Office docs, code, data, diagrams, notebooks, and interactive files in a side panel — right inside Discord.
 
 ![DockView side panel](docs/hero.png)
 
@@ -18,9 +18,12 @@ Download it, install it, sign in. That's the whole setup.
 
 - **PDFs** — read inline with page navigation, zoom, selectable text, and find-in-document.
 - **Images** — open in the panel with zoom and pan; double-click to fit or go 1:1.
+- **Office documents** — Word (`.docx`) and Excel (`.xlsx`/`.xls`) render in the panel; spreadsheets become a grid.
+- **Data** — CSV/TSV as a grid; JSON/XML as a collapsible tree.
 - **Code & text** — syntax highlighting, line numbers, word-wrap toggle, one-click copy.
-- **Markdown** — rendered properly, with highlighted code blocks.
-- **Interactive HTML** — sandboxed `.artifact` files run right in the panel.
+- **Markdown & notebooks** — Markdown and Jupyter `.ipynb` rendered properly, with highlighted code.
+- **Diagrams** — Mermaid and Graphviz/`.dot` render as diagrams.
+- **Interactive HTML** — self-contained HTML artifacts run sandboxed right in the panel.
 - **The panel itself** — sits where the thread/member sidebar goes, resizes by dragging its edge, and each channel remembers the file you had open.
 
 Nothing loads until you click an attachment, and the normal download button still works exactly as before.
@@ -45,7 +48,7 @@ the left, read the file on the right.
 
 Install, launch, log in to Discord. There's nothing else to set up — the side panel is built in.
 
-<sub>Already using **Vencord**? You can run just the side-panel piece as a userplugin. The source lives in [`plugin/`](plugin/) — drop it into Vencord's `src/userplugins/`, add `pdfjs-dist marked highlight.js`, then build and enable "DockView" in Settings ▸ Plugins.</sub>
+<sub>Already using **Vencord**? You can run just the side-panel piece as a userplugin. The source lives in [`plugin/`](plugin/) — drop it into Vencord's `src/userplugins/`, add the viewer deps (`pdfjs-dist marked highlight.js mammoth xlsx mermaid @viz-js/viz` + the CodeMirror set), then build and enable "DockView" in Settings ▸ Plugins.</sub>
 
 ## Notes
 
