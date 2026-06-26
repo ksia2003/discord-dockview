@@ -33,6 +33,24 @@ import { WorkerMessageHandler as PdfWorkerMessageHandler } from "pdfjs-dist/buil
 // marked — markdown -> HTML, bundled into the renderer IIFE.
 import { marked } from "marked";
 
+// mammoth — .docx (OOXML Word) -> HTML, bundled into the renderer IIFE. We fetch
+// the attachment as an ArrayBuffer (binary), convert to an HTML string, then wrap
+// it in the SAME dark sandboxed-iframe document the markdown viewer uses, so a
+// .docx renders dark-themed + sandboxed with zero new render plumbing.
+import * as mammoth from "mammoth";
+
+// SheetJS (xlsx) — .xlsx/.xls (OOXML / BIFF spreadsheet) -> rows, bundled into
+// the renderer IIFE. We read the workbook from an ArrayBuffer, serialise the first
+// sheet to CSV text, and feed that straight into the EXISTING csv grid path (the
+// load RETYPES the file to "csv", mirroring how loadUnknown retypes text to code).
+import * as XLSX from "xlsx";
+
+// mermaid — diagram source (.mmd / .mermaid) -> SVG, bundled into the renderer
+// IIFE. mermaid is heavy and lays diagrams out against the live DOM, so we render
+// on the MAIN side (mermaid.render) and inject only the finished SVG into a dark
+// sandboxed iframe — no mermaid runtime ever runs inside the sandbox.
+import mermaid from "mermaid";
+
 // KaTeX — TeX -> static HTML/CSS math, bundled into the renderer IIFE. The
 // markdown body is a sandboxed srcdoc iframe (no runtime JS, no external assets),
 // so we PRE-render each math span to self-contained HTML on the main side here
@@ -223,6 +241,20 @@ const FILE_TYPE_ICON: Record<string, IconPath[]> = {
     image: [
         ["M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V5Zm3-1a1 1 0 0 0-1 1v9.59l2.3-2.3a1 1 0 0 1 1.4 0l2.3 2.3 3.3-3.3a1 1 0 0 1 1.4 0L18 14.6V5a1 1 0 0 0-1-1H7Zm2.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
     ],
+    // Word document: document frame + a "W" mark.
+    docx: [
+        [DOC_FRAME],
+        ["M6.4 13h1.4l.9 3.8.95-3.8h1.3l.95 3.8.9-3.8H15l-1.55 6h-1.4l-.85-3.4-.85 3.4H8.95L6.4 13Z"]
+    ],
+    // Spreadsheet: document frame + a small grid mark.
+    xlsx: [
+        [DOC_FRAME],
+        ["M6.5 12.5h11v6.5h-11v-6.5Zm1.25 1.25v1.25H11v-1.25H7.75Zm4.5 0v1.25h3.75v-1.25h-3.75Zm-4.5 2.5v1.25H11v-1.25H7.75Zm4.5 0v1.25h3.75v-1.25h-3.75Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    // Mermaid diagram: two linked nodes (a tiny flowchart glyph).
+    mermaid: [
+        ["M5 4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-1v3h3.05a2.5 2.5 0 1 1 0 1.5H10v-1.5H9V8H7a2 2 0 0 1-2-2V4Zm12 13a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
     // Fallback (unknown / binary): a plain document frame.
     unknown: [[DOC_FRAME]]
 };
@@ -304,7 +336,7 @@ async function loadPersistedState(): Promise<void> {
 // default, with a header toggle back to the RAW text (which reuses the code
 // viewer over the same content.code). The grid is parsed lazily from content.code
 // on mount, so the cache stays text-only (no parsed-rows payload to keep alive).
-type ContentType = "html" | "pdf" | "code" | "markdown" | "image" | "unknown" | "csv" | "mcpapp";
+type ContentType = "html" | "pdf" | "code" | "markdown" | "image" | "unknown" | "csv" | "mcpapp" | "docx" | "xlsx" | "mermaid";
 
 interface PdfState {
     doc: any | null; // pdfjs PDFDocumentProxy
@@ -1300,6 +1332,12 @@ const CODE_LANG: Record<string, string> = {
 };
 // Extensions that are markdown.
 const MD_EXT = new Set(["md", "markdown", "mdown", "mkd"]);
+// Word documents (mammoth -> HTML -> dark sandboxed iframe, view-only).
+const DOCX_EXT = new Set(["docx"]);
+// Spreadsheets (SheetJS -> first sheet -> CSV text -> retyped to the csv grid).
+const XLSX_EXT = new Set(["xlsx", "xls"]);
+// Mermaid diagram source (mermaid.render -> SVG -> dark sandboxed iframe).
+const MERMAID_EXT = new Set(["mmd", "mermaid"]);
 // Extensions rendered as an <img> (fit-width) in the panel instead of opening
 // Discord's native lightbox.
 const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "apng", "avif"]);
@@ -1408,6 +1446,15 @@ table:hover::-webkit-scrollbar-thumb, table:hover::-webkit-scrollbar-track { vis
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
 .hljs-deletion { color: #ff938a; }
+/* .docx affordance: a quiet "Converted from .docx" pill above the converted body
+   so a user knows this is a rendering, not the literal file. Muted, not loud. */
+.dv-docx-note { color: #949ba4; font-size: 12px; margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid #3f4147; }
+/* mermaid: the rendered SVG sits centred on the dark page and may be wider/taller
+   than the panel, so the body scrolls to it. The SVG keeps its own intrinsic size
+   (no forced width) so a large diagram stays legible and pannable via scroll. */
+.dv-mermaid { display: flex; justify-content: center; padding: 8px 0; }
+.dv-mermaid svg { max-width: 100%; height: auto; }
+.dv-mermaid-error { color: #f85149; white-space: pre-wrap; word-break: break-word; background: #2b2d31; padding: 12px 14px; border-radius: 6px; border: 1px solid #1e1f22; }
 </style>`;
 
 // Dark-theme overlay for KaTeX math, injected after KATEX_CSS only when a doc
@@ -1441,6 +1488,12 @@ function detectType(opts: { type?: ContentType; url?: string | null; name?: stri
     if (ext === "pdf") return "pdf";
     if (ext && IMG_EXT.has(ext)) return "image";
     if (ext && MD_EXT.has(ext)) return "markdown";
+    // .docx -> mammoth converts to HTML, rendered through the markdown iframe shell.
+    if (ext && DOCX_EXT.has(ext)) return "docx";
+    // .xlsx/.xls -> SheetJS reads it; the loader retypes to "csv" and feeds the grid.
+    if (ext && XLSX_EXT.has(ext)) return "xlsx";
+    // .mmd/.mermaid -> mermaid renders the diagram to SVG in a dark sandboxed iframe.
+    if (ext && MERMAID_EXT.has(ext)) return "mermaid";
     // CSV / TSV -> the spreadsheet grid (with a header toggle back to raw text).
     if (ext === "csv" || ext === "tsv" || ext === "tab") return "csv";
     // ONLY genuine HTML-intent extensions take the iframe path. Everything else
@@ -1669,9 +1722,11 @@ function vesktopWindowHtml(w: DockWindow = activeWindow): string | null {
     const url = w.content.url ? absUrl(w.content.url) : null;
 
     // .artifact / inline HTML — the artifact document itself (today's popout). When
-    // edited, show the edited buffer; else the original html.
-    if (type === "html") {
-        const html = (w.editView.editBuffer != null) ? editBufferText(w) : w.content.html;
+    // edited, show the edited buffer; else the original html. docx (mammoth->HTML)
+    // and mermaid (->SVG) are view-only and store their FULL rendered dark doc in
+    // content.html, so they pop out exactly that document.
+    if (type === "html" || type === "docx" || type === "mermaid") {
+        const html = (type === "html" && w.editView.editBuffer != null) ? editBufferText(w) : w.content.html;
         return html || null;
     }
     // Markdown — the SAME rendered dark document the viewer iframe shows (reuse the
@@ -2352,6 +2407,36 @@ function renderMarkdownDoc(md: string): string {
     return wrapMarkdownDoc(bodyHtml, hasMath);
 }
 
+// mermaid is initialized once, lazily, on the first diagram render. It must NOT
+// auto-scan the page (startOnLoad:false) — we drive every render explicitly. The
+// dark theme matches the dock; securityLevel "strict" strips any embedded HTML/JS
+// in node labels so a hostile diagram can't inject script when we drop the SVG in.
+let _mermaidReady = false;
+function ensureMermaid() {
+    if (_mermaidReady) return;
+    mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
+    _mermaidReady = true;
+}
+
+/** Render mermaid source to a full dark sandboxed-iframe document. mermaid.render
+ *  is async and DOM-dependent, so this returns a Promise<string>. On a parse/render
+ *  error we degrade to the raw source in a red <pre> (one bad diagram never throws
+ *  out of the loader). The finished SVG is centered in a scrollable dark body. */
+async function renderMermaidDoc(src: string): Promise<string> {
+    ensureMermaid();
+    const id = "dvMermaid" + Math.random().toString(36).slice(2);
+    let body: string;
+    try {
+        const { svg } = await mermaid.render(id, src);
+        body = `<div class="dv-mermaid">${svg}</div>`;
+    } catch (e) {
+        body = `<pre class="dv-mermaid-error">${escapeHtml(String((e as any)?.message || e))}\n\n${escapeHtml(src)}</pre>`;
+    }
+    // Reuse the markdown doc shell (dark theme, link routing) so the diagram body
+    // sits on the same dark page; the mermaid-specific layout rules live in MD_STYLE.
+    return wrapMarkdownDoc(body, false);
+}
+
 /** MARKDOWN loader: fetch -> marked -> dark doc -> nonce sandbox iframe path. */
 function loadMarkdown(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
     resetPdf();
@@ -2380,6 +2465,156 @@ function loadMarkdown(opts: { name: string; url?: string | null; noCache?: boole
             setArtifactHtml(fullHtml);
             activeWindow.content.code = md;
             activeWindow.content.codeLang = "markdown";
+            activeWindow.content.loading = false;
+            activeWindow.content.error = null;
+            forceRender?.();
+        })
+        .catch(e => {
+            if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
+            if (token !== loadSeq) return;
+            activeWindow.content.loading = false;
+            activeWindow.content.error = String(e?.message || e);
+            forceRender?.();
+        });
+}
+
+/** DOCX loader: fetch the .docx as an ArrayBuffer (it's binary OOXML, NOT text),
+ *  convert it to HTML with mammoth, then push the HTML through the SAME dark
+ *  sandboxed-iframe document the markdown viewer uses (wrapMarkdownDoc + the nonce
+ *  iframe via setArtifactHtml). View-only — there is no editable source for a
+ *  converted .docx, so it never enters edit mode. A tiny "Converted from .docx"
+ *  banner sits at the top of the doc as a light affordance. */
+function loadDocx(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
+    resetPdf();
+    resetCode();
+    resetHtml();
+    if (!opts.url) {
+        activeWindow.content.loading = false;
+        activeWindow.content.error = "No source";
+        return;
+    }
+    activeWindow.content.loading = true;
+    const reqUrl = opts.url;
+    dvFetch(reqUrl, opts.noCache)
+        .then(r => {
+            if (!r.ok) throw new Error(r.status + " " + r.statusText);
+            return r.arrayBuffer();
+        })
+        .then(buf => mammoth.convertToHtml({ arrayBuffer: buf }))
+        .then(result => {
+            // mammoth returns the body HTML in result.value; wrap it in the dark
+            // markdown doc shell (no math) so it themes + sandboxes identically.
+            const banner = `<div class="dv-docx-note">${escapeHtml("Converted from .docx")}</div>`;
+            const fullHtml = wrapMarkdownDoc(banner + (result?.value || ""), false);
+            if (entry) {
+                entry.html = fullHtml;
+                const nonce = pageNonce();
+                entry.frameHtml = nonce ? injectNonce(fullHtml, nonce) : fullHtml;
+                entry.loading = false;
+                entry.error = null;
+            }
+            if (token !== loadSeq) return;
+            setArtifactHtml(fullHtml);
+            activeWindow.content.loading = false;
+            activeWindow.content.error = null;
+            forceRender?.();
+        })
+        .catch(e => {
+            if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
+            if (token !== loadSeq) return;
+            activeWindow.content.loading = false;
+            activeWindow.content.error = String(e?.message || e);
+            forceRender?.();
+        });
+}
+
+/** XLSX loader: fetch the workbook as an ArrayBuffer (binary), read it with
+ *  SheetJS, serialise the first sheet to CSV text, and RETYPE the file to "csv" so
+ *  the existing spreadsheet GRID (CsvBody) renders it — exactly the way loadUnknown
+ *  retypes a sniffed-text file to "code". The cache entry is retyped too, so a
+ *  re-open restores it as a csv grid (its key is still "xlsx|url" from the original
+ *  detectType, which is fine — only the RENDER type changes). */
+function loadXlsx(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
+    resetHtml();
+    resetPdf();
+    resetCode();
+    resetCsvView(); // a fresh sheet always opens as a grid
+    if (!opts.url) {
+        activeWindow.content.loading = false;
+        activeWindow.content.error = "No source";
+        return;
+    }
+    activeWindow.content.loading = true;
+    const reqUrl = opts.url;
+    dvFetch(reqUrl, opts.noCache)
+        .then(r => {
+            if (!r.ok) throw new Error(r.status + " " + r.statusText);
+            return r.arrayBuffer();
+        })
+        .then(buf => {
+            const wb = XLSX.read(new Uint8Array(buf), { type: "array" });
+            const firstName = wb.SheetNames[0];
+            const sheet = firstName ? wb.Sheets[firstName] : null;
+            // sheet_to_csv emits RFC-4180 CSV (comma delimiter, quoted as needed),
+            // which parseDelimited reads back into the grid unchanged.
+            const text = sheet ? XLSX.utils.sheet_to_csv(sheet) : "";
+            if (entry) {
+                entry.type = "csv";
+                entry.code = text;
+                entry.codeLang = "plaintext";
+                entry.loading = false;
+                entry.error = null;
+            }
+            if (token !== loadSeq) return;
+            activeWindow.content.type = "csv";
+            activeWindow.content.code = text;
+            activeWindow.content.codeLang = "plaintext";
+            activeWindow.csvView.delimiter = ",";
+            activeWindow.content.loading = false;
+            activeWindow.content.error = null;
+            forceRender?.();
+        })
+        .catch(e => {
+            if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
+            if (token !== loadSeq) return;
+            activeWindow.content.loading = false;
+            activeWindow.content.error = String(e?.message || e);
+            forceRender?.();
+        });
+}
+
+/** MERMAID loader: fetch the diagram source as text, render it to an SVG with
+ *  mermaid (async, dark theme), then drop the SVG into the SAME dark sandboxed
+ *  iframe the markdown/docx viewers use. mermaid needs the live DOM to lay the
+ *  diagram out, so we render on the MAIN side and ship only the finished SVG into
+ *  the (script-free) sandbox — no mermaid runtime runs inside the iframe. */
+function loadMermaid(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
+    resetPdf();
+    resetCode();
+    resetHtml();
+    if (!opts.url) {
+        activeWindow.content.loading = false;
+        activeWindow.content.error = "No source";
+        return;
+    }
+    activeWindow.content.loading = true;
+    const reqUrl = opts.url;
+    dvFetch(reqUrl, opts.noCache)
+        .then(r => {
+            if (!r.ok) throw new Error(r.status + " " + r.statusText);
+            return r.text();
+        })
+        .then(src => renderMermaidDoc(src))
+        .then(fullHtml => {
+            if (entry) {
+                entry.html = fullHtml;
+                const nonce = pageNonce();
+                entry.frameHtml = nonce ? injectNonce(fullHtml, nonce) : fullHtml;
+                entry.loading = false;
+                entry.error = null;
+            }
+            if (token !== loadSeq) return;
+            setArtifactHtml(fullHtml);
             activeWindow.content.loading = false;
             activeWindow.content.error = null;
             forceRender?.();
@@ -2544,6 +2779,9 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
     else if (type === "code") loadCode(opts, token, entry);
     else if (type === "csv") loadCsv(opts, token, entry);
     else if (type === "markdown") loadMarkdown(opts, token, entry);
+    else if (type === "docx") loadDocx(opts, token, entry);
+    else if (type === "xlsx") loadXlsx(opts, token, entry);
+    else if (type === "mermaid") loadMermaid(opts, token, entry);
     else if (type === "unknown") loadUnknown(opts, token, entry);
     else if (type === "mcpapp") loadMcpApp(opts, token, entry);
     else loadHtml(opts, token, entry);
@@ -5664,6 +5902,15 @@ function renderBody() {
             return React.createElement(LoadingBody, null);
         }
         return renderMcpAppBody();
+    }
+    // docx (mammoth->HTML) and mermaid (->SVG) are VIEW-ONLY: there's no editable
+    // source, so they always render through the same dark sandboxed iframe as the
+    // markdown/artifact view path (no edit-mode CM swap).
+    if (activeWindow.content.type === "docx" || activeWindow.content.type === "mermaid") {
+        if (activeWindow.content.loading || activeWindow.content.frameHtml == null) {
+            return React.createElement(LoadingBody, null);
+        }
+        return renderHtmlBody();
     }
     // markdown + .artifact (html) share the iframe path in VIEW mode. In EDIT mode
     // the body SWITCHES to an editable CM over the source (raw md / html source) —
