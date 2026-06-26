@@ -65,10 +65,11 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             ctx.content.type = "csv";
             ctx.content.code = text;
             ctx.content.codeLang = "plaintext";
-            // The serialised sheet is comma-delimited. Set it on the csv view-state
-            // slice if the csv viewer has registered (P6); a no-op until then.
+            // The serialised sheet is comma-delimited, and a fresh xlsx always opens
+            // as the grid (the old loadXlsx reset the csv view-state). Set both on the
+            // csv view-state slice if the csv viewer has registered (P6).
             const csv = ctx.window.viewStates["csv"] as CsvViewState | undefined;
-            if (csv) csv.delimiter = ",";
+            if (csv) { csv.delimiter = ","; csv.mode = "grid"; }
             ctx.content.loading = false;
             ctx.content.error = null;
             ctx.requestRender();
