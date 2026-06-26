@@ -1,0 +1,54 @@
+/*
+ * The engine→host seam.
+ *
+ * The engine drives the dock's logical state (which window is active, what's
+ * loaded, open/closed). The actual DOM consequences of "open" — mounting the
+ * host node, pushing/floating the layout, collapsing Discord's native sidebars —
+ * are host/ work that lands in Phase 2. To keep the engine free of host imports
+ * (and free of DOM at all), it calls host actions through these nullable slots.
+ * Phase 2's host module registers real implementations at startup; until then
+ * every call is a graceful no-op, so the engine compiles and runs (logical state
+ * only) with no host wired.
+ *
+ * This is the inverse of forceRender's render slot: there React publishes its
+ * repaint; here the host publishes its DOM effects.
+ */
+
+export interface HostActions {
+    /** Ensure the dock host node exists / is mounted. */
+    ensureHost(): void;
+    /** Reflect the active window's open state into the DOM (mount/show/hide). */
+    applyOpenState(): void;
+    /** Fully close the dock (last window gone): hide host + restore native sidebars. */
+    closePanel(): void;
+    /** Collapse Discord's native channel/thread sidebar so the dock holds the slot. */
+    closeNativeChannelSidebar(): void;
+    /** Collapse/restore the native member list to mirror a thread (true = collapse). */
+    syncNativeMemberList(open: boolean): void;
+    /** Collapse/restore the native user-profile sidebar (DMs) (true = collapse). */
+    syncNativeProfileSidebar(open: boolean): void;
+    /** Apply the persisted/active dock width to the host node. */
+    applyHostWidth(): void;
+}
+
+const noop = () => { };
+
+let host: HostActions = {
+    ensureHost: noop,
+    applyOpenState: noop,
+    closePanel: noop,
+    closeNativeChannelSidebar: noop,
+    syncNativeMemberList: noop,
+    syncNativeProfileSidebar: noop,
+    applyHostWidth: noop
+};
+
+/** Phase 2 host registers its real DOM actions here. */
+export function registerHostActions(actions: Partial<HostActions>): void {
+    host = { ...host, ...actions };
+}
+
+/** The host actions the engine calls (no-ops until the host registers). */
+export function hostActions(): HostActions {
+    return host;
+}

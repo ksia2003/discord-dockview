@@ -24,6 +24,13 @@ export function getViewer(type: ContentType): Viewer | undefined {
     return VIEWERS.get(type);
 }
 
+/** Every registered viewer. makeWindow iterates these to build the per-window
+ *  view-state map (one viewer.createState() slice per type); zero registered =
+ *  an empty map, which the engine tolerates. */
+export function allViewers(): Viewer[] {
+    return [...VIEWERS.values()];
+}
+
 // Viewers are wired up here as they are ported (P3 onward). Kept as explicit
 // registration calls rather than module-top imports so a viewer with an
 // accidental top-level side effect can't take the whole registry down on load.
