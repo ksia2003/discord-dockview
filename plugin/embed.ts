@@ -25,6 +25,7 @@ import { detectType, IMG_EXT } from "./engine/detectType";
 import { load } from "./engine/load";
 import { openExternalLink } from "./external/openExternal";
 import { STRINGS } from "./strings";
+import { fullResImageUrl } from "./viewers/image/url";
 
 // openContextMenu/closeContextMenu are read off ContextMenuApi at CALL time, never
 // destructured at module top: touching a @webpack/common proxy during the plugin's
@@ -167,20 +168,10 @@ function resolvePanelClick(target: EventTarget | null): { url: string; anchor: H
 }
 
 // --- inline image interception ----------------------------------------------
-
-/** Strip Discord's resize query params, keep the signed-CDN ones (ex/is/hm). */
-function fullResImageUrl(raw: string): string {
-    try {
-        const u = new URL(raw, location.href);
-        // The width/height/format/quality params are the *thumbnail* resize hints;
-        // dropping them gives the original-resolution asset. The ex/is/hm signing
-        // params MUST stay or the CDN 403s.
-        ["width", "height", "format", "quality", "size", "passthrough", "animated"].forEach(p => u.searchParams.delete(p));
-        return u.toString();
-    } catch {
-        return raw;
-    }
-}
+// The full-resolution url transform lives in viewers/image/url.ts (the SINGLE
+// source — design §5). embed.ts and the gallery both import it so the chat-side
+// interception loads an image under the exact url the gallery indexes it by;
+// keeping one copy means they can never drift.
 
 /** Read the React fiber on/above `el` to find the attachment's original url. */
 function fiberImageUrl(el: HTMLElement | null): string | null {

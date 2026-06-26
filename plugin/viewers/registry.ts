@@ -37,3 +37,6 @@ export function allViewers(): Viewer[] {
 
 import { CodeViewer } from "./text/CodeViewer";
 registerViewer(CodeViewer);
+
+import { ImageViewer } from "./image/ImageViewer";
+registerViewer(ImageViewer);
