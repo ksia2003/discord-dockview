@@ -40,3 +40,26 @@ registerViewer(CodeViewer);
 
 import { ImageViewer } from "./image/ImageViewer";
 registerViewer(ImageViewer);
+
+// doc/ — the iframe family (markdown, self-contained html artifacts, docx, xlsx,
+// mermaid, graphviz, ipynb). They share one dark sandboxed-iframe shell.
+import { MarkdownViewer } from "./doc/MarkdownViewer";
+registerViewer(MarkdownViewer);
+
+import { HtmlViewer } from "./doc/HtmlViewer";
+registerViewer(HtmlViewer);
+
+import { DocxViewer } from "./doc/DocxViewer";
+registerViewer(DocxViewer);
+
+import { XlsxViewer } from "./doc/XlsxViewer";
+registerViewer(XlsxViewer);
+
+import { MermaidViewer } from "./doc/MermaidViewer";
+registerViewer(MermaidViewer);
+
+import { GraphvizViewer } from "./doc/GraphvizViewer";
+registerViewer(GraphvizViewer);
+
+import { IpynbViewer } from "./doc/IpynbViewer";
+registerViewer(IpynbViewer);
