@@ -29,10 +29,20 @@ const channelStates = new Map<string, ChannelMemory>();
 let currentChannelId: string | null = null;
 
 export function getChannelStates(): Map<string, ChannelMemory> { return channelStates; }
+export function getChannelState(channelId: string): ChannelMemory | undefined { return channelStates.get(channelId); }
 export function getCurrentChannelMemId(): string | null { return currentChannelId; }
 export function setCurrentChannelMemId(id: string | null): void { currentChannelId = id; }
 /** Forget a channel's transient memory (a transient tab close clears its channel). */
 export function deleteChannelState(channelId: string): void { channelStates.delete(channelId); }
+
+/** Two descriptors point at the SAME file when their url + routing type match. The
+ *  type guards a .svg opened as image vs code; we compare the routing type (the one
+ *  the descriptor carries, == the cache key's type), consistent with how showContent
+ *  re-derives the descriptor type on a cache hit. The display name is ignored. */
+export function descriptorsMatch(a: ChannelDescriptor | null, b: ChannelDescriptor | null): boolean {
+    if (!a || !b) return false;
+    return a.url === b.url && a.type === b.type;
+}
 
 /** True when the dock has ANY window to show (≥1 exists): a pinned tab, or a
  *  transient with content. The "dock open" predicate for member-list exclusivity. */
@@ -105,13 +115,27 @@ export function onChannelSelect(newId: string | null): void {
     // 4. restore the entering channel's transient (if it had an open file).
     const mem = channelStates.get(newId);
     if (mem && mem.open && mem.descriptor) {
-        const t = makeWindow({ pinned: false, ownerChannelId: newId });
-        addWindow(t);
-        setActiveWindow(t);
-        host.closeNativeChannelSidebar();
-        t.state.open = true;
-        lsSet(LS_OPEN, "1");
-        restoreDescriptor(mem.descriptor);
+        // GUARD (design §11): if a window is ALREADY open for this same file — a
+        // PINNED tab pinned out of this very channel — don't spawn a second transient
+        // for it (that's the channel-return duplication). Activate the existing tab
+        // and forget the now-redundant channel memory instead.
+        const dupe = getWindows().find(w => descriptorsMatch(w.activeDescriptor, mem.descriptor));
+        if (dupe) {
+            channelStates.delete(newId);
+            setActiveWindow(dupe);
+            host.closeNativeChannelSidebar();
+            dupe.state.open = true;
+            lsSet(LS_OPEN, "1");
+            if (reconcileActiveFromCache()) getActiveWindow().content.seq += 1;
+        } else {
+            const t = makeWindow({ pinned: false, ownerChannelId: newId });
+            addWindow(t);
+            setActiveWindow(t);
+            host.closeNativeChannelSidebar();
+            t.state.open = true;
+            lsSet(LS_OPEN, "1");
+            restoreDescriptor(mem.descriptor);
+        }
     } else if (getWindows().some(w => w.pinned)) {
         // No transient here, but pinned tabs persist → show the last-active pinned.
         const pinned = getWindows().filter(w => w.pinned);

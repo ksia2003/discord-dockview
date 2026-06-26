@@ -51,6 +51,16 @@ export function switchToWindow(id: string): void {
  *  pinning it frees the transient slot for the next file open. */
 export function pinActiveWindow(w: DockWindow = getActiveWindow()): void {
     if (w.pinned) return;
+    // The window was the channel-bound transient: its file is also remembered in
+    // its owner channel's memory (saveCurrentChannelState writes the transient's
+    // descriptor). Once pinned it's GLOBAL, no longer bound to that channel — so if
+    // the remembered descriptor is the same file, forget it. Otherwise returning to
+    // the owner channel would restore a transient for it AND show the pinned tab,
+    // duplicating the file (design §11).
+    const owner = w.ownerChannelId;
+    if (owner && descriptorsMatch(getChannelState(owner)?.descriptor ?? null, w.activeDescriptor)) {
+        deleteChannelState(owner);
+    }
     w.pinned = true;
     w.ownerChannelId = null; // pinned windows are global, not per-channel
     w.state.open = true;
