@@ -41,6 +41,16 @@ registerViewer(CodeViewer);
 import { ImageViewer } from "./image/ImageViewer";
 registerViewer(ImageViewer);
 
+// csv/ — the spreadsheet grid (csv/tsv + xlsx-origin csv text), with a grid↔raw
+// toggle whose raw view reuses the text CodeBody.
+import { CsvViewer } from "./csv/CsvViewer";
+registerViewer(CsvViewer);
+
+// structured/ — the JSON/XML collapsible tree, with a tree↔raw toggle whose raw
+// view reuses the text CodeBody.
+import { StructuredViewer } from "./structured/StructuredViewer";
+registerViewer(StructuredViewer);
+
 // doc/ — the iframe family (markdown, self-contained html artifacts, docx, xlsx,
 // mermaid, graphviz, ipynb). They share one dark sandboxed-iframe shell.
 import { MarkdownViewer } from "./doc/MarkdownViewer";
