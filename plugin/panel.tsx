@@ -49,15 +49,6 @@ import hljs from "highlight.js";
 // Single catalogue of every user-facing string (one English voice).
 import { STRINGS } from "./strings";
 
-// Embedded Claude-artifact runtime (react-runner + Sucrase + React + recharts +
-// lucide + shadcn + twind, Discord-dark) as a plain string — a static import with
-// no side effects (no fetch, no module-top execution). A React/TSX `.artifact`
-// attachment is rendered fully OFFLINE by inlining this into a sandboxed iframe
-// that calls window.__renderArtifact(code, scope). The string is already
-// `<script`-neutralized for the inline-iframe trap, so it passes through
-// injectNonce untouched (see buildArtifactFrameHtml).
-import ARTIFACT_RUNTIME from "./artifact-runtime-src";
-
 // --- runtime polyfill: Map/WeakMap upsert helpers ---------------------------
 // pdf.js v6 uses the TC39 "Upsert" methods Map/WeakMap.prototype.getOrInsert &
 // getOrInsertComputed internally. They are NOT yet shipped in this
@@ -1455,7 +1446,10 @@ function detectType(opts: { type?: ContentType; url?: string | null; name?: stri
     // ONLY genuine HTML-intent extensions take the iframe path. Everything else
     // unrecognised is "unknown" (sniffed text/binary at load) — NOT "html", so a
     // .xyz / binary file is never dumped raw into a sandbox iframe.
-    if (ext === "artifact" || ext === "html" || ext === "htm") return "html";
+    // .artifact is TSX authoring source; delivery is self-contained .html now, so
+    // show a stray .artifact as code — never feed bare TSX to the html iframe.
+    if (ext === "artifact") return "code";
+    if (ext === "html" || ext === "htm") return "html";
     if (ext && ext in CODE_LANG) return "code";
     return "unknown";
 }
@@ -1609,34 +1603,6 @@ function setArtifactHtml(html: string) {
     activeWindow.content.html = html;
     const nonce = pageNonce();
     activeWindow.content.frameHtml = nonce ? injectNonce(html, nonce) : html;
-}
-
-/** Is a fetched `.artifact` payload a React/TSX artifact (not an HTML document)?
- *  HTML artifacts begin with `<!doctype`/`<html`/`<` and have no `export default`;
- *  a TSX artifact is a module with a default-export component (and usually imports
- *  React). Any of these signals is enough. */
-function isReactArtifact(text: string): boolean {
-    // An HTML document (e.g. a self-contained artifact that inlines the runtime +
-    // TSX source) is never a bare TSX module, even though its embedded source
-    // contains `export default`/`import`. Recognize it first so routing to the TSX
-    // runtime path can't misfire on the inlined source.
-    if (/^\s*(?:<!doctype\s+html|<html[\s>])/i.test(text)) return false;
-    return /(^|[\n;])\s*export\s+default\b/.test(text)
-        || /\bfrom\s+["']react["']/.test(text)
-        || /^\s*import\b/.test(text);
-}
-
-/** Wrap a TSX artifact's source in the offline runtime iframe doc. The runtime
- *  string is already `<script`-neutralized, so the ONLY <script>/</script> tags
- *  injectNonce can match are the real top-level pair this adds — it nonces exactly
- *  that one inline script and corrupts nothing. We neutralize `</script` in the
- *  artifact CODE so a literal closing tag inside the source can't break out. */
-function buildArtifactFrameHtml(code: string): string {
-    return "<!doctype html><html><head><meta charset=utf-8></head>"
-        + "<body style=\"margin:0;background:#1e1f22\"><div id=\"root\">loading…</div>"
-        + "<script>" + ARTIFACT_RUNTIME
-        + "\nwindow.__renderArtifact(" + JSON.stringify(code.replaceAll("</script", "<\\/script")) + ",{});</script>"
-        + "</body></html>";
 }
 
 /** Open a URL in the user's external browser (markdown / artifact links).
@@ -1911,35 +1877,6 @@ function loadHtml(opts: { name: string; html?: string | null; url?: string | nul
                 return r.text();
             })
             .then(text => {
-                // A `.artifact` payload is EITHER a React/TSX module (default-export
-                // component) OR a plain HTML document. A TSX artifact is rendered by
-                // the EMBEDDED runtime inside the SECURE (allow-scripts ONLY) iframe —
-                // we retype it to "mcpapp" so renderBody routes it to McpAppBody (the
-                // null-origin sandbox), mirroring renderMcpApp's frame. An HTML
-                // artifact keeps the existing iframe path verbatim (backward compat).
-                if (isReactArtifact(text)) {
-                    const frame = buildArtifactFrameHtml(text);
-                    const nonce = pageNonce();
-                    const framed = nonce ? injectNonce(frame, nonce) : frame;
-                    // Stash the PRISTINE source in code/codeLang; the entry's TYPE
-                    // becomes "mcpapp" so a cache return re-mounts it as an mcpapp
-                    // (mountFromCache copies entry.type into content.type).
-                    if (entry) { entry.type = "mcpapp"; entry.html = null; entry.frameHtml = framed; entry.code = text; entry.codeLang = "tsx"; entry.loading = false; entry.error = null; }
-                    if (token !== loadSeq) return;
-                    activeWindow.content.type = "mcpapp";
-                    activeWindow.content.html = null;
-                    activeWindow.content.frameHtml = framed;
-                    activeWindow.content.code = text;
-                    activeWindow.content.codeLang = "tsx";
-                    activeWindow.content.loading = false;
-                    activeWindow.content.error = null;
-                    // Register a frame id so McpAppBody binds on mount (the artifact
-                    // self-renders offline, so no host messaging is required — this
-                    // just keeps the registry consistent with renderMcpApp).
-                    activeWindow.mcpView.appId = opts.name || "artifact";
-                    forceRender?.();
-                    return;
-                }
                 // Stash the PRISTINE html source in code/codeLang (immutable merge
                 // baseline + edit source), separate from the rendered html payload.
                 if (entry) { entry.html = text; const nonce = pageNonce(); entry.frameHtml = nonce ? injectNonce(text, nonce) : text; entry.code = text; entry.codeLang = "html"; entry.loading = false; entry.error = null; }
