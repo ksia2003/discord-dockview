@@ -26,6 +26,8 @@ import {
     cacheKeyFor, cacheTouch, disposeCacheEntry, getCacheEntry, mountFromCache, putCacheEntry
 } from "./cache";
 import { detectType } from "./detectType";
+import { dvFetch } from "./fetch";
+import { requestRender } from "./forceRender";
 import { bump, nextToken } from "./loadToken";
 import { setPendingScrollTop, snapshotActiveView } from "./viewState";
 import { getActiveWindow } from "./window";
@@ -48,8 +50,8 @@ function makeContext(win = getActiveWindow()): ViewerContext {
     return {
         window: win,
         content: win.content,
-        requestRender: () => { },
-        fetch: (url: string, noCache?: boolean) => (noCache ? fetch(url, { cache: "reload" }) : fetch(url))
+        requestRender,
+        fetch: dvFetch
     };
 }
 
