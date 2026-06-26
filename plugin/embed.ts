@@ -23,7 +23,7 @@ const { openContextMenu, closeContextMenu } = ContextMenuApi;
 
 // MUST mirror panel.tsx's detectType coverage.
 const PANEL_EXT_GROUP =
-    "artifact|html?|pdf|md|markdown|mdown|mkd|" +
+    "artifact|html?|pdf|md|markdown|mdown|mkd|docx|xlsx|xls|mmd|mermaid|" +
     "txt|text|log|js|mjs|cjs|jsx|ts|tsx|mts|cts|py|pyw|json|json5|csv|tsv|" +
     "css|scss|less|xml|svg|plist|yml|yaml|sh|bash|zsh|fish|c|h|cpp|cxx|cc|" +
     "hpp|hxx|hh|java|kt|kts|rs|go|rb|php|sql|toml|ini|cfg|conf|tex|lua|vue|" +
