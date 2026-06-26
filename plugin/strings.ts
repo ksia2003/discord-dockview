@@ -139,6 +139,14 @@ export const STRINGS = {
         copyHint: "Copy table data"
     },
 
+    // --- structured (JSON/XML) tree header controls -------------------------
+    // The Raw control is a single STATE-COLOUR toggle (Discord member-list style):
+    // off = tree, on (highlighted) = raw text. Icon-only — `rawHint` is its tooltip.
+    tree: {
+        rawHint: "Show raw text",
+        copyHint: "Copy"
+    },
+
     // --- code header controls -----------------------------------------------
     // Word wrap is always on (no toggle): code never scrolls horizontally.
     code: {

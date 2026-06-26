@@ -51,6 +51,15 @@ import * as XLSX from "xlsx";
 // sandboxed iframe — no mermaid runtime ever runs inside the sandbox.
 import mermaid from "mermaid";
 
+// @viz-js/viz — Graphviz (.dot / .gv) compiled to WASM, bundled into the renderer
+// IIFE. The WASM binary is embedded as a binary string INSIDE the JS module (no
+// separate .wasm file, no fetch, no dynamic import), so it runs fully OFFLINE under
+// Discord's CSP. We resolve the singleton instance lazily on the first diagram,
+// render the DOT source to an SVG string on the MAIN side, and inject only that SVG
+// into the SAME dark sandboxed iframe the mermaid/markdown viewers use — no viz
+// runtime ever runs inside the sandbox (mirrors loadMermaid exactly).
+import { instance as vizInstance } from "@viz-js/viz";
+
 // KaTeX — TeX -> static HTML/CSS math, bundled into the renderer IIFE. The
 // markdown body is a sandboxed srcdoc iframe (no runtime JS, no external assets),
 // so we PRE-render each math span to self-contained HTML on the main side here
@@ -255,6 +264,20 @@ const FILE_TYPE_ICON: Record<string, IconPath[]> = {
     mermaid: [
         ["M5 4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-1v3h3.05a2.5 2.5 0 1 1 0 1.5H10v-1.5H9V8H7a2 2 0 0 1-2-2V4Zm12 13a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
     ],
+    // Graphviz / DOT: a small directed-graph glyph (three nodes joined by edges).
+    graphviz: [
+        ["M11 3a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Zm-1.2 6.6L6.6 12.4a2.5 2.5 0 1 0 1.1 1L10.9 10.6a4 4 0 0 1-1.1-1ZM5 14.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm7.2-4.9 3.2 2.8a2.5 2.5 0 1 1-1.1 1l-3.2-2.8a4 4 0 0 0 1.1-1ZM18 14.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    // Jupyter notebook: document frame + a circle-on-a-line "[*]" notebook prompt mark.
+    ipynb: [
+        [DOC_FRAME],
+        ["M6.5 14h6v1.5h-6V14Zm0 3h6v1.5h-6V17Zm9.25-3.6a1.85 1.85 0 1 0 0 3.7 1.85 1.85 0 0 0 0-3.7Zm0 1.3a.55.55 0 1 1 0 1.1.55.55 0 0 1 0-1.1Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    // Structured (JSON / XML tree): document frame + a "{ }" braces mark.
+    structured: [
+        [DOC_FRAME],
+        ["M9.2 12.5c-1 0-1.5.5-1.5 1.4v1.1c0 .5-.2.7-.7.7v1.1c.5 0 .7.2.7.7v1.1c0 .9.5 1.4 1.5 1.4v-1.2c-.3 0-.4-.1-.4-.5v-.9c0-.5-.2-.8-.6-1 .4-.2.6-.5.6-1v-.9c0-.4.1-.5.4-.5v-1.1Zm5.6 0v1.1c.3 0 .4.1.4.5v.9c0 .5.2.8.6 1-.4.2-.6.5-.6 1v.9c0 .4-.1.5-.4.5v1.2c1 0 1.5-.5 1.5-1.4v-1.1c0-.5.2-.7.7-.7v-1.1c-.5 0-.7-.2-.7-.7v-1.1c0-.9-.5-1.4-1.5-1.4Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
     // Fallback (unknown / binary): a plain document frame.
     unknown: [[DOC_FRAME]]
 };
@@ -336,7 +359,14 @@ async function loadPersistedState(): Promise<void> {
 // default, with a header toggle back to the RAW text (which reuses the code
 // viewer over the same content.code). The grid is parsed lazily from content.code
 // on mount, so the cache stays text-only (no parsed-rows payload to keep alive).
-type ContentType = "html" | "pdf" | "code" | "markdown" | "image" | "unknown" | "csv" | "mcpapp" | "docx" | "xlsx" | "mermaid";
+// "graphviz" = a Graphviz/DOT source (.dot/.gv) rendered to SVG (viz-js) in the
+// dark sandboxed iframe — view-only, exactly like "mermaid".
+// "ipynb" = a Jupyter notebook (.ipynb, JSON) whose cells are built into ONE HTML
+// document and rendered through the markdown dark-iframe pipeline — view-only.
+// "structured" = a .json/.json5/.xml file rendered as an interactive collapsible
+// TREE by default, with a header Raw toggle back to the highlighted code view (the
+// tree/raw split rides treeView.mode, mirroring csvView.mode for csv).
+type ContentType = "html" | "pdf" | "code" | "markdown" | "image" | "unknown" | "csv" | "mcpapp" | "docx" | "xlsx" | "mermaid" | "graphviz" | "ipynb" | "structured";
 
 interface PdfState {
     doc: any | null; // pdfjs PDFDocumentProxy
@@ -388,6 +418,10 @@ interface CsvViewState {
     mode: "grid" | "raw";
     delimiter: string; // "," for csv, "\t" for tsv (decided at load)
 }
+interface TreeViewState {
+    mode: "tree" | "raw"; // tree (default) vs the raw highlighted-code view
+    kind: "json" | "xml"; // how the tree body parses content.code
+}
 interface EditViewState {
     mode: "view" | "edit";
     editBuffer: string | null;
@@ -429,6 +463,7 @@ interface DockWindow {
     gallery: GalleryState;
     codeView: CodeViewState;
     csvView: CsvViewState;
+    treeView: TreeViewState;
     editView: EditViewState;
     pdfView: PdfViewState;
     mcpView: McpAppViewState;
@@ -501,6 +536,10 @@ function makeWindow(opts: { pinned: boolean; ownerChannelId: string | null }): D
         csvView: {
             mode: "grid",
             delimiter: ","
+        },
+        treeView: {
+            mode: "tree",
+            kind: "json"
         },
         editView: {
             mode: "view",
@@ -712,6 +751,8 @@ interface CachedView {
     scrollTop?: number;
     // csv: which view the user left the file on (grid by default)
     csvMode?: "grid" | "raw";
+    // structured (json/xml): tree vs raw view the user left the file on (tree default)
+    treeMode?: "tree" | "raw";
     // editable text family (code/markdown/csv-raw/artifact): the mode the user
     // left the file on, and the temporary edit buffer (null = unedited). Both
     // survive a cache return so a re-opened file keeps your edits + your mode.
@@ -832,6 +873,10 @@ function viewScroller(): HTMLElement | null {
     if (activeWindow.content.type === "csv" && activeWindow.csvView.mode === "grid") {
         return document.querySelector<HTMLElement>(`#${HOST_ID} .dockview-csv-scroll`) || bodyScroller();
     }
+    // The structured tree (non-raw) fills the body and owns its own vertical scroll.
+    if (activeWindow.content.type === "structured" && activeWindow.treeView.mode === "tree") {
+        return document.querySelector<HTMLElement>(`#${HOST_ID} .dockview-tree-scroll`) || bodyScroller();
+    }
     // The CM editor (code / csv-raw / markdown-or-artifact in edit mode) owns its
     // own scroller; everything else (rendered iframe, pdf, image) scrolls the body.
     if (cmBodyShown()) {
@@ -859,6 +904,8 @@ function snapshotActiveView() {
         e.view.imgTy = activeWindow.imgView.ty;
     } else if (e.type === "csv") {
         e.view.csvMode = activeWindow.csvView.mode;
+    } else if (e.type === "structured") {
+        e.view.treeMode = activeWindow.treeView.mode;
     }
     // editable text family: remember the edit mode + buffer (the buffer is also
     // written through on every keystroke by setEditBuffer; this catches the mode).
@@ -896,6 +943,10 @@ function applyCachedView(e: CacheEntry) {
         // restore the grid/raw choice the user left this file on; the delimiter is
         // re-sniffed by the loader (it lives on csvView already at this point).
         activeWindow.csvView.mode = e.view.csvMode ?? "grid";
+    } else if (e.type === "structured") {
+        resetCodeView();
+        // restore the tree/raw choice; the kind (json/xml) is re-derived on mount.
+        activeWindow.treeView.mode = e.view.treeMode ?? "tree";
     }
     // Editable text family: restore the edit mode + temporary buffer the user left
     // this file on so a re-open keeps both. (CSV's view mode rides csvView above;
@@ -945,6 +996,12 @@ function mountFromCache(e: CacheEntry): boolean {
     // CSV: the delimiter isn't persisted (cheap to re-derive) — re-sniff it from
     // the restored text so the grid parses identically on a cache return.
     if (e.type === "csv") activeWindow.csvView.delimiter = csvDelimiterFor(e.name, e.url, e.code ?? "");
+    // structured: re-derive the json/xml kind from the file extension (cheap) so the
+    // tree body parses identically on a cache return.
+    if (e.type === "structured") {
+        const ex = extOf(e.name) || extOf(e.url);
+        activeWindow.treeView.kind = ex === "xml" ? "xml" : "json";
+    }
     // mcpapp (= a TSX `.artifact` rendered via the embedded runtime): restore the
     // frame id so McpAppBody re-binds the iframe on a cache return (the artifact
     // self-renders offline, so this only keeps the frame registry consistent).
@@ -1186,6 +1243,16 @@ function resetCsvView() {
     activeWindow.csvView.delimiter = ",";
 }
 
+// --- structured (JSON/XML) viewer view-state (tree vs raw), shared with the
+// toolbar. A .json/.json5/.xml file renders as an interactive collapsible TREE by
+// default; the header's Tree/Raw toggle flips to `mode:"raw"`, which falls through
+// to the SAME code viewer used for any text file (over content.code). `kind`
+// (json/xml) is decided per file at load and drives how the tree parses the text.
+function resetStructuredView() {
+    activeWindow.treeView.mode = "tree"; // a fresh file always opens as the tree
+    // kind is set by the loader from the extension; leave it (loadStructured sets it).
+}
+
 // --- editable-mode view-state (view ↔ edit), shared with the toolbar (2b) -----
 // A text-family file opens in VIEW mode; a single state-colour toggle enters EDIT
 // over a TEMPORARY in-memory buffer (never the original file / Discord message).
@@ -1338,6 +1405,13 @@ const DOCX_EXT = new Set(["docx"]);
 const XLSX_EXT = new Set(["xlsx", "xls"]);
 // Mermaid diagram source (mermaid.render -> SVG -> dark sandboxed iframe).
 const MERMAID_EXT = new Set(["mmd", "mermaid"]);
+// Graphviz / DOT source (viz-js renderString -> SVG -> dark sandboxed iframe).
+const GRAPHVIZ_EXT = new Set(["dot", "gv"]);
+// Jupyter notebooks (JSON cells -> one HTML doc -> markdown dark sandboxed iframe).
+const IPYNB_EXT = new Set(["ipynb"]);
+// JSON / XML structured data: rendered as an interactive collapsible TREE by
+// default, with a Raw toggle back to the highlighted code view.
+const STRUCTURED_EXT = new Set(["json", "json5", "xml"]);
 // Extensions rendered as an <img> (fit-width) in the panel instead of opening
 // Discord's native lightbox.
 const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "apng", "avif"]);
@@ -1455,6 +1529,28 @@ table:hover::-webkit-scrollbar-thumb, table:hover::-webkit-scrollbar-track { vis
 .dv-mermaid { display: flex; justify-content: center; padding: 8px 0; }
 .dv-mermaid svg { max-width: 100%; height: auto; }
 .dv-mermaid-error { color: #f85149; white-space: pre-wrap; word-break: break-word; background: #2b2d31; padding: 12px 14px; border-radius: 6px; border: 1px solid #1e1f22; }
+/* graphviz: the viz-js SVG reuses the mermaid layout (centred, scrollable, intrinsic
+   size). Graphviz emits a white default background fill on the root <svg> polygon; we
+   can't easily strip it, so we draw the SVG on a light card so its black text/edges
+   stay legible on the dark page (a contained diagram, not edge-to-edge white). */
+.dv-graphviz { display: flex; justify-content: center; padding: 8px 0; }
+.dv-graphviz svg { max-width: 100%; height: auto; background: #f5f6f8; border-radius: 6px; }
+/* ipynb: each cell is a block with a left rail + an "In [n]:" / "Out[n]:" prompt
+   gutter, echoing the Jupyter layout. The markdown cell bodies reuse the .md rules. */
+.dv-nb-cell { display: flex; gap: 10px; margin: 0 0 14px; }
+.dv-nb-prompt { flex: 0 0 64px; text-align: right; color: #5e6772; font-family: Consolas, "Andale Mono", monospace; font-size: 12px; line-height: 1.5; padding-top: 14px; user-select: none; white-space: nowrap; }
+.dv-nb-body { flex: 1 1 auto; min-width: 0; }
+.dv-nb-md { padding-top: 2px; }
+.dv-nb-code { border-left: 3px solid #4e5058; }
+.dv-nb-code > pre { margin: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.dv-nb-out { margin: 6px 0 0; }
+.dv-nb-out pre { margin: 0; background: #232428; border: 1px solid #1e1f22; padding: 10px 12px; border-radius: 6px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: Consolas, "Andale Mono", monospace; font-size: 12.5px; line-height: 1.45; color: #c7ccd1; }
+.dv-nb-out-html { background: #232428; border: 1px solid #1e1f22; padding: 10px 12px; border-radius: 6px; overflow: auto; }
+.dv-nb-out-html table { border-collapse: collapse; }
+.dv-nb-out-html th, .dv-nb-out-html td { border: 1px solid #3f4147; padding: 4px 8px; }
+.dv-nb-out-err { color: #ff938a !important; background: #2b1d1d !important; border-color: #5a2626 !important; }
+.dv-nb-img { max-width: 100%; background: #fff; border-radius: 6px; }
+.dv-nb-sep { height: 1px; border: 0; background: #2b2d31; margin: 0 0 14px; }
 </style>`;
 
 // Dark-theme overlay for KaTeX math, injected after KATEX_CSS only when a doc
@@ -1494,6 +1590,16 @@ function detectType(opts: { type?: ContentType; url?: string | null; name?: stri
     if (ext && XLSX_EXT.has(ext)) return "xlsx";
     // .mmd/.mermaid -> mermaid renders the diagram to SVG in a dark sandboxed iframe.
     if (ext && MERMAID_EXT.has(ext)) return "mermaid";
+    // .dot/.gv -> viz-js (Graphviz WASM) renders the diagram to SVG in a dark iframe.
+    if (ext && GRAPHVIZ_EXT.has(ext)) return "graphviz";
+    // .ipynb -> the notebook cells are built into one HTML doc and rendered through
+    // the markdown dark-iframe pipeline (view-only).
+    if (ext && IPYNB_EXT.has(ext)) return "ipynb";
+    // .json/.json5/.xml -> the interactive collapsible tree (with a Raw toggle back
+    // to the highlighted code view). Checked BEFORE the CODE_LANG fallthrough so
+    // these route to the tree, not the plain code viewer. (.svg stays image, .plist
+    // stays code — only these three exts are intercepted.)
+    if (ext && STRUCTURED_EXT.has(ext)) return "structured";
     // CSV / TSV -> the spreadsheet grid (with a header toggle back to raw text).
     if (ext === "csv" || ext === "tsv" || ext === "tab") return "csv";
     // ONLY genuine HTML-intent extensions take the iframe path. Everything else
@@ -1725,7 +1831,7 @@ function vesktopWindowHtml(w: DockWindow = activeWindow): string | null {
     // edited, show the edited buffer; else the original html. docx (mammoth->HTML)
     // and mermaid (->SVG) are view-only and store their FULL rendered dark doc in
     // content.html, so they pop out exactly that document.
-    if (type === "html" || type === "docx" || type === "mermaid") {
+    if (type === "html" || type === "docx" || type === "mermaid" || type === "graphviz" || type === "ipynb") {
         const html = (type === "html" && w.editView.editBuffer != null) ? editBufferText(w) : w.content.html;
         return html || null;
     }
@@ -1735,8 +1841,8 @@ function vesktopWindowHtml(w: DockWindow = activeWindow): string | null {
         const md = (w.editView.editBuffer != null) ? editBufferText(w) : (w.content.code || "");
         return renderMarkdownDoc(md);
     }
-    // Code / CSV-raw / unknown-as-text — the raw text in a <pre> (basic dark page).
-    if (type === "code" || type === "csv" || type === "unknown") {
+    // Code / CSV-raw / structured-raw / unknown-as-text — raw text in a <pre>.
+    if (type === "code" || type === "csv" || type === "structured" || type === "unknown") {
         const text = (w.content.code != null)
             ? ((w.editView.editBuffer != null) ? editBufferText(w) : w.content.code)
             : "";
@@ -2628,6 +2734,280 @@ function loadMermaid(opts: { name: string; url?: string | null; noCache?: boolea
         });
 }
 
+// viz-js (Graphviz WASM) is resolved ONCE, lazily, on the first .dot/.gv render.
+// instance() returns a Promise<Viz>; we memoize it so every later diagram reuses
+// the same WASM module (no re-instantiation). The binary is bundled in-module
+// (no fetch), so this resolves fully offline.
+let _vizPromise: Promise<any> | null = null;
+function ensureViz(): Promise<any> {
+    if (!_vizPromise) _vizPromise = vizInstance();
+    return _vizPromise;
+}
+
+/** Render Graphviz/DOT source to a full dark sandboxed-iframe document. viz-js'
+ *  renderString is synchronous once the WASM instance exists, but instance() is
+ *  async, so this returns a Promise<string>. On a parse/render error we degrade to
+ *  the raw source in a red <pre> (mirrors renderMermaidDoc). The SVG is centred in
+ *  a scrollable body on a light card (Graphviz uses black-on-white by default). */
+async function renderGraphvizDoc(src: string): Promise<string> {
+    let body: string;
+    try {
+        const viz = await ensureViz();
+        const svg = viz.renderString(src, { format: "svg" });
+        body = `<div class="dv-graphviz">${svg}</div>`;
+    } catch (e) {
+        body = `<pre class="dv-mermaid-error">${escapeHtml(String((e as any)?.message || e))}\n\n${escapeHtml(src)}</pre>`;
+    }
+    // Reuse the markdown doc shell (dark theme, link routing) like mermaid/docx.
+    return wrapMarkdownDoc(body, false);
+}
+
+/** GRAPHVIZ loader: fetch the .dot/.gv source as text, render it to an SVG with
+ *  viz-js (Graphviz WASM, async instance), then drop the SVG into the SAME dark
+ *  sandboxed iframe the mermaid/markdown viewers use. The WASM runs on the MAIN
+ *  side and only the finished SVG is shipped into the (script-free) sandbox.
+ *  Structurally identical to loadMermaid. */
+function loadGraphviz(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
+    resetPdf();
+    resetCode();
+    resetHtml();
+    if (!opts.url) {
+        activeWindow.content.loading = false;
+        activeWindow.content.error = "No source";
+        return;
+    }
+    activeWindow.content.loading = true;
+    const reqUrl = opts.url;
+    dvFetch(reqUrl, opts.noCache)
+        .then(r => {
+            if (!r.ok) throw new Error(r.status + " " + r.statusText);
+            return r.text();
+        })
+        .then(src => renderGraphvizDoc(src))
+        .then(fullHtml => {
+            if (entry) {
+                entry.html = fullHtml;
+                const nonce = pageNonce();
+                entry.frameHtml = nonce ? injectNonce(fullHtml, nonce) : fullHtml;
+                entry.loading = false;
+                entry.error = null;
+            }
+            if (token !== loadSeq) return;
+            setArtifactHtml(fullHtml);
+            activeWindow.content.loading = false;
+            activeWindow.content.error = null;
+            forceRender?.();
+        })
+        .catch(e => {
+            if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
+            if (token !== loadSeq) return;
+            activeWindow.content.loading = false;
+            activeWindow.content.error = String(e?.message || e);
+            forceRender?.();
+        });
+}
+
+/** Coerce a notebook cell's `source` (an array of lines OR a single string per the
+ *  nbformat spec) into one string. */
+function nbSource(src: any): string {
+    if (Array.isArray(src)) return src.join("");
+    return typeof src === "string" ? src : "";
+}
+
+/** Pick the best MIME representation from an nbformat `data` bundle, in the order
+ *  the task specifies: rich HTML, then a raster image (as a data: URI <img>), then
+ *  plain text. Returns the output HTML fragment, or "" if nothing renderable. */
+function nbDataToHtml(data: any): string {
+    if (!data || typeof data !== "object") return "";
+    // text/html: prefer it, but it's UNTRUSTED — strip <script>/event handlers and
+    // wrap it so a broken fragment can't escape the cell. (Already inside the
+    // null-origin, CSP'd sandbox iframe, but we still null out the obvious vectors.)
+    if (data["text/html"] != null) {
+        const raw = nbSource(data["text/html"]);
+        return `<div class="dv-nb-out-html">${sanitizeNbHtml(raw)}</div>`;
+    }
+    // raster image → a base64 data: URI <img> (png/jpeg/gif are base64 in nbformat).
+    for (const mime of ["image/png", "image/jpeg", "image/gif"]) {
+        if (data[mime] != null) {
+            const b64 = nbSource(data[mime]).replace(/\s+/g, "");
+            return `<img class="dv-nb-img" alt="output" src="data:${mime};base64,${escapeAttr(b64)}">`;
+        }
+    }
+    // image/svg+xml is XML text, not base64.
+    if (data["image/svg+xml"] != null) {
+        return `<div class="dv-nb-out-html">${sanitizeNbHtml(nbSource(data["image/svg+xml"]))}</div>`;
+    }
+    if (data["text/plain"] != null) {
+        return `<pre>${escapeHtml(nbSource(data["text/plain"]))}</pre>`;
+    }
+    return "";
+}
+
+/** Strip the obvious script/eval vectors from a notebook's untrusted text/html or
+ *  SVG output before injecting it. The sandbox iframe is already null-origin + CSP'd
+ *  (no allow-same-origin reach to the host, and the page nonce gates inline script),
+ *  so this is belt-and-braces to keep the doc from breaking, not the only guard. */
+function sanitizeNbHtml(html: string): string {
+    return String(html)
+        .replace(/<script\b[\s\S]*?<\/script\s*>/gi, "")
+        .replace(/<script\b[^>]*>/gi, "")
+        .replace(/\son\w+\s*=\s*"[^"]*"/gi, "")
+        .replace(/\son\w+\s*=\s*'[^']*'/gi, "")
+        .replace(/\son\w+\s*=\s*[^\s>]+/gi, "")
+        .replace(/javascript:/gi, "");
+}
+
+/** Render one code cell's outputs (stream / execute_result / display_data / error)
+ *  to an HTML fragment. */
+function nbOutputsToHtml(outputs: any[]): string {
+    if (!Array.isArray(outputs) || !outputs.length) return "";
+    let out = "";
+    for (const o of outputs) {
+        if (!o || typeof o !== "object") continue;
+        const t = o.output_type;
+        if (t === "stream") {
+            out += `<pre class="dv-nb-out">${escapeHtml(nbSource(o.text))}</pre>`;
+        } else if (t === "execute_result" || t === "display_data") {
+            const frag = nbDataToHtml(o.data);
+            if (frag) out += `<div class="dv-nb-out">${frag}</div>`;
+        } else if (t === "error") {
+            // strip ANSI colour escapes from the traceback, render it red.
+            const tb = Array.isArray(o.traceback) ? o.traceback.join("\n") : String(o.evalue || o.ename || "");
+            const clean = tb.replace(/\x1b\[[0-9;]*m/g, "");
+            out += `<pre class="dv-nb-out dv-nb-out-err">${escapeHtml(clean)}</pre>`;
+        }
+    }
+    return out;
+}
+
+/** Build ONE HTML document body from a parsed notebook's cells. Markdown cells go
+ *  through the existing marked md→HTML; code cells become a highlighted <pre><code>
+ *  (reusing highlightCode) plus their rendered outputs, with an "In [n]:" prompt
+ *  gutter. Returns the inner body HTML (wrapMarkdownDoc supplies the dark shell). */
+function notebookToHtml(nb: any): string {
+    const cells: any[] = Array.isArray(nb?.cells) ? nb.cells : [];
+    // language for code highlighting: notebook metadata, default python.
+    const lang0 = (nb?.metadata?.language_info?.name || nb?.metadata?.kernelspec?.language || "python");
+    const lang = getHighlighter().getLanguage(String(lang0)) ? String(lang0) : "python";
+    const parts: string[] = [];
+    let exec = 0;
+    for (const cell of cells) {
+        if (!cell || typeof cell !== "object") continue;
+        const src = nbSource(cell.source);
+        if (cell.cell_type === "markdown") {
+            const { html } = markdownToHtml(src);
+            const body = highlightMarkdownCode(html);
+            parts.push(`<div class="dv-nb-cell"><div class="dv-nb-prompt"></div><div class="dv-nb-body dv-nb-md">${body}</div></div>`);
+        } else if (cell.cell_type === "code") {
+            const n = cell.execution_count != null ? cell.execution_count : (src.trim() ? ++exec : "");
+            const codeHtml = highlightCode(src, lang);
+            const outHtml = nbOutputsToHtml(cell.outputs);
+            parts.push(
+                `<div class="dv-nb-cell">` +
+                `<div class="dv-nb-prompt">In [${escapeHtml(String(n ?? " "))}]:</div>` +
+                `<div class="dv-nb-body"><div class="dv-nb-code"><pre><code class="hljs language-${escapeHtml(lang)}">${codeHtml}</code></pre></div>${outHtml}</div>` +
+                `</div>`
+            );
+        } else if (cell.cell_type === "raw") {
+            parts.push(`<div class="dv-nb-cell"><div class="dv-nb-prompt"></div><div class="dv-nb-body"><pre>${escapeHtml(src)}</pre></div></div>`);
+        }
+    }
+    if (!parts.length) return `<p>(empty notebook)</p>`;
+    return parts.join('<hr class="dv-nb-sep">');
+}
+
+/** IPYNB loader: fetch the notebook (JSON text), parse it, build one HTML document
+ *  from its cells, and push that through the SAME dark sandboxed-iframe document the
+ *  markdown viewer uses (wrapMarkdownDoc + the nonce iframe via setArtifactHtml).
+ *  View-only — there is no editable source, so it never enters edit mode. On a JSON
+ *  parse failure we surface a load error (the error card offers download/open). */
+function loadIpynb(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
+    resetPdf();
+    resetCode();
+    resetHtml();
+    if (!opts.url) {
+        activeWindow.content.loading = false;
+        activeWindow.content.error = "No source";
+        return;
+    }
+    activeWindow.content.loading = true;
+    const reqUrl = opts.url;
+    dvFetch(reqUrl, opts.noCache)
+        .then(r => {
+            if (!r.ok) throw new Error(r.status + " " + r.statusText);
+            return r.text();
+        })
+        .then(text => {
+            const nb = JSON.parse(text); // throws -> caught below -> error card
+            const body = notebookToHtml(nb);
+            const fullHtml = wrapMarkdownDoc(body, false);
+            if (entry) {
+                entry.html = fullHtml;
+                const nonce = pageNonce();
+                entry.frameHtml = nonce ? injectNonce(fullHtml, nonce) : fullHtml;
+                entry.loading = false;
+                entry.error = null;
+            }
+            if (token !== loadSeq) return;
+            setArtifactHtml(fullHtml);
+            activeWindow.content.loading = false;
+            activeWindow.content.error = null;
+            forceRender?.();
+        })
+        .catch(e => {
+            if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
+            if (token !== loadSeq) return;
+            activeWindow.content.loading = false;
+            activeWindow.content.error = String(e?.message || e);
+            forceRender?.();
+        });
+}
+
+/** STRUCTURED loader (.json/.json5/.xml): fetch the text and stash it as
+ *  content.code (so the RAW view is the same code viewer over the literal file) plus
+ *  remember which KIND (json/xml) it is so the tree body parses it correctly. The
+ *  tree itself is parsed lazily from content.code on mount (StructuredBody), so the
+ *  cache stays text-only. Mirrors loadCsv. */
+function loadStructured(opts: { name: string; url?: string | null; noCache?: boolean }, token: number, entry: CacheEntry | null) {
+    resetHtml();
+    resetPdf();
+    resetCode();
+    resetStructuredView(); // a fresh file always opens as the tree
+    if (!opts.url) {
+        activeWindow.content.loading = false;
+        activeWindow.content.error = "No source";
+        return;
+    }
+    const ext = extOf(opts.url) || extOf(opts.name);
+    const kind: "json" | "xml" = ext === "xml" ? "xml" : "json";
+    const lang = kind === "xml" ? "xml" : "json";
+    activeWindow.treeView.kind = kind;
+    activeWindow.content.codeLang = lang;
+    if (entry) entry.codeLang = lang;
+    activeWindow.content.loading = true;
+    const reqUrl = opts.url;
+    dvFetch(reqUrl, opts.noCache)
+        .then(r => {
+            if (!r.ok) throw new Error(r.status + " " + r.statusText);
+            return r.text();
+        })
+        .then(text => {
+            if (entry) { entry.code = text; entry.loading = false; entry.error = null; }
+            if (token !== loadSeq) return;
+            activeWindow.content.code = text;
+            activeWindow.content.loading = false;
+            activeWindow.content.error = null;
+            forceRender?.();
+        })
+        .catch(e => {
+            if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
+            if (token !== loadSeq) return;
+            activeWindow.content.loading = false;
+            activeWindow.content.error = String(e?.message || e);
+            forceRender?.();
+        });
+}
+
 /** IMAGE loader: nothing to fetch — the <img> renders content.url directly. */
 function loadImage(opts: { name: string; url?: string | null }, _token: number, entry: CacheEntry | null) {
     resetHtml();
@@ -2782,6 +3162,9 @@ function showContent(opts: { name: string; html?: string | null; url?: string | 
     else if (type === "docx") loadDocx(opts, token, entry);
     else if (type === "xlsx") loadXlsx(opts, token, entry);
     else if (type === "mermaid") loadMermaid(opts, token, entry);
+    else if (type === "graphviz") loadGraphviz(opts, token, entry);
+    else if (type === "ipynb") loadIpynb(opts, token, entry);
+    else if (type === "structured") loadStructured(opts, token, entry);
     else if (type === "unknown") loadUnknown(opts, token, entry);
     else if (type === "mcpapp") loadMcpApp(opts, token, entry);
     else loadHtml(opts, token, entry);
@@ -2966,7 +3349,7 @@ export function attachActiveFile(nameOverride?: string | null, w: DockWindow = a
     // 1) Editable text family — attach the EDITED buffer (or the original text if
     //    unedited). Covers code / csv / unknown-as-text (content.code) AND a NEW
     //    file (empty content.code, buffer is the written text).
-    if (w.content.code != null && (w.content.type === "code" || w.content.type === "csv" || w.content.type === "unknown")) {
+    if (w.content.code != null && (w.content.type === "code" || w.content.type === "csv" || w.content.type === "structured" || w.content.type === "unknown")) {
         const text = hasEdits ? editBufferText(w) : w.content.code;
         stage(new File([text], name, { type: "text/plain" }));
         return;
@@ -5185,6 +5568,7 @@ function cmBodyShown(): boolean {
     if (activeWindow.content.code == null && activeWindow.content.type !== "html") return false;
     if (activeWindow.content.type === "code") return true;
     if (activeWindow.content.type === "csv") return activeWindow.csvView.mode === "raw";
+    if (activeWindow.content.type === "structured") return activeWindow.treeView.mode === "raw";
     if (activeWindow.content.type === "markdown" || activeWindow.content.type === "html") return activeWindow.editView.mode === "edit";
     return false;
 }
@@ -5635,6 +6019,312 @@ function toggleCsvMode() {
     forceRender?.();
 }
 
+// ---------------------------------------------------------------------------
+// Structured (JSON / XML) collapsible tree body.
+// ---------------------------------------------------------------------------
+// A .json/.json5/.xml file renders as an interactive collapsible tree (the default),
+// with a header Tree/Raw toggle back to the highlighted code view. The tree is built
+// IMPERATIVELY (a few-thousand-node React tree would be pathological), keyed on
+// content.seq, exactly like CsvBody/CodeBody. Each branch node (object/array/element)
+// renders a clickable disclosure row that expands/collapses its children on click;
+// leaf values are type-coloured. The whole tree DOM is built once on mount; clicking
+// a node toggles a `dv-collapsed` class on its children container (no re-parse).
+// Parsing failure (bad JSON, JSON5 syntax we don't accept, malformed XML) auto-falls
+// back to the raw code view, so the file always shows SOMETHING.
+
+const TREE_MAX_NODES = 60000; // hard cap so a pathological doc can't explode the DOM
+
+/** Live controller for a mounted tree: just an event delegation cleanup handle. */
+interface TreeController {
+    seq: number;
+    teardown: () => void;
+}
+let treeCtrl: TreeController | null = null;
+
+/** HTML-escape a JSON string value WITH its quotes for display. */
+function treeQuote(s: string): string {
+    return '"' + escapeHtml(s) + '"';
+}
+
+/** Build the collapsible tree DOM for a parsed JSON value into `mount`. Returns the
+ *  node count built (for the cap). Objects/arrays are disclosure rows with a count
+ *  badge; their children sit in a nested container toggled by the row's click. */
+function buildJsonTree(value: any, mount: HTMLElement): number {
+    let count = 0;
+    const overflow = { hit: false };
+
+    // Render one entry (optionally key-prefixed) into `parent`. Branches recurse.
+    const render = (parent: HTMLElement, keyLabel: string | null, val: any, depth: number) => {
+        if (count >= TREE_MAX_NODES) { overflow.hit = true; return; }
+        count++;
+        const isArr = Array.isArray(val);
+        const isObj = val !== null && typeof val === "object" && !isArr;
+        const row = document.createElement("div");
+        row.className = "dv-tree-row";
+
+        const keyHtml = keyLabel != null ? `<span class="dv-tree-key">${escapeHtml(keyLabel)}</span><span class="dv-tree-colon">: </span>` : "";
+
+        if (isArr || isObj) {
+            const entries: [string | null, any][] = isArr
+                ? (val as any[]).map((v, i) => [String(i), v] as [string, any])
+                : Object.keys(val).map(k => [k, val[k]] as [string, any]);
+            const open = isArr ? "[" : "{";
+            const close = isArr ? "]" : "}";
+            const n = entries.length;
+            const summary = n === 0
+                ? `<span class="dv-tree-punct">${open}${close}</span>`
+                : `<span class="dv-tree-toggle">▾</span><span class="dv-tree-punct">${open}</span><span class="dv-tree-count">${n} ${n === 1 ? "item" : "items"}</span>`;
+            row.innerHTML = `${keyHtml}${summary}`;
+            row.classList.add("dv-tree-branch");
+            parent.appendChild(row);
+            if (n === 0) return;
+
+            const childWrap = document.createElement("div");
+            childWrap.className = "dv-tree-children";
+            for (const [k, v] of entries) render(childWrap, k, v, depth + 1);
+            // closing bracket on its own row (aligned with the parent)
+            const closeRow = document.createElement("div");
+            closeRow.className = "dv-tree-close";
+            closeRow.innerHTML = `<span class="dv-tree-punct">${close}</span>`;
+            parent.appendChild(childWrap);
+            parent.appendChild(closeRow);
+            // wire toggle: clicking the branch row hides/shows its children + close.
+            row.classList.add("dv-tree-clickable");
+            (row as any)._dvToggle = () => {
+                const collapsed = childWrap.classList.toggle("dv-collapsed");
+                closeRow.classList.toggle("dv-collapsed", collapsed);
+                const tg = row.querySelector(".dv-tree-toggle");
+                if (tg) tg.textContent = collapsed ? "▸" : "▾";
+                if (collapsed) {
+                    const badge = document.createElement("span");
+                    badge.className = "dv-tree-ellipsis";
+                    badge.textContent = "…";
+                    if (!row.querySelector(".dv-tree-ellipsis")) row.appendChild(badge);
+                } else {
+                    row.querySelector(".dv-tree-ellipsis")?.remove();
+                }
+            };
+        } else {
+            // leaf: type-coloured value.
+            let cls = "dv-tree-null", text = "null";
+            if (typeof val === "string") { cls = "dv-tree-string"; text = treeQuote(val); }
+            else if (typeof val === "number") { cls = "dv-tree-number"; text = escapeHtml(String(val)); }
+            else if (typeof val === "boolean") { cls = "dv-tree-boolean"; text = String(val); }
+            else if (val === null) { cls = "dv-tree-null"; text = "null"; }
+            row.innerHTML = `${keyHtml}<span class="${cls}">${text}</span>`;
+            row.classList.add("dv-tree-leaf");
+            parent.appendChild(row);
+        }
+    };
+
+    render(mount, null, value, 0);
+    if (overflow.hit) {
+        const more = document.createElement("div");
+        more.className = "dv-tree-row dv-tree-overflow";
+        more.textContent = `… tree truncated at ${TREE_MAX_NODES} nodes (use Raw to see the rest)`;
+        mount.appendChild(more);
+    }
+    return count;
+}
+
+/** Build the collapsible tree DOM for an XML element into `mount`. Elements are
+ *  disclosure rows (<tag attrs>) whose children (sub-elements + text) sit in a nested
+ *  container; clicking the row toggles them. Mirrors buildJsonTree's interaction. */
+function buildXmlTree(node: Node, mount: HTMLElement): number {
+    let count = 0;
+    const overflow = { hit: false };
+
+    const renderEl = (parent: HTMLElement, el: Element, depth: number) => {
+        if (count >= TREE_MAX_NODES) { overflow.hit = true; return; }
+        count++;
+        // collect renderable children: element nodes + non-whitespace text.
+        const kids: Node[] = [];
+        el.childNodes.forEach(c => {
+            if (c.nodeType === 1) kids.push(c);
+            else if (c.nodeType === 3 && (c.textContent || "").trim().length) kids.push(c);
+        });
+        const attrs = Array.from(el.attributes || [])
+            .map(a => ` <span class="dv-tree-key">${escapeHtml(a.name)}</span>=<span class="dv-tree-string">${treeQuote(a.value)}</span>`)
+            .join("");
+        const tag = escapeHtml(el.tagName);
+
+        const row = document.createElement("div");
+        row.className = "dv-tree-row dv-tree-branch";
+
+        // a single text child renders inline (<tag>value</tag>), no disclosure.
+        if (kids.length === 1 && kids[0].nodeType === 3) {
+            const txt = escapeHtml((kids[0].textContent || "").trim());
+            row.innerHTML = `<span class="dv-tree-punct">&lt;</span><span class="dv-tree-tag">${tag}</span>${attrs}<span class="dv-tree-punct">&gt;</span><span class="dv-tree-xmltext">${txt}</span><span class="dv-tree-punct">&lt;/</span><span class="dv-tree-tag">${tag}</span><span class="dv-tree-punct">&gt;</span>`;
+            parent.appendChild(row);
+            return;
+        }
+        if (kids.length === 0) {
+            row.innerHTML = `<span class="dv-tree-punct">&lt;</span><span class="dv-tree-tag">${tag}</span>${attrs}<span class="dv-tree-punct"> /&gt;</span>`;
+            parent.appendChild(row);
+            return;
+        }
+        row.innerHTML = `<span class="dv-tree-toggle">▾</span><span class="dv-tree-punct">&lt;</span><span class="dv-tree-tag">${tag}</span>${attrs}<span class="dv-tree-punct">&gt;</span>`;
+        row.classList.add("dv-tree-clickable");
+        parent.appendChild(row);
+
+        const childWrap = document.createElement("div");
+        childWrap.className = "dv-tree-children";
+        for (const k of kids) {
+            if (k.nodeType === 1) renderEl(childWrap, k as Element, depth + 1);
+            else {
+                if (count >= TREE_MAX_NODES) { overflow.hit = true; break; }
+                count++;
+                const t = document.createElement("div");
+                t.className = "dv-tree-row dv-tree-leaf";
+                t.innerHTML = `<span class="dv-tree-xmltext">${escapeHtml((k.textContent || "").trim())}</span>`;
+                childWrap.appendChild(t);
+            }
+        }
+        const closeRow = document.createElement("div");
+        closeRow.className = "dv-tree-close";
+        closeRow.innerHTML = `<span class="dv-tree-punct">&lt;/</span><span class="dv-tree-tag">${tag}</span><span class="dv-tree-punct">&gt;</span>`;
+        parent.appendChild(childWrap);
+        parent.appendChild(closeRow);
+        (row as any)._dvToggle = () => {
+            const collapsed = childWrap.classList.toggle("dv-collapsed");
+            closeRow.classList.toggle("dv-collapsed", collapsed);
+            const tg = row.querySelector(".dv-tree-toggle");
+            if (tg) tg.textContent = collapsed ? "▸" : "▾";
+        };
+    };
+
+    if (node.nodeType === 1) renderEl(mount, node as Element, 0);
+    if (overflow.hit) {
+        const more = document.createElement("div");
+        more.className = "dv-tree-row dv-tree-overflow";
+        more.textContent = `… tree truncated at ${TREE_MAX_NODES} nodes (use Raw to see the rest)`;
+        mount.appendChild(more);
+    }
+    return count;
+}
+
+/** Build the tree DOM into `mount` for the current structured file. Returns true on
+ *  success, false if the text couldn't be parsed (caller falls back to Raw). */
+function buildStructuredTree(mount: HTMLElement): boolean {
+    const text = activeWindow.content.code || "";
+    if (activeWindow.treeView.kind === "xml") {
+        try {
+            const doc = new DOMParser().parseFromString(text, "application/xml");
+            // a parsererror element means malformed XML.
+            if (doc.querySelector("parsererror")) return false;
+            const root = doc.documentElement;
+            if (!root) return false;
+            buildXmlTree(root, mount);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+    // json / json5: try strict JSON.parse first. (JSON5 isn't bundled; for the common
+    // JSON5-ish cases — trailing commas, // comments, single quotes — we do a tiny
+    // tolerant pre-clean and retry. Anything that still fails falls back to Raw.)
+    let val: any;
+    try {
+        val = JSON.parse(text);
+    } catch {
+        try {
+            val = JSON.parse(looseJsonClean(text));
+        } catch {
+            return false;
+        }
+    }
+    buildJsonTree(val, mount);
+    return true;
+}
+
+/** A tiny best-effort JSON5→JSON cleaner for the trivial cases (the task says
+ *  tolerate JSON5 if trivial, else fall back to Raw): strip // and /* *​/ comments
+ *  and trailing commas. We DON'T attempt single-quote or unquoted-key rewriting
+ *  (too error-prone) — those fall back to Raw. Strings are preserved (the comment
+ *  strip skips content inside double-quoted strings). */
+function looseJsonClean(text: string): string {
+    let out = "";
+    let inStr = false, esc = false;
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i], n = text[i + 1];
+        if (inStr) {
+            out += c;
+            if (esc) esc = false;
+            else if (c === "\\") esc = true;
+            else if (c === '"') inStr = false;
+            continue;
+        }
+        if (c === '"') { inStr = true; out += c; continue; }
+        if (c === "/" && n === "/") { while (i < text.length && text[i] !== "\n") i++; out += "\n"; continue; }
+        if (c === "/" && n === "*") { i += 2; while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++; i++; continue; }
+        out += c;
+    }
+    // strip trailing commas before } or ]
+    return out.replace(/,(\s*[}\]])/g, "$1");
+}
+
+/** The STRUCTURED tree body: an imperatively-built collapsible tree inside a
+ *  scrollable column, keyed on content.seq so a new file (or a raw->tree toggle)
+ *  remounts it fresh. A click on a branch row toggles its children (event
+ *  delegation). If the parse fails, auto-fall back to the raw code view. */
+function StructuredBody() {
+    const { useRef, useEffect } = React;
+    const mountRef = useRef(null as HTMLElement | null);
+    useEffect(() => {
+        const m = mountRef.current;
+        if (!m) return;
+        const ok = buildStructuredTree(m);
+        if (!ok) {
+            // unparseable: drop into the raw code view (and remember it so the toggle
+            // shows the right state). A microtask defer avoids a setState-in-render.
+            activeWindow.treeView.mode = "raw";
+            Promise.resolve().then(() => { activeWindow.content.seq += 1; forceRender?.(); });
+            return;
+        }
+        const onClick = (e: MouseEvent) => {
+            let el = e.target as HTMLElement | null;
+            for (let i = 0; i < 6 && el && el !== m; i++) {
+                if (el.classList.contains("dv-tree-clickable")) {
+                    (el as any)._dvToggle?.();
+                    return;
+                }
+                el = el.parentElement;
+            }
+        };
+        m.addEventListener("click", onClick);
+        const ctrl: TreeController = { seq: activeWindow.content.seq, teardown: () => m.removeEventListener("click", onClick) };
+        treeCtrl = ctrl;
+        consumePendingScroll();
+        return () => {
+            ctrl.teardown();
+            if (treeCtrl === ctrl) treeCtrl = null;
+        };
+    }, [activeWindow.content.seq]);
+    return React.createElement(
+        "div",
+        {
+            key: activeWindow.content.seq,
+            className: "dockview-tree-scroll",
+            // focusable so a click into the tree gives the panel keyboard focus.
+            tabIndex: 0
+        },
+        React.createElement("div", { ref: mountRef, className: "dockview-tree-mount" })
+    );
+}
+
+/** Flip a structured file between the tree and the raw text view. Raw reuses the
+ *  code body over the same content.code; Tree re-parses on remount. Each view
+ *  re-mounts fresh (a new content.seq) and opens at its own top. */
+function toggleStructuredMode() {
+    if (activeWindow.content.type !== "structured") return;
+    activeWindow.treeView.mode = activeWindow.treeView.mode === "tree" ? "raw" : "tree";
+    // leaving the raw view: close its find bar so it doesn't linger over the tree.
+    if (activeWindow.treeView.mode === "tree" && activeWindow.codeView.findOpen) toggleCodeFind();
+    activeWindow.content.seq += 1; // new body identity -> CodeBody/StructuredBody remount fresh
+    pendingScrollTop = null;
+    forceRender?.();
+}
+
 /** Flip the editable text family between its VIEW mode and EDIT mode (2b). The
  *  CSV grid/raw toggle is a SEPARATE path (toggleCsvMode) — this drives code,
  *  markdown and .artifact.
@@ -5903,10 +6593,21 @@ function renderBody() {
         }
         return renderMcpAppBody();
     }
-    // docx (mammoth->HTML) and mermaid (->SVG) are VIEW-ONLY: there's no editable
-    // source, so they always render through the same dark sandboxed iframe as the
-    // markdown/artifact view path (no edit-mode CM swap).
-    if (activeWindow.content.type === "docx" || activeWindow.content.type === "mermaid") {
+    if (activeWindow.content.type === "structured") {
+        if (activeWindow.content.loading || activeWindow.content.code == null) {
+            return React.createElement(LoadingBody, null);
+        }
+        // Tree by default; the header's Tree/Raw toggle flips to the code viewer
+        // over the SAME content.code (so raw is the literal file text).
+        return activeWindow.treeView.mode === "raw"
+            ? React.createElement(CodeBody, null)
+            : React.createElement(StructuredBody, null);
+    }
+    // docx (mammoth->HTML), mermaid (->SVG), graphviz (->SVG) and ipynb (cells->HTML)
+    // are VIEW-ONLY: there's no editable source, so they always render through the
+    // same dark sandboxed iframe as the markdown/artifact view path (no edit-mode CM).
+    if (activeWindow.content.type === "docx" || activeWindow.content.type === "mermaid"
+        || activeWindow.content.type === "graphviz" || activeWindow.content.type === "ipynb") {
         if (activeWindow.content.loading || activeWindow.content.frameHtml == null) {
             return React.createElement(LoadingBody, null);
         }
@@ -6240,6 +6941,44 @@ function CsvHeaderControls() {
     return React.createElement(React.Fragment, null, ...children);
 }
 
+/** Structured (JSON/XML) row-2 controls: a single STATE-COLOUR Raw toggle (off =
+ *  tree, highlighted = raw text), a find trigger (raw only — raw reuses the code
+ *  body), and a copy icon. Mirrors CsvHeaderControls exactly. */
+function StructuredHeaderControls() {
+    const { useState } = React;
+    const [copied, setCopied] = useState(false);
+    if (activeWindow.content.loading || activeWindow.content.error || activeWindow.content.code == null) return null;
+    const raw = activeWindow.treeView.mode === "raw";
+    const copy = () => {
+        const text = activeWindow.content.code || "";
+        const done = () => { setCopied(true); setTimeout(() => setCopied(false), 1200); };
+        try {
+            if (navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+            } else { fallbackCopy(text, done); }
+        } catch { fallbackCopy(text, done); }
+    };
+    const children: any[] = [];
+    // Find runs over the raw CM body, so it's only ACTIVE in Raw mode; in Tree mode
+    // it stays in its slot but DISABLED (grammar rule 9 — never appear/disappear).
+    children.push(React.createElement(
+        "div",
+        { key: "tree-find-grp", className: "dockview-tool-group dockview-collapse-mid" },
+        toolBtn("tree-find", STRINGS.code.find,
+            "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z",
+            () => toggleCodeFind(), activeWindow.codeView.findOpen, !raw)
+    ));
+    children.push(React.createElement(
+        "div",
+        { key: "tree-toggle-grp", className: "dockview-tool-group" },
+        toolBtn("tree-raw", STRINGS.tree.rawHint,
+            "M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4Zm5.2 0L19.2 12l-4.6-4.6L16 6l6 6-6 6-1.4-1.4Z",
+            () => toggleStructuredMode(), raw),
+        copyBtn("tree-copy", STRINGS.tree.copyHint, copied, copy)
+    ));
+    return React.createElement(React.Fragment, null, ...children);
+}
+
 /** Markdown / .artifact row-2 controls (2b): a single state-colour EDIT toggle
  *  (Rendered ↔ source-edit). In EDIT mode the body is an editable CM, so a find
  *  trigger + copy appear too (mirroring the code row); in RENDERED mode it's just
@@ -6293,6 +7032,7 @@ function HeaderControls() {
     if (activeWindow.content.type === "image") return React.createElement(ImageHeaderControls, null);
     if (activeWindow.content.type === "code") return React.createElement(CodeHeaderControls, null);
     if (activeWindow.content.type === "csv") return React.createElement(CsvHeaderControls, null);
+    if (activeWindow.content.type === "structured") return React.createElement(StructuredHeaderControls, null);
     if (activeWindow.content.type === "markdown") return React.createElement(EditTextHeaderControls, { mdMode: true });
     if (activeWindow.content.type === "html") return React.createElement(EditTextHeaderControls, { mdMode: false });
     return null;
@@ -6308,6 +7048,7 @@ function hasViewerControls(): boolean {
     if (activeWindow.content.name == null) return false;
     return activeWindow.content.type === "pdf" || activeWindow.content.type === "image"
         || activeWindow.content.type === "code" || activeWindow.content.type === "csv"
+        || activeWindow.content.type === "structured"
         || activeWindow.content.type === "markdown" || activeWindow.content.type === "html";
 }
 

@@ -498,25 +498,29 @@ html.dockview-open .dockview-page-inner {
    that lacks the vars. */
 .dockview-body::-webkit-scrollbar,
 .dockview-cm .cm-scroller::-webkit-scrollbar,
-.dockview-csv-scroll::-webkit-scrollbar {
+.dockview-csv-scroll::-webkit-scrollbar,
+.dockview-tree-scroll::-webkit-scrollbar {
     width: 8px;
     height: 8px;
 }
 .dockview-body::-webkit-scrollbar-track,
 .dockview-cm .cm-scroller::-webkit-scrollbar-track,
-.dockview-csv-scroll::-webkit-scrollbar-track {
+.dockview-csv-scroll::-webkit-scrollbar-track,
+.dockview-tree-scroll::-webkit-scrollbar-track {
     background-color: var(--scrollbar-thin-track, transparent);
 }
 .dockview-body::-webkit-scrollbar-thumb,
 .dockview-cm .cm-scroller::-webkit-scrollbar-thumb,
-.dockview-csv-scroll::-webkit-scrollbar-thumb {
+.dockview-csv-scroll::-webkit-scrollbar-thumb,
+.dockview-tree-scroll::-webkit-scrollbar-thumb {
     background-color: var(--scrollbar-thin-thumb, #1a1b1e);
     border-radius: 4px;
     min-height: 40px;
 }
 .dockview-body::-webkit-scrollbar-corner,
 .dockview-cm .cm-scroller::-webkit-scrollbar-corner,
-.dockview-csv-scroll::-webkit-scrollbar-corner {
+.dockview-csv-scroll::-webkit-scrollbar-corner,
+.dockview-tree-scroll::-webkit-scrollbar-corner {
     background-color: transparent;
 }
 /* Fade-on-hover, exactly like Discord's .fade scrollers: the thumb/track stay
@@ -527,7 +531,9 @@ html.dockview-open .dockview-page-inner {
 .dockview-cm .cm-scroller::-webkit-scrollbar-thumb,
 .dockview-cm .cm-scroller::-webkit-scrollbar-track,
 .dockview-csv-scroll::-webkit-scrollbar-thumb,
-.dockview-csv-scroll::-webkit-scrollbar-track {
+.dockview-csv-scroll::-webkit-scrollbar-track,
+.dockview-tree-scroll::-webkit-scrollbar-thumb,
+.dockview-tree-scroll::-webkit-scrollbar-track {
     visibility: hidden;
 }
 .dockview-body:hover::-webkit-scrollbar-thumb,
@@ -541,7 +547,11 @@ html.dockview-open .dockview-page-inner {
 .dockview-csv-scroll:hover::-webkit-scrollbar-thumb,
 .dockview-csv-scroll:hover::-webkit-scrollbar-track,
 .dockview-csv-scroll:focus-within::-webkit-scrollbar-thumb,
-.dockview-csv-scroll:focus-within::-webkit-scrollbar-track {
+.dockview-csv-scroll:focus-within::-webkit-scrollbar-track,
+.dockview-tree-scroll:hover::-webkit-scrollbar-thumb,
+.dockview-tree-scroll:hover::-webkit-scrollbar-track,
+.dockview-tree-scroll:focus-within::-webkit-scrollbar-thumb,
+.dockview-tree-scroll:focus-within::-webkit-scrollbar-track {
     visibility: visible;
 }
 
@@ -1312,6 +1322,72 @@ html.dockview-open .dockview-page-inner {
 .dockview-csv-row:hover .dockview-csv-td {
     background: var(--background-modifier-hover, rgba(255, 255, 255, 0.04));
 }
+
+/* STRUCTURED (JSON / XML) COLLAPSIBLE TREE — the default view for .json/.json5/.xml,
+   with a header Tree/Raw toggle back to the highlighted code view. The tree is built
+   imperatively into .dockview-tree-mount; rows are monospace, keys/values are
+   type-coloured (github-dark-dimmed-ish, matching the MD_STYLE hljs palette), and a
+   branch row toggles a .dv-collapsed class on its children container on click. */
+.dockview-tree-scroll {
+    display: block;
+    height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+    outline: none;
+    overflow: auto;
+    background: var(--background-base-lower, #1a1a1e);
+    font-family: Consolas, "Andale Mono WT", "Andale Mono", Menlo, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: #dbdee1;
+}
+.dockview-tree-mount {
+    display: block;
+    padding: 12px 14px 32px;
+    width: max-content;
+    min-width: 100%;
+    box-sizing: border-box;
+}
+/* every nested level indents one step (left border = the guide rail). */
+.dockview-tree-children {
+    padding-left: 16px;
+    border-left: 1px solid var(--background-modifier-accent, #2b2d31);
+    margin-left: 3px;
+}
+.dockview-tree-children.dv-collapsed,
+.dockview-tree-close.dv-collapsed {
+    display: none;
+}
+.dockview-tree-row,
+.dockview-tree-close {
+    white-space: pre;
+    word-break: normal;
+}
+.dockview-tree-clickable {
+    cursor: pointer;
+    border-radius: 3px;
+}
+.dockview-tree-clickable:hover {
+    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.04));
+}
+.dv-tree-toggle {
+    display: inline-block;
+    width: 1em;
+    color: #768390;
+    user-select: none;
+}
+.dv-tree-key { color: #6cb6ff; }            /* object keys / xml attr names */
+.dv-tree-colon { color: #768390; }
+.dv-tree-punct { color: #768390; }
+.dv-tree-tag { color: #f47067; }            /* xml element tag names */
+.dv-tree-count { color: #5e6772; font-style: italic; margin-left: 6px; }
+.dv-tree-ellipsis { color: #768390; margin-left: 4px; }
+.dv-tree-string { color: #96d0ff; }         /* json strings / xml attr values */
+.dv-tree-number { color: #6cb6ff; }
+.dv-tree-boolean { color: #f69d50; }
+.dv-tree-null { color: #f47067; }
+.dv-tree-xmltext { color: #dbdee1; }
+.dv-tree-overflow { color: #e0af68; font-style: italic; padding: 6px 0; }
 
 /* HEADER CONTROL BUTTONS — the per-viewer core controls now live inline in the
    single header row (the old `dockview-toolbar` strip is gone). Discord-toned:
