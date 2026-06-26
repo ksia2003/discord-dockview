@@ -1,6 +1,6 @@
 /*
- * The host-level open/close verbs: toggle (the Ctrl+Alt+P keybind), the header-X
- * full close, and the exclusive-takeover vacate. Plus registering the host with the
+ * The host-level open/close verbs: toggle (the F9 keybind + the far-right dock X),
+ * the full close, and the exclusive-takeover vacate. Plus registering the host with the
  * engine bridge so the engine's open/close/channel/tab paths stop being no-ops.
  *
  * These sit ABOVE mount.ts (DOM reflection) + exclusivity.ts (sidebar sync) +
@@ -32,10 +32,10 @@ function closeLightbox(win = getActiveWindow()): void {
     if (img) img.fullscreen = false;
 }
 
-/** The header-X full close: the dock vacates the right slot entirely (every tab —
- *  pinned + transient — is dropped, the collection collapses to one closed
- *  transient). Persists open:false, restores the native sidebars / member list we
- *  collapsed, and re-renders. */
+/** The full close: the dock vacates the right slot entirely (every tab — pinned +
+ *  transient — is dropped, the collection collapses to one closed transient).
+ *  Persists open:false, restores the native sidebars / member list we collapsed,
+ *  and re-renders. (The far-right dock X drives this via toggle().) */
 export function closePanel(): void {
     closeLightbox();
     resetToClosedTransient(getCurrentChannelId());
@@ -60,10 +60,10 @@ function closeForExclusiveTakeover(): void {
     requestRender();
 }
 
-/** The Ctrl+Alt+P toggle: open the lone transient (the toggle never resurrects
- *  pinned tabs that were closed — pin-driven tabs come from opening files + pinning)
- *  or fully close the dock. Mirrors the open-side exclusivity (collapse member list
- *  like a thread) and the close-side restore. */
+/** The dock toggle (F9 keybind + the far-right dock X): open the lone transient (the
+ *  toggle never resurrects pinned tabs that were closed — pin-driven tabs come from
+ *  opening files + pinning) or fully close the dock. Mirrors the open-side
+ *  exclusivity (collapse member list like a thread) and the close-side restore. */
 export function toggle(): void {
     const open = !dockHasWindows();
     if (open) {

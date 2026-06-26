@@ -8,8 +8,8 @@
  *   - at most ONE TRANSIENT window: channel-bound, replaced on each file open.
  * `activeWindow` is a live binding to the currently-shown window (reassigned by
  * setActiveWindow), so engine call sites read/write whichever window the tab
- * strip has focused. The initial single transient window reproduces today's
- * single-window behaviour exactly (no tab strip until a second window exists).
+ * strip has focused. The collection starts as a single transient window; the tab
+ * strip is always rendered, so that lone window simply shows as one tab.
  *
  * `state.width` is a getter/setter PROXY onto the one global dock width in
  * host/layout — every window agrees on the width, switching tabs never changes it.

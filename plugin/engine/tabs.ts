@@ -1,11 +1,10 @@
 /*
  * Tab actions (pin-driven multi-window): pin / unpin / switch / close.
  *
- * The tab strip is shown only when windows.length >= 2; until then the lone
- * transient behaves exactly like the historical single window. These actions
- * mutate the window collection + the active binding and ask the host to reflect
- * the resulting open state into the DOM (via the host bridge — a no-op until
- * Phase 2 registers the real host actions).
+ * The tab strip is ALWAYS shown (one window or many) — a lone window is just a
+ * single tab. These actions mutate the window collection + the active binding and
+ * ask the host to reflect the resulting open state into the DOM (via the host
+ * bridge — a no-op until Phase 2 registers the real host actions).
  *
  * Split out of window.ts to match the design tree; window.ts owns the collection
  * primitives (makeWindow / setActiveWindow / reconcile), this owns the user-facing
@@ -13,15 +12,15 @@
  */
 
 import { getCurrentChannelId } from "../host/channel";
-import { deleteChannelState } from "./channelMemory";
+import { deleteChannelState, descriptorsMatch, getChannelState } from "./channelMemory";
 import { getCacheEntry } from "./cache";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
 import { bump } from "./loadToken";
 import { setPendingScrollTop, snapshotActiveView } from "./viewState";
 import {
-    getActiveWindow, getActiveWindowId, getWindows, reconcileActiveFromCache,
-    removeWindow, setActiveWindow, transientWindow
+    addWindow, getActiveWindow, getActiveWindowId, getWindows, makeWindow,
+    reconcileActiveFromCache, removeWindow, setActiveWindow, transientWindow
 } from "./window";
 import type { DockWindow } from "./types";
 
@@ -71,11 +70,11 @@ export function unpinActiveWindow(w: DockWindow = getActiveWindow()): void {
     requestRender();
 }
 
-/** Close a tab (the ✕ on a tab, or the lone-window header X delegates here for the
- *  active window). A PINNED tab is removed entirely; a TRANSIENT tab is cleared
- *  (its content detached, the window removed) so its channel reopens empty. After
- *  removal the active window falls back to a sensible neighbour; if no windows
- *  remain the dock fully closes (member-list restore runs). */
+/** Close a tab (the ✕ on a tab acts on THAT window). A PINNED tab is removed
+ *  entirely; a TRANSIENT tab is cleared (its content detached, the window removed)
+ *  so its channel reopens empty. After removal the active window falls back to a
+ *  sensible neighbour. Closing the LAST remaining tab leaves the dock OPEN showing
+ *  the empty-state card (design §10) — only the dock X / shortcut closes the dock. */
 export function closeTab(id: string): void {
     const windows = getWindows();
     const idx = windows.findIndex(w => w.id === id);
@@ -89,8 +88,16 @@ export function closeTab(id: string): void {
     windows.splice(idx, 1);
 
     if (windows.length === 0) {
-        // last window closed → the whole dock closes (member-list restore).
-        hostActions().closePanel();
+        // Last tab closed: the dock stays OPEN on the empty-state card (the tab ×
+        // means "close this file", not "close the dock"). Replace it with a fresh
+        // empty transient bound to the current channel, kept open, and re-render.
+        const empty = makeWindow({ pinned: false, ownerChannelId: getCurrentChannelId() });
+        empty.state.open = true;
+        addWindow(empty);
+        setActiveWindow(empty);
+        bump();
+        hostActions().applyOpenState();
+        requestRender();
         return;
     }
     if (win.id === getActiveWindowId()) {

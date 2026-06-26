@@ -175,12 +175,16 @@ export const STRINGS = {
     },
 
     // --- header buttons (popout / more / close) -----------------------------
+    // `close` / `closeHint` are the per-TAB ✕ (one file); `closeDock` is the
+    // far-right DOCK X that closes the whole dock (the F9 toggle).
     header: {
         openInNewWindow: "Open in browser",
         popOut: "Pop out",
         more: "More",
         close: "Close",
-        closeHint: "Close (Ctrl+Alt+P)"
+        closeHint: "Close",
+        closeDock: "Close dock",
+        closeDockHint: "Close dock (F9)"
     },
 
     // --- ⋯ more-menu items ---------------------------------------------------
@@ -206,12 +210,14 @@ export const STRINGS = {
     },
 
     // --- tabs (pin-driven multi-window) -------------------------------------
-    // The tabs that live in the header top row (the icon/name slot), shown only
-    // when ≥2 windows exist. Each tab carries a file-type icon + name + a close ✕.
+    // The tabs that live in the header top row (the icon/name slot), ALWAYS shown
+    // (one window or many). Each tab carries a file-type icon + name + a ⋯ + close ✕.
     tabs: {
         // {name} -> the file name shown in the tab.
         select: (name: string) => `Switch to ${name}`,
-        close: "Close tab"
+        close: "Close tab",
+        // the label for an empty window's tab (the open-but-empty dock).
+        untitled: "DockView"
     },
 
     // --- attach (after edit) filename input ---------------------------------

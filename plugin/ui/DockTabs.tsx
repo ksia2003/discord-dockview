@@ -1,15 +1,16 @@
 /*
- * The tab strip (pin-driven multi-window). Shown ONLY when ≥2 windows exist — the
- * tabs ARE the header's icon/name slot then; a lone window renders the plain
- * icon+title instead, so the single-window header is byte-identical to before the
- * multi-window work.
+ * The tab strip (pin-driven multi-window). ALWAYS rendered — one window or many —
+ * so the dock has a single unified header/tab model (a lone window is just a single
+ * tab). The tabs ARE the header's icon/name slot.
  *
  * "header = tab" model: each tab carries its OWN persistent ⋯ + ✕ acting on THAT
- * window — there is NO shared far-right cluster when tabs show. The controls are
- * PERSISTENT on EVERY tab (no hover/active gating), so tab widths are stable (no
- * layout shift). The ⋯ opens THAT window's menu IN PLACE (parameterized by `w`, never
- * setActiveWindow → no tab switch); the ✕ closes THAT window. Tabs are FLAT (icon +
- * name); the active tab gets a subtle underline + brighter text (CSS), not a pill.
+ * window — the only shared header control is the far-right DOCK X (owned by
+ * DockPanel). The per-tab controls are PERSISTENT on EVERY tab (no hover/active
+ * gating), so tab widths are stable (no layout shift). The ⋯ opens THAT window's menu
+ * IN PLACE (parameterized by `w`, never setActiveWindow → no tab switch); the ✕
+ * closes THAT window (closeTab — closing the LAST tab leaves the dock open on the
+ * empty card, only the dock X closes the dock). Tabs are FLAT (icon + name); the
+ * active tab gets a subtle underline + brighter text (CSS), not a pill.
  */
 
 import { ContextMenuApi, React } from "@webpack/common";
@@ -56,17 +57,19 @@ function tabCtrlBtn(opts: { key: string; cls: string; label: string; path: strin
     );
 }
 
-/** Tabs row. Every tab carries its OWN persistent ⋯ + ✕ acting on THAT window.
- *  `onCloseActive` is the active window's close path (resets the attach bar before
- *  closing) — the active tab's ✕ uses it; an inactive tab's ✕ uses closeTab(w.id). */
-export function DockTabs({ onCloseActive }: { onCloseActive: (e: any) => void; }) {
+/** Tabs row. Every tab carries its OWN persistent ⋯ + ✕ acting on THAT window. A
+ *  tab's ✕ always closes THAT window via closeTab (active or not); closing the last
+ *  tab leaves the dock open on the empty card. */
+export function DockTabs() {
     const activeId = getActiveWindowId();
     return React.createElement(
         "div",
         { className: "dockview-tabs", role: "tablist" },
         ...getWindows().map(w => {
             const isActive = w.id === activeId;
-            const label = (w.content.name as string | null) || STRINGS.empty.text;
+            // An empty window (no file yet — the open-but-empty dock) shows the short
+            // product name, not the long empty-card sentence.
+            const label = (w.content.name as string | null) || STRINGS.tabs.untitled;
             return React.createElement(
                 "div",
                 {
@@ -92,11 +95,11 @@ export function DockTabs({ onCloseActive }: { onCloseActive: (e: any) => void; }
                 tabCtrlBtn({
                     key: "close",
                     cls: "dockview-tab-close",
-                    label: STRINGS.header.close,
+                    label: STRINGS.tabs.close,
                     path: TAB_CLOSE_PATH,
                     onClick: (e: any) => {
                         e.stopPropagation();
-                        if (isActive) onCloseActive(e); else closeTab(w.id);
+                        closeTab(w.id);
                     }
                 })
             );

@@ -3,8 +3,13 @@
  *
  * It paints Discord's native thread-sidebar chrome (resolved CSS-module classes +
  * our own dockview-* classes) around the active window's body: the resize handle,
- * the header (top row = icon/name/⋯/X or the tab strip; second row = the active
- * viewer's controls), the body-wrap, and the find slot.
+ * the header (top row = the tab strip on the left + a dock-level X at the far right;
+ * second row = the active viewer's controls), the body-wrap, and the find slot.
+ *
+ * The tab strip is ALWAYS rendered — one window or many. A lone window shows as a
+ * single tab carrying its own icon/name/⋯/× (closing it via that × leaves the dock
+ * open on the empty card). The far-right X is dock-level: it closes the ENTIRE dock
+ * (same as the F9 toggle), distinct from a tab's × which closes just that file.
  *
  * Wiring into the engine:
  *  - On mount it publishes its rerender via setRenderer(); on unmount it clears the
@@ -23,21 +28,19 @@
  */
 
 import { findCssClasses } from "@webpack";
-import { ContextMenuApi, React } from "@webpack/common";
+import { React } from "@webpack/common";
 
 import { requestRender, isRenderer, setRenderer } from "../engine/forceRender";
 import { LS_WIDTH, lsSet } from "../engine/persist";
-import { closeTab } from "../engine/tabs";
 import { consumePendingScroll } from "../engine/viewState";
-import { getActiveWindow, getActiveWindowId, getWindows } from "../engine/window";
+import { getActiveWindow } from "../engine/window";
 import { applyHostWidth, clampDockDrag } from "../host/layout";
 import { applyOpenState } from "../host/mount";
+import { toggle } from "../host/open";
 import { getViewer } from "../viewers/registry";
-import { DockMoreMenu } from "./DockMoreMenu";
 import { DockTabs } from "./DockTabs";
 import { HeaderControls, hasViewerControls } from "./HeaderControls";
 import { LoadingBody, renderEmptyBody, renderErrorBody, renderUnsupportedBody } from "./StateCards";
-import { iconPaths } from "./toolbar";
 import { STRINGS } from "../strings";
 
 // --- Discord native class resolution (theme-aware, update-robust) -----------
@@ -178,79 +181,37 @@ export function DockPanel() {
         document.addEventListener("mouseup", onUp);
     }, []);
 
-    const close = useCallback(() => {
-        // The far-right ✕ closes the ACTIVE window. With a lone window that IS the
-        // dock, so closeTab falls through to the host's closePanel (member-list
-        // restore etc.). With ≥2 windows it closes just the active tab.
-        closeTab(getActiveWindowId());
+    const closeDock = useCallback(() => {
+        // The far-right X is DOCK-level: it closes the ENTIRE dock, exactly like the
+        // F9 toggle / shortcut while open (every tab dropped, native sidebars
+        // restored). Distinct from a tab's ✕, which closes just that one file and
+        // leaves the dock open. toggle() closes because the dock is open here.
+        toggle();
     }, []);
 
     const win = getActiveWindow();
-    const windows = getWindows();
     const hasContent = win.content.name != null;
-    const title = hasContent ? (win.content.name as string) : "DockView";
 
-    // Leading file-type glyph (built lazily here — React is ready now — from the
-    // plain-data FILE_TYPE_ICON via iconPaths).
-    const leadingIcon = hasContent
-        ? React.createElement(
-            "svg",
-            {
-                className: "dockview-header-icon",
-                width: 20,
-                height: 20,
-                viewBox: "0 0 24 24",
-                fill: "none",
-                "aria-hidden": true
-            },
-            ...iconPaths(win.content.type)
-        )
-        : null;
-
-    const headerBtn = (
-        key: string,
-        label: string,
-        titleAttr: string,
-        path: string,
-        onClick: (e: any) => void,
-        extraCls = ""
-    ) =>
+    // The dock-level close (the far-right X). A plain icon button in Discord's
+    // native iconWrapper/clickable grammar, parked at the header's right edge.
+    const closeBtn = React.createElement(
+        "div",
+        {
+            className: `${CLS.iconWrapper} ${CLS.clickable} dockview-close`,
+            role: "button",
+            tabIndex: 0,
+            "aria-label": STRINGS.header.closeDock,
+            title: STRINGS.header.closeDockHint,
+            onClick: closeDock
+        },
         React.createElement(
-            "div",
-            {
-                key,
-                className: `${CLS.iconWrapper} ${CLS.clickable} ${extraCls}`.trim(),
-                role: "button",
-                tabIndex: 0,
-                "aria-label": label,
-                title: titleAttr,
-                onClick
-            },
-            React.createElement(
-                "svg",
-                { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
-                React.createElement("path", { fill: "currentColor", d: path })
-            )
-        );
-
-    const moreBtn = hasContent
-        ? headerBtn(
-            "more",
-            STRINGS.header.more,
-            STRINGS.header.more,
-            "M7 12.001C7 13.105 6.105 14 5 14C3.895 14 3 13.105 3 12.001C3 10.896 3.895 10.001 5 10.001C6.105 10.001 7 10.896 7 12.001ZM14 12.001C14 13.105 13.105 14 12 14C10.895 14 10 13.105 10 12.001C10 10.896 10.895 10.001 12 10.001C13.105 10.001 14 10.896 14 12.001ZM19 14C20.105 14 21 13.105 21 12.001C21 10.896 20.105 10.001 19 10.001C17.895 10.001 17 10.896 17 12.001C17 13.105 17.895 14 19 14Z",
-            (e: any) => ContextMenuApi.openContextMenu(e, () => React.createElement(DockMoreMenu)),
-            "dockview-more"
+            "svg",
+            { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+            React.createElement("path", {
+                fill: "currentColor",
+                d: "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z"
+            })
         )
-        : null;
-
-    const closeBtn = headerBtn(
-        "close",
-        STRINGS.header.close,
-        STRINGS.header.closeHint,
-        "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z",
-        close,
-        "dockview-close"
     );
 
     // The header grows to TWO rows whenever there's a viewer's relocated controls
@@ -278,37 +239,24 @@ export function DockPanel() {
                 React.createElement(
                     "div",
                     {
-                        className: `${CLS.upper} dockview-header-upper`
-                            + (windows.length >= 2 ? " dockview-header-upper--tabs" : "")
+                        className: `${CLS.upper} dockview-header-upper dockview-header-upper--tabs`
                     },
                     React.createElement(
                         "div",
                         {
                             className: `${CLS.headerChildren} dockview-header-children`
-                                + (windows.length >= 2 ? " dockview-header-children--tabs" : "")
+                                + " dockview-header-children--tabs"
                         },
-                        // Lone window → plain [glyph]+title. ≥2 windows → the flat tabs
-                        // (each carrying its own ⋯/✕ in place, so no shared cluster).
-                        ...(windows.length >= 2
-                            ? [React.createElement(DockTabs, { onCloseActive: close })]
-                            : [
-                                leadingIcon,
-                                React.createElement(
-                                    "h2",
-                                    { className: `${CLS.title} dockview-title`, title },
-                                    title
-                                )
-                            ])
+                        // The tab strip is ALWAYS rendered (one window or many). Each tab
+                        // carries its own icon/name/⋯/✕ in place.
+                        React.createElement(DockTabs, null)
                     ),
-                    // The shared far-right ⋯/✕ cluster exists ONLY for the lone window.
-                    windows.length >= 2
-                        ? null
-                        : React.createElement(
-                            "div",
-                            { className: `${CLS.toolbar} dockview-header-actions` },
-                            moreBtn,
-                            closeBtn
-                        )
+                    // The far-right DOCK X (closes the whole dock, not a tab).
+                    React.createElement(
+                        "div",
+                        { className: `${CLS.toolbar} dockview-header-actions` },
+                        closeBtn
+                    )
                 ),
                 // SECOND ROW: the active viewer's controls strip (none in P2).
                 showViewerRow

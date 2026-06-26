@@ -4,10 +4,10 @@
  * The manifest + lifecycle + Flux wiring for the from-scratch modular DockView.
  * It mounts the host (the right-docked, native-style panel), registers the host
  * with the engine bridge, restores the persisted width/open state, binds the
- * Ctrl+Alt+P toggle, and exposes window.__dockView for console / CDP driving.
+ * F9 toggle, and exposes window.__dockView for console / CDP driving.
  *
  * Phase 2 reality: NO viewers are registered yet (viewers/registry.ts is empty),
- * so the dock comes alive as an EMPTY shell — open it with Ctrl+Alt+P (or
+ * so the dock comes alive as an EMPTY shell — open it with F9 (or
  * __dockView.toggle()) and it shows the empty-state card; __dockView.load() routes
  * through the engine and lands on the unsupported card (no viewer for the type yet).
  * Chip-click loading (embed.ts) is re-wired in P3; for now loading is driven over
@@ -124,7 +124,7 @@ function unexposeDebug(): void {
 
 export default definePlugin({
     name: "DockView",
-    description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images (Ctrl+Alt+P to toggle; mutually exclusive with the member list; remembers per channel; PDF refits on resize).",
+    description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images (F9 to toggle; mutually exclusive with the member list; remembers per channel; PDF refits on resize).",
     authors: [{ name: "seonin", id: 0n }],
     target: "DESKTOP",
 
@@ -168,11 +168,12 @@ export default definePlugin({
         // 2. restore persisted width/open from DataStore (async; applies on resolve).
         applyPersisted();
 
-        // 3. Ctrl+Alt+P toggle (works anywhere — it's a modifier combo). The viewer
-        //    single-key shortcuts (image zoom, PDF page-nav/find) ride the viewers
-        //    and arrive in P3+; P2 owns only the dock toggle.
+        // 3. F9 toggles the dock. A single function key — text inputs don't capture
+        //    it, so no focus guard is needed; we still preventDefault to stop any
+        //    default. The viewer single-key shortcuts (image zoom, PDF page-nav/find)
+        //    ride the viewers and arrive in P3+; P2 owns only the dock toggle.
         onKeyDown = (e: KeyboardEvent) => {
-            if (e.ctrlKey && e.altKey && (e.key === "p" || e.key === "P" || e.code === "KeyP")) {
+            if (e.key === "F9" || e.code === "F9") {
                 e.preventDefault();
                 toggle();
             }
