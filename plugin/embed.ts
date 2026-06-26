@@ -26,7 +26,10 @@ import { load } from "./engine/load";
 import { openExternalLink } from "./external/openExternal";
 import { STRINGS } from "./strings";
 
-const { openContextMenu, closeContextMenu } = ContextMenuApi;
+// openContextMenu/closeContextMenu are read off ContextMenuApi at CALL time, never
+// destructured at module top: touching a @webpack/common proxy during the plugin's
+// module-eval drags Webpack in before it's ready, and the whole plugin then fails
+// to register (the lazy-init trap).
 
 /** The matched extension of a url's path, lowercased, or null (path-aware, the
  *  same probe detectType uses). */
@@ -90,7 +93,7 @@ function openInPanel(url: string, name: string) {
 function ArtifactContextMenu({ url, name }: { url: string; name: string; }) {
     return React.createElement(Menu.Menu, {
         navId: "artifact-context-menu",
-        onClose: closeContextMenu
+        onClose: () => ContextMenuApi.closeContextMenu()
     },
     React.createElement(Menu.MenuGroup, null,
         React.createElement(Menu.MenuItem, {
@@ -266,7 +269,7 @@ function onDocContextCapture(e: MouseEvent) {
     e.stopPropagation();
     e.stopImmediatePropagation();
     const url = hit.url;
-    openContextMenu(e as any, () =>
+    ContextMenuApi.openContextMenu(e as any, () =>
         React.createElement(ArtifactContextMenu, { url, name: nameFromUrl(url) }));
 }
 
