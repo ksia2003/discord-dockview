@@ -30,6 +30,7 @@
 import { findCssClasses } from "@webpack";
 import { React } from "@webpack/common";
 
+import { dvFetch } from "../engine/fetch";
 import { requestRender, isRenderer, setRenderer } from "../engine/forceRender";
 import { LS_WIDTH, lsSet } from "../engine/persist";
 import { consumePendingScroll } from "../engine/viewState";
@@ -38,10 +39,29 @@ import { applyHostWidth, clampDockDrag } from "../host/layout";
 import { applyOpenState } from "../host/mount";
 import { toggle } from "../host/open";
 import { getViewer } from "../viewers/registry";
+import type { ViewerContext } from "../engine/types";
 import { DockTabs } from "./DockTabs";
+import { FindBar } from "./FindBar";
 import { HeaderControls, hasViewerControls } from "./HeaderControls";
 import { LoadingBody, renderEmptyBody, renderErrorBody, renderUnsupportedBody } from "./StateCards";
 import { STRINGS } from "../strings";
+
+/** A minimal ViewerContext for the find-slot dispatch — findModel only reads
+ *  window/content + requestRender; fetch is the live dvFetch in case a viewer's
+ *  model ever needs it. */
+function findCtx(win = getActiveWindow()): ViewerContext {
+    return { window: win, content: win.content, requestRender, fetch: dvFetch };
+}
+
+/** The active viewer's find bar, or null. A find-capable viewer returns a
+ *  FindBarModel from findModel() only while its find bar is open; the slot is
+ *  empty otherwise (no viewer, or find closed). */
+function renderFindBar() {
+    const win = getActiveWindow();
+    if (win.content.name == null || win.content.loading || win.content.error) return null;
+    const model = getViewer(win.content.type)?.findModel?.(findCtx(win));
+    return model ? React.createElement(FindBar, { model }) : null;
+}
 
 // --- Discord native class resolution (theme-aware, update-robust) -----------
 // Fallbacks are the literal classes from the build we extracted on (2026-06).
@@ -270,8 +290,8 @@ export function DockPanel() {
             (() => {
                 // The find box is a floating browser-style Ctrl+F panel positioned
                 // top-right OVER the body. Each find-capable viewer supplies a model
-                // via findModel(); with no viewer registered (P2) there is no model, so
-                // the slot is empty. The box sits last inside the (relative) body-wrap.
+                // via findModel(); a viewer with no open find bar returns null, so the
+                // slot is empty. The box sits last inside the (relative) body-wrap.
                 return React.createElement(
                     "div",
                     { className: "dockview-body-wrap" },
@@ -282,7 +302,8 @@ export function DockPanel() {
                                 + (hasContent && win.content.type === "pdf" ? " dockview-body-pdf" : "")
                         },
                         renderBody()
-                    )
+                    ),
+                    renderFindBar()
                 );
             })()
         )

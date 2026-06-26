@@ -133,7 +133,7 @@ export function showContent(opts: ShowOpts): "noop" | "cache" | "fetch" {
     // with it: the viewer always writes `entry`, only writes `content` while
     // token.isCurrent(). With no viewer registered yet, land on a graceful state.
     const viewer = getViewer(type);
-    const loadOpts: LoadOpts = { name, url, type, code: opts.html ?? null };
+    const loadOpts: LoadOpts = { name, url, type, code: opts.html ?? null, noCache: opts.noCache };
     if (viewer) {
         viewer.load(loadOpts, token, entry, makeContext(win));
     } else {

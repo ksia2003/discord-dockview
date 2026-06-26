@@ -180,6 +180,11 @@ export interface CachedView {
     treeMode?: "tree" | "raw";
     editMode?: "view" | "edit";
     editBuffer?: string | null;
+    // code/text find state, so a cache return reopens the file with the find bar
+    // (query + case toggle) exactly as it was left.
+    codeFindOpen?: boolean;
+    codeFindQuery?: string;
+    codeFindCase?: boolean;
 }
 
 export interface CacheEntry {
@@ -243,6 +248,7 @@ export interface LoadOpts {
     url: string | null;
     type: ContentType;
     code?: string | null;
+    noCache?: boolean; // a retry (error card) — the loader forces a fresh fetch
 }
 
 /** Everything a viewer's loader and body are handed by the engine. Replaces the

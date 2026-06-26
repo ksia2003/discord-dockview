@@ -34,6 +34,6 @@ export function allViewers(): Viewer[] {
 // Viewers are wired up here as they are ported (P3 onward). Kept as explicit
 // registration calls rather than module-top imports so a viewer with an
 // accidental top-level side effect can't take the whole registry down on load.
-//
-//   import { CodeViewer } from "./text/CodeViewer";
-//   registerViewer(CodeViewer);
+
+import { CodeViewer } from "./text/CodeViewer";
+registerViewer(CodeViewer);

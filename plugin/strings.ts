@@ -148,10 +148,12 @@ export const STRINGS = {
     },
 
     // --- code header controls -----------------------------------------------
-    // Word wrap is always on (no toggle): code never scrolls horizontally.
+    // Word wrap defaults on (code shouldn't h-scroll), with a state-colour toggle
+    // to drop to a single-line view for wide tabular text.
     code: {
         detectedLanguage: "Detected language",
         find: "Find (Ctrl+F)",
+        wrap: "Word wrap",
         copy: "Copy",
         copied: "Copied"
     },
