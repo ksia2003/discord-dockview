@@ -6,18 +6,17 @@
  * with the engine bridge, restores the persisted width/open state, binds the
  * F9 toggle, and exposes window.__dockView for console / CDP driving.
  *
- * Phase 2 reality: NO viewers are registered yet (viewers/registry.ts is empty),
- * so the dock comes alive as an EMPTY shell — open it with F9 (or
- * __dockView.toggle()) and it shows the empty-state card; __dockView.load() routes
- * through the engine and lands on the unsupported card (no viewer for the type yet).
- * Chip-click loading (embed.ts) is re-wired in P3; for now loading is driven over
- * CDP via __dockView.load().
+ * Phase 3: the text/code viewer is registered (viewers/registry.ts), and chip-click
+ * loading is re-wired — embed.ts intercepts a dock-handled attachment chip / inline
+ * image and routes it through the engine's load(). Open the dock with F9 (or
+ * __dockView.toggle()); clicking a code/text chip renders it, and a handled type
+ * whose viewer isn't built yet lands on the unsupported card.
  *
  * target DESKTOP: the eventual artifact/PDF/markdown renderers rely on the CSP
  * nonce trick + main-thread pdf worker that only hold under the desktop client.
  *
- * CRITICAL: this entry does NOT import the old panel.tsx or embed.ts. Those flat
- * files stay on disk untouched (port source for P3+), just unreferenced.
+ * CRITICAL: this entry does NOT import the old panel.tsx. That flat file stays on
+ * disk untouched (port source for the remaining phases), just unreferenced.
  */
 
 import definePlugin from "@utils/types";
@@ -47,6 +46,7 @@ import { applyHostWidth, clampWidth } from "./host/layout";
 import { applyOpenState, ensureHost } from "./host/mount";
 import { closePanel, registerHost, startHost, stopHost, toggle } from "./host/open";
 import { openExternalLink } from "./external/openExternal";
+import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
 import { settings } from "./settings";
 
@@ -202,16 +202,21 @@ export default definePlugin({
         };
         window.addEventListener("message", onMessage);
 
-        // 6. chat-side KaTeX (separate concern, kept) + the debug surface.
+        // 6. chip-click delegation: intercept clicks on dock-handled attachment
+        //    chips / inline images and route them through the engine's load().
+        startEmbed();
+
+        // 7. chat-side KaTeX (separate concern, kept) + the debug surface.
         startLatex();
         exposeDebug();
     },
 
     stop() {
-        // 1. window listeners.
+        // 1. window listeners + chip-click delegation.
         if (onKeyDown) { window.removeEventListener("keydown", onKeyDown); onKeyDown = null; }
         if (onResize) { window.removeEventListener("resize", onResize); onResize = null; }
         if (onMessage) { window.removeEventListener("message", onMessage); onMessage = null; }
+        stopEmbed();
         // 2. tear down the host (heartbeat/observer/React unmount + triple sweep +
         //    native-sidebar restore). Marks inactive first so no callback re-injects.
         stopHost();

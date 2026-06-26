@@ -1,48 +1,35 @@
 /*
  * DockView — attachment embed (click-to-panel delegation).
  * ---------------------------------------------------------------------------
- * Panel-renderable attachments (.artifact/.html/.pdf/.md + a wide set of code
- * extensions) are NOT auto-rendered inline. Discord shows them as its native
- * attachment chip; clicking the chip loads the file into the DockView panel.
- * The panel's content-type router (panel.tsx) picks the renderer by extension.
+ * Panel-renderable attachments (the dock-handled file types) are NOT auto-
+ * rendered inline. Discord shows them as its native attachment chip; clicking the
+ * chip loads the file into the DockView panel via the engine's public load(). The
+ * engine's content-type router (showContent → the registered viewer) picks the
+ * renderer by extension; a handled type whose viewer isn't built yet lands on the
+ * unsupported card (expected during the rewrite).
  *
  * ONE capture-phase document click listener (delegation) intercepts clicks on
- * panel-renderable chips and routes them to the panel, suppressing the default
- * download navigation. The explicit hover-bar download button keeps native
- * behaviour. Ported to standard imports + direct load() call (no window global)
- * and start/stop listener management.
+ * panel-renderable chips and inline images and routes them to the panel, suppressing
+ * the default download / lightbox. The explicit hover-bar download button keeps
+ * native behaviour.
+ *
+ * SINGLE SOURCE OF TRUTH: which extensions are handled comes from
+ * engine/detectType — `detectType({url})` returning anything other than "unknown"
+ * means the dock has a route for it. We never re-list extensions here, so the chat-
+ * side interception can't drift from what the panel actually renders.
  */
 
-import { closeModal, ModalCloseButton, ModalContent, ModalHeader, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import { ContextMenuApi, Menu, React } from "@webpack/common";
 
-import { load } from "./panel";
+import { detectType, IMG_EXT } from "./engine/detectType";
+import { load } from "./engine/load";
+import { openExternalLink } from "./external/openExternal";
 import { STRINGS } from "./strings";
 
 const { openContextMenu, closeContextMenu } = ContextMenuApi;
 
-// MUST mirror panel.tsx's detectType coverage.
-// (.dot/.gv -> graphviz, .ipynb -> notebook; .json/.json5/.xml already present, now
-//  route to the structured tree in detectType.)
-const PANEL_EXT_GROUP =
-    "artifact|html?|pdf|md|markdown|mdown|mkd|docx|xlsx|xls|mmd|mermaid|" +
-    "dot|gv|ipynb|" +
-    "txt|text|log|js|mjs|cjs|jsx|ts|tsx|mts|cts|py|pyw|json|json5|csv|tsv|" +
-    "css|scss|less|xml|svg|plist|yml|yaml|sh|bash|zsh|fish|c|h|cpp|cxx|cc|" +
-    "hpp|hxx|hh|java|kt|kts|rs|go|rb|php|sql|toml|ini|cfg|conf|tex|lua|vue|" +
-    "svelte|swift|dart|scala|pl|pm|r|diff|patch|env|properties|gradle|groovy";
-
-const PANEL_EXT_RE = new RegExp(`\\.(${PANEL_EXT_GROUP})$`, "i");
-const PANEL_EXT_RE_RAW = new RegExp(`\\.(${PANEL_EXT_GROUP})(\\?|#|$)`, "i");
-
-// Image attachments are rendered INLINE (not as a chip): clicking one normally
-// opens Discord's native lightbox modal. We intercept that click instead and
-// render the full-resolution image in the dock panel. (Must mirror panel.tsx's
-// IMG_EXT set.)
-const IMG_EXT_GROUP = "png|jpe?g|gif|webp|bmp|svg|apng|avif";
-const IMG_EXT_RE = new RegExp(`\\.(${IMG_EXT_GROUP})(\\?|#|$)`, "i");
-
-/** The matched extension of a url's path, lowercased, or null. */
+/** The matched extension of a url's path, lowercased, or null (path-aware, the
+ *  same probe detectType uses). */
 function panelExt(url: string | null | undefined): string | null {
     if (!url) return null;
     let path = url;
@@ -51,15 +38,18 @@ function panelExt(url: string | null | undefined): string | null {
     } catch {
         /* keep raw */
     }
-    const m = PANEL_EXT_RE.exec(path);
+    const m = /\.([a-z0-9]+)(?:$|\?|#)/i.exec(path.split("/").pop() || "");
     if (m) return m[1].toLowerCase();
-    const m2 = PANEL_EXT_RE_RAW.exec(url);
+    // fall back to a raw-url probe (covers a query/hash directly after the ext).
+    const m2 = /\.([a-z0-9]+)(\?|#|$)/i.exec(url);
     return m2 ? m2[1].toLowerCase() : null;
 }
 
-/** Is this URL a file the dock panel can render? (ignores query string) */
+/** Is this URL a file the dock panel can render? Decided ENTIRELY by detectType —
+ *  any recognised extension (≠ "unknown") is dock-handled. */
 function isPanelUrl(url: string | null | undefined): boolean {
-    return panelExt(url) != null;
+    if (!url) return false;
+    return detectType({ url }) !== "unknown";
 }
 
 /** Derive the panel display name from the url. */
@@ -80,89 +70,24 @@ function nameFromUrl(url: string): string {
     return base || "file";
 }
 
-function openPopout(html: string, name: string) {
-    const popup = window.open("", name, "width=900,height=700,menubar=no,toolbar=no");
-    if (!popup) return;
-    popup.document.open();
-    popup.document.write(html);
-    popup.document.close();
-    popup.document.title = name;
-}
-
 /**
- * Primary action: load the file into the DockView panel by URL. The panel's
+ * Primary action: load the file into the DockView panel by URL. The engine's
  * router picks the renderer + fetches the url itself (bypassing the download
- * Content-Disposition). Falls back to a modal/window only if load() throws.
+ * Content-Disposition). Falls back to opening the link externally only if load()
+ * throws (panel mount refused — e.g. on the Discord home/friends page).
  */
 function openInPanel(url: string, name: string) {
     try {
         load({ name, url });
         return;
     } catch {
-        /* panel mount failed somehow — fall back per type */
+        /* panel mount failed somehow — fall back to opening the link */
     }
-    const ext = panelExt(url);
-    if (ext === "artifact" || ext === "html" || ext === "htm") {
-        fetch(url)
-            .then(r => {
-                if (!r.ok) throw new Error(r.status + " " + r.statusText);
-                return r.text();
-            })
-            .then(html => openArtifactModal(html, name, url))
-            .catch(() => {
-                /* give up silently; chip still shows */
-            });
-    } else {
-        window.open(url, "_blank", "noopener");
-    }
+    openExternalLink(url);
 }
 
-function openArtifactModal(html: string, name: string, _url: string) {
-    const key = openModal((props: any) =>
-        React.createElement(ModalRoot, {
-            ...props,
-            size: ModalSize.LARGE,
-            style: { maxWidth: "90vw", width: "1200px", maxHeight: "90vh", height: "85vh" }
-        },
-        React.createElement(ModalHeader, {
-            style: { justifyContent: "space-between", alignItems: "center", padding: "12px 16px" }
-        },
-        React.createElement("span", {
-            style: { fontWeight: 600, fontSize: "16px", color: "var(--header-primary, #f2f3f5)" }
-        }, name),
-        React.createElement("div", {
-            style: { display: "flex", gap: "8px", alignItems: "center" }
-        },
-        React.createElement("button", {
-            onClick: () => { openPopout(html, name); closeModal(key); },
-            style: {
-                background: "none", border: "none", color: "var(--interactive-normal)",
-                cursor: "pointer", fontSize: "13px", padding: "4px 8px", borderRadius: "4px"
-            },
-            title: STRINGS.header.openInNewWindow,
-            onMouseEnter: (e: any) => e.target.style.color = "var(--interactive-hover)",
-            onMouseLeave: (e: any) => e.target.style.color = "var(--interactive-normal)"
-        }, STRINGS.header.popOut),
-        React.createElement(ModalCloseButton, { onClick: props.onClose })
-        )
-        ),
-        React.createElement(ModalContent, {
-            style: { padding: 0, overflow: "hidden" }
-        },
-        React.createElement("iframe", {
-            srcDoc: html,
-            sandbox: "allow-scripts allow-same-origin",
-            style: { width: "100%", height: "100%", minHeight: "70vh", border: "none", background: "white" }
-        })
-        )
-        )
-    );
-}
-
-/** Context menu (right-click on a chip): open in panel / popout / copy. */
+/** Context menu (right-click on a chip): open in panel / open externally / copy. */
 function ArtifactContextMenu({ url, name }: { url: string; name: string; }) {
-    const ext = panelExt(url);
-    const isHtml = ext === "artifact" || ext === "html" || ext === "htm";
     return React.createElement(Menu.Menu, {
         navId: "artifact-context-menu",
         onClose: closeContextMenu
@@ -176,13 +101,7 @@ function ArtifactContextMenu({ url, name }: { url: string; name: string; }) {
         React.createElement(Menu.MenuItem, {
             id: "artifact-popout",
             label: STRINGS.menu.openInNewWindow,
-            action: () => {
-                if (isHtml) {
-                    fetch(url).then(r => r.text()).then(h => openPopout(h, name)).catch(() => { });
-                } else {
-                    window.open(url, "_blank", "noopener");
-                }
-            }
+            action: () => openExternalLink(url)
         })
     ),
     React.createElement(Menu.MenuSeparator),
@@ -190,7 +109,7 @@ function ArtifactContextMenu({ url, name }: { url: string; name: string; }) {
         React.createElement(Menu.MenuItem, {
             id: "artifact-copy-link",
             label: STRINGS.menu.copyLink,
-            action: () => navigator.clipboard.writeText(url)
+            action: () => { try { navigator.clipboard.writeText(url); } catch { /* ignore */ } }
         })
     )
     );
@@ -282,6 +201,12 @@ function fiberImageUrl(el: HTMLElement | null): string | null {
     return null;
 }
 
+/** True if `url`'s extension is one we render as an inline <img> in the dock. */
+function isImageUrl(url: string): boolean {
+    const ext = panelExt(url);
+    return ext != null && IMG_EXT.has(ext);
+}
+
 /**
  * Resolve a click on an INLINE image (Discord media, not an attachment chip) to
  * its full-resolution url, or null if this isn't an image we should intercept.
@@ -305,7 +230,7 @@ function resolveInlineImageClick(target: EventTarget | null): { url: string; nam
     let url = fiberImageUrl(wrapper) || (img ? img.src : null);
     if (!url) return null;
     // Only intercept actual image assets (skip stickers/emoji/avatars without ext).
-    if (!IMG_EXT_RE.test(url) && !/\/attachments\//.test(url)) return null;
+    if (!isImageUrl(url) && !/\/attachments\//.test(url)) return null;
     url = fullResImageUrl(url);
     return { url, name: nameFromUrl(url) };
 }
@@ -355,7 +280,7 @@ export function startEmbed() {
     attached = true;
 }
 
-/** Remove the delegation listeners (the new lifecycle requirement). */
+/** Remove the delegation listeners. */
 export function stopEmbed() {
     if (!attached) return;
     document.removeEventListener("click", onDocClickCapture, true);
