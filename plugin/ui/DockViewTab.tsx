@@ -34,7 +34,11 @@ import { Forms, React, Switch, TextInput } from "@webpack/common";
 import { settings } from "../settings";
 import { UpdatePanel } from "./UpdatePanel";
 
-const h = React.createElement;
+// NOTE: must stay a lazy wrapper, NOT `const h = React.createElement`. The latter
+// resolves the webpack React proxy at module-top (import time), before Vencord is
+// ready, which throws and silently drops the whole plugin from Vencord.Plugins
+// (design §8). Wrapping defers the `.createElement` access to call time.
+const h = (...args: any[]) => (React.createElement as any)(...args);
 
 // The plugin description, kept verbatim from definePlugin so the tab header reads
 // the same blurb the old modal showed.
