@@ -41,19 +41,33 @@ the left, read the file on the right.
 
 ## Install
 
-**[Download the latest release](https://github.com/ksia2003/discord-dockview/releases/latest)** and run the installer for your system:
+**The app (recommended).** [Download the latest release](https://github.com/ksia2003/discord-dockview/releases/latest) and run the installer for your system:
 
 - **Windows** — `DockView-Setup-*.exe`
 - **Linux** — `.AppImage`, `.deb`, `.rpm`, or `.tar.gz`
 
 Install, launch, log in to Discord. There's nothing else to set up — the side panel is built in.
 
-<sub>Already using **Vencord**? You can run just the side-panel piece as a userplugin. The source lives in [`plugin/`](plugin/) — drop it into Vencord's `src/userplugins/`, add the viewer deps (`pdfjs-dist marked highlight.js mammoth xlsx mermaid @viz-js/viz` + the CodeMirror set), then build and enable "DockView" in Settings ▸ Plugins.</sub>
+**Already running Vesktop?** Grab the `DockView-Vencord-*.zip` bundle from the release, unzip it, and run the included installer — `install-dockview.sh` on Linux, `install-dockview.ps1` on Windows. It drops DockView's Vencord build into Vesktop's custom-Vencord folder; restart Vesktop and the panel is there. This replaces your Vencord with ours (which is stock Vencord plus DockView, so your existing Vencord plugins keep working).
+
+<sub>**Building from source:** the side panel is one Vencord userplugin under [`plugin/`](plugin/). `pnpm prepareVencord` clones Vencord, drops the plugin in, installs the viewer dependencies it imports (derived automatically from the source, never hand-maintained), and builds the four `vencordDesktop*` files. `pnpm package` wraps those into the installers above; `pnpm package:bundle` into the drop-in zip.</sub>
 
 ## Notes
 
 - Desktop only. There's no mobile or web version.
 - macOS isn't supported right now.
+
+## Project layout
+
+The fork is mostly upstream Vesktop. Everything DockView adds is one Vencord
+userplugin under [`plugin/`](plugin/), organized so each folder's name tells you
+what it does:
+
+- **`engine/`** — the format-agnostic dock core: window/tab state, the content cache, load routing, content-type detection.
+- **`host/`** — Discord integration: mounting into the chat layout, panel sizing, sidebar exclusivity.
+- **`ui/`** — the dock chrome: the tab strip, header controls, find bar, state cards.
+- **`viewers/`** — one self-contained module per file format (pdf, image, code, csv, json/xml tree, and the doc/iframe family: markdown, html, docx, xlsx, mermaid, graphviz, ipynb). Adding a format is one new module plus one line in the registry.
+- **`edit/`**, **`external/`**, **`mcp/`** — in-panel editing, pop-out windows, and the (parked) MCP bridge.
 
 ## Built on / License
 
