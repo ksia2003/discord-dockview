@@ -154,6 +154,11 @@ export default definePlugin({
     authors: [{ name: "seonin", id: 0n }],
     target: "DESKTOP",
 
+    // This build (a Vesktop fork) exists to ship DockView, so the panel is ON out
+    // of the box. Without this a fresh install leaves the app's whole reason for
+    // existing disabled until the user digs into the plugin list to enable it.
+    enabledByDefault: true,
+
     // MCP bridge connect info persists through Vencord's settings store, NOT
     // localStorage (Discord deletes window.localStorage in the renderer). The MCP
     // surface itself is parked (P9); the settings keys stay grouped here.

@@ -86,15 +86,12 @@ export async function ensureVencordFiles() {
         );
     }
 
-    const installValid = await isValidVencordInstall(VENCORD_FILES_DIR);
-
-    // Re-copy when the install is missing/invalid, or when the bundled version
-    // differs from what was last copied (i.e. the fork shipped an update).
-    const bundledVersion = readVersion(BUNDLED_VERSION_FILE);
-    const installedVersion = readVersion(INSTALLED_VERSION_FILE);
-
-    if (installValid && bundledVersion === installedVersion) return;
-
+    // ALWAYS (re)install the bundled Vencord+DockView dist on startup. It's a
+    // cheap local copy and it's the canonical Vencord for this build, so doing it
+    // unconditionally means a stale or older Vencord left in the data dir — from a
+    // previous Vesktop, an upgrade, or an earlier manual DockView install — can
+    // never shadow the version shipped inside the app. (Enabled-plugin state lives
+    // in Vencord's settings store, not here, so this doesn't touch user settings.)
     copyBundledVencordFiles();
 }
 
