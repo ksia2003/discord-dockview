@@ -35,6 +35,10 @@ const ROOT = join(__dirname, "..");
 const VENCORD_REPO = "https://github.com/Vendicated/Vencord";
 const VENCORD_REF = process.env.VENCORD_REF || "v1.14.13";
 
+// On Windows `pnpm` is a `.cmd` shim, which execFileSync can't spawn directly
+// (spawnSync pnpm ENOENT). `git` is a real .exe and resolves fine.
+const PNPM = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+
 // DockView userplugin source, shipped in this repo.
 const PLUGIN_SRC = join(ROOT, "plugin");
 
@@ -170,12 +174,14 @@ try {
     mkdirSync(dirname(pluginDest), { recursive: true });
     cpSync(PLUGIN_SRC, pluginDest, { recursive: true });
 
-    // 3. Add DockView runtime deps to Vencord.
-    run("pnpm", ["add", ...DOCKVIEW_DEPS], vencordDir);
+    // 3. Add DockView runtime deps to Vencord. `-w`: Vencord is a pnpm workspace
+    //    and `pnpm add` to a workspace root refuses (ERR_PNPM_ADDING_TO_ROOT)
+    //    without it.
+    run(PNPM, ["add", "-w", ...DOCKVIEW_DEPS], vencordDir);
 
     // 4. Install + build Vencord.
-    run("pnpm", ["install"], vencordDir);
-    run("pnpm", ["build"], vencordDir);
+    run(PNPM, ["install"], vencordDir);
+    run(PNPM, ["build"], vencordDir);
 
     // 5. Copy the four desktop dist files into static/vencordDist.
     mkdirSync(OUT_DIR, { recursive: true });
