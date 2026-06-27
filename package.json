@@ -1,6 +1,6 @@
 {
     "name": "dockview",
-    "version": "1.6.5",
+    "version": "1.7.0",
     "private": true,
     "description": "DockView is a Discord desktop app (Vesktop fork) with the DockView Vencord plugin built in",
     "keywords": [],
