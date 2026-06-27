@@ -12,7 +12,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { access, constants as FsConstants, writeFile } from "fs/promises";
 import { VENCORD_FILES_DIR } from "main/vencordFilesDir";
 import { join } from "path";
-import { compareDockviewVersions } from "shared/dockviewVersion";
+import { compareDockviewVersions, parseVersionTxt } from "shared/dockviewVersion";
 import { STATIC_DIR } from "shared/paths";
 
 // Directory holding the Vencord (+ DockView plugin) dist bundled with the app.
@@ -113,10 +113,27 @@ export async function ensureVencordFiles() {
         // Bundled is NEWER (e.g. a full-app upgrade ships a newer plugin): refresh.
         shouldCopy = true;
         reason = "bundled is newer";
+    } else if (
+        compareDockviewVersions(installed, bundled) === 0 &&
+        parseVersionTxt(bundled).gitHash !== parseVersionTxt(installed).gitHash
+    ) {
+        // SAME DockView version but a DIFFERENT build — e.g. an app reinstall or a
+        // version-bump release that ships the same plugin version compiled from a
+        // different commit. compareDockviewVersions only looks at the plugin version,
+        // so it can't see this; fall back to the build hash. A differing gitHash means
+        // a different bundle (its preload/main may differ from the live ones), so
+        // install it — otherwise a stale preload/main from the previous build persists
+        // out of sync with the new renderer (this is exactly what broke Vencord
+        // Settings: old preload lacked supportsWindowsMaterial). A genuine OTA bumps
+        // the plugin version so it sorts NEWER and is preserved by the branch above;
+        // this fires only on a version tie with differing builds.
+        shouldCopy = true;
+        reason = "same version, different build (gitHash differs)";
     } else {
-        // Installed is same-or-newer (a hot-deploy / OTA patch): preserve it.
+        // Installed is same-or-newer AND the same build (plain restart, or a genuine
+        // higher-versioned OTA patch): preserve it.
         shouldCopy = false;
-        reason = "installed is same-or-newer";
+        reason = "installed is same-or-newer (same build)";
     }
 
     console.log(
