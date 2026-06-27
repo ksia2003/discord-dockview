@@ -19,10 +19,15 @@
  */
 
 import { execFileSync } from "child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
+import { builtinModules } from "module";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+
+// Node builtins (with and without the "node:" prefix). The plugin runs in the
+// renderer and shouldn't import these, but guard against future drift.
+const NODE_BUILTINS = new Set([...builtinModules, ...builtinModules.map(m => `node:${m}`)]);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -33,8 +38,82 @@ const VENCORD_REF = process.env.VENCORD_REF || "v1.14.13";
 // DockView userplugin source, shipped in this repo.
 const PLUGIN_SRC = join(ROOT, "plugin");
 
-// Extra deps DockView needs that aren't in stock Vencord.
-const DOCKVIEW_DEPS = ["pdfjs-dist", "marked", "highlight.js"];
+// Import prefixes that Vencord already provides — never `pnpm add` these.
+// (Vencord aliases + the React runtime + node builtins.)
+const VENCORD_PROVIDED_PREFIXES = ["@webpack", "@utils/", "@api/", "@components/", "@vencord/"];
+const VENCORD_PROVIDED_EXACT = new Set(["react", "react-dom", "@webpack", "@webpack/common"]);
+
+// Pull the package name out of a bare import specifier.
+//   "pdfjs-dist/build/pdf.worker.mjs" -> "pdfjs-dist"
+//   "@codemirror/lang-js"             -> "@codemirror/lang-js"  (scoped: keep scope + first segment)
+//   "react-dom/client"               -> "react-dom"
+function packageNameOf(spec) {
+    if (spec.startsWith("@")) {
+        const [scope, name] = spec.split("/");
+        return name ? `${scope}/${name}` : scope;
+    }
+    return spec.split("/")[0];
+}
+
+function isExternalPackage(spec) {
+    // Relative imports are our own modules.
+    if (spec.startsWith(".") || spec.startsWith("/")) return false;
+    // Node builtins (provided by the runtime, not npm).
+    if (NODE_BUILTINS.has(spec)) return false;
+    // Vencord-provided runtime/aliases.
+    if (VENCORD_PROVIDED_EXACT.has(spec)) return false;
+    if (VENCORD_PROVIDED_PREFIXES.some(p => spec === p || spec.startsWith(p))) return false;
+    const pkg = packageNameOf(spec);
+    if (NODE_BUILTINS.has(pkg)) return false;
+    if (VENCORD_PROVIDED_EXACT.has(pkg)) return false;
+    return true;
+}
+
+// Recursively collect plugin/**/*.{ts,tsx}.
+function collectSources(dir) {
+    const out = [];
+    for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) {
+            out.push(...collectSources(full));
+        } else if (/\.tsx?$/.test(name)) {
+            out.push(full);
+        }
+    }
+    return out;
+}
+
+// Scan the plugin source for the external npm packages it imports, so the
+// dep list can never drift out of sync with the code again. We catch three
+// shapes: static `from "X"`, side-effect `import "X"`, and dynamic `import("X")`.
+function deriveDockviewDeps() {
+    // `from "X"` / `import "X"` (single or double quoted).
+    const fromRe = /\bfrom\s*["']([^"']+)["']/g;
+    const bareImportRe = /\bimport\s*["']([^"']+)["']/g;
+    // `import("X")` dynamic import.
+    const dynamicRe = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+
+    const deps = new Set();
+    for (const file of collectSources(PLUGIN_SRC)) {
+        const src = readFileSync(file, "utf-8");
+        for (const re of [fromRe, bareImportRe, dynamicRe]) {
+            re.lastIndex = 0;
+            let m;
+            while ((m = re.exec(src)) !== null) {
+                let spec = m[1];
+                // Strip Vencord's `?managed` (and any other) query suffix.
+                spec = spec.split("?")[0];
+                if (!spec || !isExternalPackage(spec)) continue;
+                deps.add(packageNameOf(spec));
+            }
+        }
+    }
+    return [...deps].sort();
+}
+
+// Extra deps DockView needs that aren't in stock Vencord, derived from the
+// plugin source at build time (no hand-maintained array to go stale).
+const DOCKVIEW_DEPS = deriveDockviewDeps();
 
 const FILES = [
     "vencordDesktopMain.js",
@@ -44,6 +123,14 @@ const FILES = [
 ];
 
 const OUT_DIR = join(ROOT, "static", "vencordDist");
+
+// Print the derived deps so a build log is auditable — if the plugin grows a
+// new import, it shows up here without anyone touching this script.
+console.log(`Derived DockView deps (${DOCKVIEW_DEPS.length}) from plugin/ imports:`);
+for (const dep of DOCKVIEW_DEPS) console.log(`  - ${dep}`);
+if (DOCKVIEW_DEPS.length === 0) {
+    throw new Error("No external deps derived from plugin/ — scanner is broken or plugin/ is empty.");
+}
 
 function run(cmd, args, cwd) {
     console.log(`$ ${cmd} ${args.join(" ")}  (cwd: ${cwd})`);
