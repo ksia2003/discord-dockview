@@ -9,23 +9,20 @@
  * in the isolated renderer context.
  *
  * This module is imported by BOTH index.tsx (which wires `settings` into the
- * plugin def) and panel.tsx (which reads `settings.store` at connect time).
- * It must therefore NOT import either of them at module top level, or we'd
- * create an import cycle. The onChange handlers reach panel.tsx LAZILY via a
- * dynamic import so the cycle never forms and the call is a safe no-op while
- * the panel isn't running.
+ * plugin def) and the DockView settings tab (ui/DockViewTab.tsx, which binds its
+ * MCP controls to `settings.store`). It must therefore NOT import either of them
+ * at module top level, or we'd create an import cycle. The onChange handlers reach
+ * the bridge LAZILY via a dynamic import so the cycle never forms and the call is a
+ * safe no-op while the panel isn't running.
+ *
+ * The settings here are STORE-ONLY: there is no OptionType.COMPONENT entry, so the
+ * keys never render in Vencord's plugin-settings page (the plugin is `hidden`
+ * anyway). The store backs the MCP controls + the update panel that now live in the
+ * standalone "DockView" settings tab (ui/DockViewTab.tsx).
  */
 
 import { definePluginSettings } from "@api/Settings";
 import { OptionType } from "@utils/types";
-import { React } from "@webpack/common";
-
-// The self-update settings section (renderer). UpdatePanel is SELF-CONTAINED: it
-// imports only ../version, @webpack/common, ../strings, and reads the native /
-// Vesktop bridges off `window` — it does NOT import this module (or index.tsx /
-// panel.tsx) back, so this top-level import forms no cycle (unlike the mcp/ pull,
-// which stays lazy below).
-import { UpdatePanel } from "./ui/UpdatePanel";
 
 // Reconnect the bridge after a setting changes. The MCP bridge is PARKED under
 // mcp/ (registered only behind these toggles), so we reach restartMcpClient LAZILY
@@ -54,12 +51,5 @@ export const settings = definePluginSettings({
         description: "Bridge port (127.0.0.1)",
         default: 9820,
         onChange: reconnectBridge
-    },
-    // The DockView self-update section: version readout + Check/Apply buttons,
-    // backed by plugin/native.ts. A COMPONENT entry renders arbitrary React in the
-    // plugin's settings page; it carries no stored value of its own.
-    updatePanel: {
-        type: OptionType.COMPONENT,
-        component: () => React.createElement(UpdatePanel)
     }
 });

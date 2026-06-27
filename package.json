@@ -1,6 +1,6 @@
 {
     "name": "vesktop",
-    "version": "1.7.5",
+    "version": "1.6.5",
     "description": "Vesktop, a Discord desktop app, with the DockView side-panel plugin built in",
     "keywords": [],
     "homepage": "https://github.com/ksia2003/discord-dockview",
@@ -139,7 +139,7 @@
         },
         "nsis": {
             "include": "build/installer.nsh",
-            "oneClick": false
+            "oneClick": true
         },
         "win": {
             "icon": "build/icon.ico",
