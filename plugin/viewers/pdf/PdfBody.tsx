@@ -122,6 +122,10 @@ export interface PdfController {
     beginLiveScale: () => void;
     liveScale: (ratio: number) => void;
     endLiveScale: () => void;
+    // Pause the body's ResizeObserver re-raster for the duration of a dock-edge
+    // drag (the drag drives its own live preview + a single drag-end re-raster);
+    // the chrome's resize handler flips this true around begin/endLiveScale.
+    setResizeDragging: (on: boolean) => void;
 }
 
 /** Read the live PDF controller (header / menu / keyboard / resize reach for it). */
@@ -1024,7 +1028,8 @@ export function PdfBody() {
                 // lands on exactly the content the preview was showing — no snap.
                 if (win.content.pdf.doc) renderAll();
                 liveAnchorRef.current = null;
-            }
+            },
+            setResizeDragging: setPdfResizeDragging
         };
         setLiveController(PDF_CONTROLLER, ctrls);
 

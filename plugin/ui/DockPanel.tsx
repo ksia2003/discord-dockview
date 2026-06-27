@@ -31,7 +31,7 @@ import { findCssClasses } from "@webpack";
 import { React } from "@webpack/common";
 
 import { dvFetch } from "../engine/fetch";
-import { requestRender, isRenderer, setRenderer } from "../engine/forceRender";
+import { getLiveController, requestRender, isRenderer, setRenderer } from "../engine/forceRender";
 import { LS_WIDTH, lsSet } from "../engine/persist";
 import { consumePendingScroll } from "../engine/viewState";
 import { getActiveWindow } from "../engine/window";
@@ -155,6 +155,21 @@ export function DockPanel() {
         overlay.className = "dockview-drag-overlay";
         document.body.appendChild(overlay);
 
+        // If a PDF body is mounted, drive its CSS live-scale preview through the drag
+        // (and pause its ResizeObserver via setResizeDragging) so the pages follow the
+        // width smoothly and re-raster crisply ONCE on release — never mid-drag. Any
+        // other body reflows for free from the host's CSS width, so this is a no-op
+        // unless the "pdf" controller is published; the dock stays viewer-agnostic.
+        const pdf = getLiveController<{
+            setResizeDragging(on: boolean): void;
+            beginLiveScale(): void;
+            liveScale(ratio: number): void;
+            endLiveScale(): void;
+        }>("pdf");
+        let pdfScaled = false;
+        pdf?.setResizeDragging(true);
+        pdf?.beginLiveScale();
+
         // The drag is a PURE DOM operation, fully decoupled from React: every
         // pointermove records the latest pixel and a single rAF coalesces them into
         // one host-width write per frame. We deliberately do NOT touch React state
@@ -173,6 +188,7 @@ export function DockPanel() {
             if (next !== getActiveWindow().state.width) {
                 getActiveWindow().state.width = next;
                 applyHostWidth(); // direct inline-style write, no React
+                if (pdf) { pdf.liveScale(next / startWidth); pdfScaled = true; }
             }
         };
         const onMove = (ev: MouseEvent) => {
@@ -193,6 +209,10 @@ export function DockPanel() {
             const final = clampDockDrag(startWidth + delta);
             getActiveWindow().state.width = final;
             applyHostWidth();
+            // Drag settled: let the PDF body re-raster crisply at the final width.
+            // Clear the drag flag FIRST (endLiveScale's queue pump checks it).
+            pdf?.setResizeDragging(false);
+            if (pdfScaled) pdf?.endLiveScale();
             setWidth(final); // commit to React ONCE → the [width] effect persists it
         };
         document.body.style.cursor = "ew-resize";
