@@ -35,9 +35,7 @@ const ROOT = join(__dirname, "..");
 const VENCORD_REPO = "https://github.com/Vendicated/Vencord";
 const VENCORD_REF = process.env.VENCORD_REF || "v1.14.13";
 
-// On Windows `pnpm` is a `.cmd` shim, which execFileSync can't spawn directly
-// (spawnSync pnpm ENOENT). `git` is a real .exe and resolves fine.
-const PNPM = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+const PNPM = "pnpm";
 
 // DockView userplugin source, shipped in this repo.
 const PLUGIN_SRC = join(ROOT, "plugin");
@@ -138,7 +136,11 @@ if (DOCKVIEW_DEPS.length === 0) {
 
 function run(cmd, args, cwd) {
     console.log(`$ ${cmd} ${args.join(" ")}  (cwd: ${cwd})`);
-    execFileSync(cmd, args, { cwd, stdio: "inherit" });
+    // shell: true so Windows can run pnpm, which is a `.cmd` shim: execFileSync
+    // can't spawn `pnpm` (ENOENT) nor `pnpm.cmd` directly (EINVAL, since the Node
+    // CVE-2024-27980 fix). The shell resolves it on both platforms. Harmless on
+    // POSIX; the temp/clone paths used here have no spaces.
+    execFileSync(cmd, args, { cwd, stdio: "inherit", shell: true });
 }
 
 function verifyOutput() {
