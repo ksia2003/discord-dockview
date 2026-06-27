@@ -92,6 +92,7 @@ handle(IpcEvents.RELAUNCH, async () => {
 });
 
 handleSync(IpcEvents.IS_USING_CUSTOM_VENCORD_DIR, () => !!State.store.vencordDir);
+handleSync(IpcEvents.GET_VENCORD_FILES_DIR, () => VENCORD_FILES_DIR);
 handle(IpcEvents.SHOW_CUSTOM_VENCORD_DIR, async () => {
     const { vencordDir } = State.store;
     if (!vencordDir) return;

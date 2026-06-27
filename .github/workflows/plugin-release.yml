@@ -1,0 +1,60 @@
+name: Plugin Release
+
+# Publishes a plugin-only patch release (the four desktop bundle files +
+# version.txt + manifest.json) for the in-app OTA updater. This is the cheap,
+# frequent path; full app/installer releases go through release.yml on `v*` tags.
+# A `plugin-v*` tag never matches release.yml's `v*` glob, so the two streams
+# don't collide.
+on:
+    push:
+        tags:
+            - "plugin-v*"
+    workflow_dispatch:
+        inputs:
+            needsRelaunch:
+                description: "Set to 1 if this patch changes main/preload (forces a relaunch instead of a reload)"
+                required: false
+                default: ""
+
+permissions:
+    contents: write
+
+jobs:
+    plugin-release:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v4
+            - uses: pnpm/action-setup@v4 # Install pnpm using packageManager key in package.json
+
+            - name: Use Node.js 20
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 20
+                  cache: "pnpm"
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Prepare bundled Vencord (+ DockView plugin)
+              run: node scripts/prepare-vencord.mjs
+
+            - name: Generate plugin update manifest
+              run: node scripts/make-plugin-manifest.mjs
+              env:
+                  DOCKVIEW_RELEASE_BASE: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+                  DOCKVIEW_NEEDS_RELAUNCH: ${{ github.event.inputs.needsRelaunch }}
+
+            - name: Create GitHub release
+              run: |
+                  gh release create "${{ github.ref_name }}" \
+                      --title "DockView plugin ${{ github.ref_name }}" \
+                      --notes "Plugin-only OTA patch. Applied in-app via the DockView update panel." \
+                      static/vencordDist/vencordDesktopMain.js \
+                      static/vencordDist/vencordDesktopPreload.js \
+                      static/vencordDist/vencordDesktopRenderer.js \
+                      static/vencordDist/vencordDesktopRenderer.css \
+                      static/vencordDist/version.txt \
+                      static/vencordDist/manifest.json
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
