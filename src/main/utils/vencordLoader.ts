@@ -12,6 +12,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { access, constants as FsConstants, writeFile } from "fs/promises";
 import { VENCORD_FILES_DIR } from "main/vencordFilesDir";
 import { join } from "path";
+import { compareDockviewVersions } from "shared/dockviewVersion";
 import { STATIC_DIR } from "shared/paths";
 
 // Directory holding the Vencord (+ DockView plugin) dist bundled with the app.
@@ -86,13 +87,46 @@ export async function ensureVencordFiles() {
         );
     }
 
-    // ALWAYS (re)install the bundled Vencord+DockView dist on startup. It's a
-    // cheap local copy and it's the canonical Vencord for this build, so doing it
-    // unconditionally means a stale or older Vencord left in the data dir — from a
-    // previous Vesktop, an upgrade, or an earlier manual DockView install — can
-    // never shadow the version shipped inside the app. (Enabled-plugin state lives
-    // in Vencord's settings store, not here, so this doesn't touch user settings.)
-    copyBundledVencordFiles();
+    // Version-guarded (re)install of the bundled Vencord+DockView dist on startup.
+    // The copy overwrites the live data-dir files, so doing it unconditionally
+    // would clobber a hot-deployed / OTA-updated plugin (newer than the bundled
+    // build) on every restart. Compare the bundled vs installed version.txt and
+    // only copy when the bundled build is the same-or-newer canonical version;
+    // skip when the install is already newer so an OTA patch survives a restart.
+    // (Enabled-plugin state lives in Vencord's settings store, not here, so this
+    // never touches user settings either way.)
+    const bundled = readVersion(BUNDLED_VERSION_FILE); // string | null
+    const installed = readVersion(INSTALLED_VERSION_FILE); // string | null
+
+    let shouldCopy: boolean;
+    let reason: string;
+    if (installed === null) {
+        // First install, or an unreadable/corrupt install: fail safe to the
+        // known-good bundled build.
+        shouldCopy = true;
+        reason = "no readable installed version";
+    } else if (bundled === null) {
+        // Can't reason about bundled provenance: fail safe to the shipped build.
+        shouldCopy = true;
+        reason = "no readable bundled version";
+    } else if (compareDockviewVersions(installed, bundled) < 0) {
+        // Bundled is NEWER (e.g. a full-app upgrade ships a newer plugin): refresh.
+        shouldCopy = true;
+        reason = "bundled is newer";
+    } else {
+        // Installed is same-or-newer (a hot-deploy / OTA patch): preserve it.
+        shouldCopy = false;
+        reason = "installed is same-or-newer";
+    }
+
+    console.log(
+        `[VencordLoader] ${shouldCopy ? "copying bundled" : "keeping installed"} Vencord dist ` +
+            `(${reason}; installed=${JSON.stringify(installed)}, bundled=${JSON.stringify(bundled)})`
+    );
+
+    if (shouldCopy) {
+        copyBundledVencordFiles();
+    }
 }
 
 // TODO: remove this once enough time has passed
