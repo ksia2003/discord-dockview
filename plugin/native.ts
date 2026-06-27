@@ -253,3 +253,84 @@ export async function applyUpdate(
         return { ok: false, needsRelaunch: false, error: `Apply failed: ${(err as Error)?.message ?? err}` };
     }
 }
+
+/** Prefix that distinguishes a PLUGIN (4-file OTA) release tag from a whole-app
+ *  electron-updater release ("v*"). The two streams must never collide. */
+const PLUGIN_TAG_PREFIX = "plugin-v";
+
+/** GitHub requires a User-Agent on the REST API; the repo is public so no token. */
+const GH_HEADERS = {
+    "User-Agent": "DockView-Updater",
+    Accept: "application/vnd.github+json"
+} as const;
+
+/** Minimal shape of the GitHub release objects we read (only the fields we use). */
+interface GhAsset { name?: string; browser_download_url?: string; }
+interface GhRelease {
+    tag_name?: string;
+    draft?: boolean;
+    prerelease?: boolean;
+    assets?: GhAsset[];
+}
+
+/**
+ * Discover the newest published plugin update via the GitHub Releases API.
+ *
+ * Lists the repo's releases (newest-first), picks the first non-draft release
+ * whose tag starts with "plugin-v" (prereleases are allowed; only `draft` is
+ * skipped), finds its `manifest.json` asset, fetches + parses it, and returns
+ * the manifest together with the release tag and the asset BASE url (the manifest
+ * asset url minus "/manifest.json"), which applyUpdate uses to resolve the four
+ * file downloads. Returns null when there is no plugin-v* release, no manifest
+ * asset, or anything fails — the panel surfaces that as "couldn't check".
+ *
+ * Network-only (the `fetch` global + the shared fetchWithTimeout); imports no new
+ * module. The leading IpcMainInvokeEvent is injected by Electron and ignored.
+ */
+export async function discoverManifest(
+    _: IpcMainInvokeEvent,
+    owner: string,
+    repo: string
+): Promise<{ manifest: any; releaseTag: string; baseUrl: string } | null> {
+    try {
+        const listUrl = `https://api.github.com/repos/${owner}/${repo}/releases?per_page=30`;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        let releases: GhRelease[];
+        try {
+            const res = await fetch(listUrl, { signal: controller.signal, headers: GH_HEADERS });
+            if (!res.ok) return null;
+            releases = (await res.json()) as GhRelease[];
+        } finally {
+            clearTimeout(timer);
+        }
+        if (!Array.isArray(releases)) return null;
+
+        // Newest-first from the API: take the first non-draft plugin-v* release.
+        const release = releases.find(
+            r => !r?.draft && typeof r?.tag_name === "string" && r.tag_name.startsWith(PLUGIN_TAG_PREFIX)
+        );
+        if (!release || !release.tag_name) return null;
+
+        const manifestAsset = (release.assets ?? []).find(a => a?.name === "manifest.json");
+        const manifestUrl = manifestAsset?.browser_download_url;
+        if (!manifestUrl) return null;
+
+        // The asset download base = the manifest url minus its "/manifest.json"
+        // tail. applyUpdate resolves each file's (relative or absolute) url on it.
+        const baseUrl = manifestUrl.replace(/\/manifest\.json$/i, "");
+
+        const manRes = await fetchWithTimeout(manifestUrl, true);
+        const text = await manRes.text();
+        let manifest: any;
+        try {
+            manifest = JSON.parse(text);
+        } catch {
+            return null;
+        }
+
+        return { manifest, releaseTag: release.tag_name, baseUrl };
+    } catch {
+        return null;
+    }
+}

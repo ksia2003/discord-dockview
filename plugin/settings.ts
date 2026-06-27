@@ -18,6 +18,14 @@
 
 import { definePluginSettings } from "@api/Settings";
 import { OptionType } from "@utils/types";
+import { React } from "@webpack/common";
+
+// The self-update settings section (renderer). UpdatePanel is SELF-CONTAINED: it
+// imports only ../version, @webpack/common, ../strings, and reads the native /
+// Vesktop bridges off `window` — it does NOT import this module (or index.tsx /
+// panel.tsx) back, so this top-level import forms no cycle (unlike the mcp/ pull,
+// which stays lazy below).
+import { UpdatePanel } from "./ui/UpdatePanel";
 
 // Reconnect the bridge after a setting changes. The MCP bridge is PARKED under
 // mcp/ (registered only behind these toggles), so we reach restartMcpClient LAZILY
@@ -46,5 +54,12 @@ export const settings = definePluginSettings({
         description: "Bridge port (127.0.0.1)",
         default: 9820,
         onChange: reconnectBridge
+    },
+    // The DockView self-update section: version readout + Check/Apply buttons,
+    // backed by plugin/native.ts. A COMPONENT entry renders arbitrary React in the
+    // plugin's settings page; it carries no stored value of its own.
+    updatePanel: {
+        type: OptionType.COMPONENT,
+        component: () => React.createElement(UpdatePanel)
     }
 });

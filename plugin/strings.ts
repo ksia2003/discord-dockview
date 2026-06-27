@@ -233,5 +233,42 @@ export const STRINGS = {
         confirm: "Attach",
         cancel: "Cancel",
         hint: "Attach to message"
+    },
+
+    // --- self-update panel (settings section) -------------------------------
+    // The DockView update section in Vencord's plugin settings: three version
+    // lines (running / on-disk / latest), a one-line status verdict, and the
+    // Check / Apply buttons that drive the native updater. Sober, settings-page
+    // voice — these report state, not idle dead-ends, so no jokes.
+    update: {
+        sectionTitle: "DockView updates",
+        // The blurb under the title — what this section does.
+        intro: "DockView patches itself from GitHub. Check for a new build, then apply it.",
+        // Version row labels.
+        current: "Running",
+        onDisk: "On disk",
+        latest: "Latest",
+        // Buttons.
+        check: "Check for updates",
+        checking: "Checking…",
+        apply: "Apply update",
+        applying: "Applying…",
+        // Status verdicts (one line under the version rows).
+        upToDate: "You're on the latest build.",
+        // {version} -> the latest plugin version available.
+        updateAvailable: (version: string) => `Update available: ${version}.`,
+        // A patch was written to disk but the running code is still older — a
+        // reload picks it up.
+        appliedNeedsReload: "Update applied — reload to run it.",
+        // After a successful apply that touches main/preload (not just renderer).
+        needsRelaunch: "Update applied — restarting to finish.",
+        // The placeholder verdict before the first check.
+        notChecked: "Not checked yet.",
+        // Check found no plugin release / couldn't reach GitHub.
+        noRelease: "Couldn't find a published update.",
+        // {raw} -> the underlying error text.
+        error: (raw: string) => `Couldn't check: ${raw}`,
+        // The native updater bridge isn't present in this build.
+        unavailable: "Updates aren't available in this build."
     }
 } as const;
