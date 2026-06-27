@@ -30,17 +30,24 @@
  * No module-top work — only imports + function decls; the nonce is read at load time.
  */
 
+import { React } from "@webpack/common";
+
 import { injectNonce, pageNonce, setArtifactHtml } from "../../engine/nonce";
+import { getActiveWindow } from "../../engine/window";
 import { STRINGS } from "../../strings";
 import type {
-    CacheEntry, LoadOpts, LoadToken, Viewer, ViewerContext
+    CacheEntry, FindBarModel, LoadOpts, LoadToken, Viewer, ViewerContext
 } from "../../engine/types";
+import { resetEditView, restoreEditState, snapshotEditState } from "../../edit/editMode";
+import { CodeBody } from "../text/CodeBody";
+import { CodeViewer } from "../text/CodeViewer";
 import { DocHeaderControls } from "./DocHeaderControls";
 import { HtmlBody } from "./iframe";
 
 /** HTML / artifact loader. Inline html (opts.code) renders directly (not cached);
  *  a url-backed artifact is fetched, nonce-stamped, and dual-written. */
 function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): void {
+    resetEditView(ctx.window); // a fresh artifact opens rendered + unedited
     // Inline artifact (no url) — the html came in on opts.code. Render it straight,
     // stash the pristine source as the edit baseline. Inline html is never cached
     // (no url to key on), so `entry` is null here.
@@ -100,13 +107,33 @@ function createState(): unknown {
     return {};
 }
 function resetState(): void {
-    /* the html view has no per-window view-state of its own this phase */
+    /* html has no per-window view-state of its own (edit mode rides editView) */
 }
-function snapshot(): void {
-    /* nothing format-specific to park; scroll is the engine's concern */
+/** Park the cross-cutting edit mode + buffer so a cache return reopens the edited
+ *  html source / the rendered-vs-edit mode (html has no format-specific view-state).
+ *  Inline artifacts (no url) have no cache entry, so this only fires for url-backed. */
+function snapshot(_vs: unknown, entry: CacheEntry, ctx: ViewerContext): void {
+    snapshotEditState(ctx.window, entry);
 }
-function restore(): void {
-    /* nothing format-specific to restore */
+/** Restore the edit mode + buffer (restore runs on the active window in showContent). */
+function restore(_vs: unknown, entry: CacheEntry): void {
+    restoreEditState(getActiveWindow(), entry);
+}
+
+/** The html body dispatcher: the rendered sandboxed iframe in VIEW mode; the shared
+ *  editable CodeBody over the html source in EDIT mode (the edit/ capability rides
+ *  this body swap — toggleEditMode bumps content.seq + re-stamps on the way back). */
+function HtmlBodyDispatch() {
+    return getActiveWindow().editView.mode === "edit"
+        ? React.createElement(CodeBody, null)
+        : React.createElement(HtmlBody, null);
+}
+
+/** Find only has a target in EDIT mode (the editable CM over the html source); the
+ *  rendered artifact has no in-page find target, so VIEW mode returns null. */
+function findModel(ctx: ViewerContext): FindBarModel | null {
+    if (ctx.window.editView.mode !== "edit") return null;
+    return CodeViewer.findModel ? CodeViewer.findModel(ctx) : null;
 }
 
 export const HtmlViewer: Viewer = {
@@ -116,9 +143,12 @@ export const HtmlViewer: Viewer = {
     resetState,
     snapshot,
     restore,
-    Body: HtmlBody,
+    Body: HtmlBodyDispatch,
     HeaderControls: DocHeaderControls,
-    // The iframe owns its own scroll; no host scroller to snapshot. No findModel
-    // (the rendered artifact has no in-page find target). No dispose (GC'd with DOM).
-    capabilities: { editable: true } // edit/ mode (P8) rides the html viewer
+    findModel,
+    // VIEW mode: the srcdoc iframe owns its own scroll (no host scroller). EDIT mode:
+    // the CM editor owns the scroll, so the snapshot/restore reads through to it.
+    scrollerSelector: (ctx: ViewerContext) =>
+        ctx.window.editView.mode === "edit" ? ".cm-scroller" : "",
+    capabilities: { editable: true } // edit/ mode rides the html viewer
 };

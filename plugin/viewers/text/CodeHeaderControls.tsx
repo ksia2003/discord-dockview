@@ -1,10 +1,11 @@
 /*
- * Code row-2 controls: language label, find toggle, word-wrap toggle, copy.
+ * Code row-2 controls: language label, find toggle, word-wrap toggle, copy, and the
+ * edit pencil (read↔edit).
  *
  * Reads/drives the live "code" controller (CodeBody publishes it) plus the active
  * window's CodeViewState for the find-open flag. Own component so the copy button
- * can flash "Copied" from local React state. (The edit-mode pencil is a P8 cross-
- * cutting concern and is intentionally absent this phase.)
+ * can flash "Copied" from local React state. The edit toggle delegates to the cross-
+ * cutting edit/ layer (toggleEditMode flips the CM read↔edit compartment in place).
  */
 
 import { React } from "@webpack/common";
@@ -14,6 +15,8 @@ import { fallbackCopy } from "../../engine/fetch";
 import { getActiveWindow } from "../../engine/window";
 import { STRINGS } from "../../strings";
 import { copyBtn, toolBtn } from "../../ui/toolbar";
+import { EDIT_PENCIL_PATH } from "../../edit/attach";
+import { toggleEditMode } from "../../edit/editMode";
 import { codeController, codeState } from "./CodeBody";
 
 // Magnifier glyph (find) — matches the PDF/code find trigger.
@@ -44,6 +47,7 @@ export function CodeHeaderControls() {
     const cv = codeState(win);
     const ctrl = codeController();
     const wrapped = ctrl ? ctrl.wrap : true;
+    const editing = win.editView.mode === "edit";
 
     const copy = () => {
         // copy what's SHOWN — the live document text (== the source in view mode).
@@ -83,6 +87,16 @@ export function CodeHeaderControls() {
             { className: "dockview-tool-group" },
             toolBtn("code-wrap", STRINGS.code.wrap, WRAP_PATH, () => ctrl?.toggleWrap(), wrapped)
         ),
-        copyBtn("code-copy", STRINGS.code.copy, copied, copy)
+        copyBtn("code-copy", STRINGS.code.copy, copied, copy),
+        // Edit toggle: one pencil button that highlights when EDIT is on (member-list
+        // state-colour grammar). Read = CM read-only, Edit = CM editable over the
+        // temporary buffer (+ the inline merge diff vs the original baseline). The
+        // read↔edit flip is a live compartment reconfigure — no remount.
+        React.createElement(
+            "div",
+            { className: "dockview-tool-group" },
+            toolBtn("code-edit", editing ? STRINGS.edit.exitEditCode : STRINGS.edit.enterEditCode,
+                EDIT_PENCIL_PATH, () => toggleEditMode(), editing)
+        )
     );
 }

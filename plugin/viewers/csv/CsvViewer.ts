@@ -26,10 +26,12 @@
 
 import { React } from "@webpack/common";
 
+import { getActiveWindow } from "../../engine/window";
 import { STRINGS } from "../../strings";
 import type {
     CacheEntry, CsvViewState, FindBarModel, LoadOpts, LoadToken, Viewer, ViewerContext
 } from "../../engine/types";
+import { resetEditView, restoreEditState, snapshotEditState } from "../../edit/editMode";
 import { CodeBody, codeState } from "../text/CodeBody";
 import { CodeViewer } from "../text/CodeViewer";
 import { CsvBody, csvState } from "./CsvBody";
@@ -41,6 +43,7 @@ import { csvDelimiterFor } from "./parse";
  *  (CsvBody) so the cache stays text-only. The raw view is plaintext (no hljs lang). */
 function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): void {
     csvState(ctx.window).mode = "grid"; // a fresh CSV always opens as a grid
+    resetEditView(ctx.window); // a fresh CSV opens unedited (the raw view shares the buffer)
     if (!opts.url) {
         ctx.content.loading = false;
         ctx.content.error = STRINGS.error.noSource.title;
@@ -83,11 +86,13 @@ function resetState(vs: CsvViewState): void {
     vs.delimiter = ",";
 }
 
-/** Park the grid/raw choice on the entry so a cache return reopens it as left. The
- *  delimiter isn't persisted (cheap to re-derive); the shared scrollTop is saved by
+/** Park the grid/raw choice on the entry so a cache return reopens it as left, plus
+ *  the cross-cutting edit buffer (the raw view shares the edit buffer). The delimiter
+ *  isn't persisted (cheap to re-derive); the shared scrollTop is saved by
  *  engine/viewState through scrollerSelector. */
-function snapshot(vs: CsvViewState, entry: CacheEntry): void {
+function snapshot(vs: CsvViewState, entry: CacheEntry, ctx: ViewerContext): void {
     entry.view.csvMode = vs?.mode ?? "grid";
+    snapshotEditState(ctx.window, entry);
 }
 
 /** Restore the grid/raw choice on a cache return and RE-DERIVE the delimiter from
@@ -102,6 +107,9 @@ function restore(vs: CsvViewState, entry: CacheEntry): void {
     // find never persists across files — clear the reused code find slice (restore
     // runs on the active window in showContent, so codeState() reaches the right one).
     CodeViewer.resetState(codeState());
+    // restore the edit buffer (raw editing shares it); the mode is forced to view
+    // for csv (the grid/raw choice rides csvMode above) inside restoreEditState.
+    restoreEditState(getActiveWindow(), entry);
 }
 
 /** The find model — raw mode delegates to the code find (the raw view IS a code

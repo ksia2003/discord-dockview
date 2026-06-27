@@ -22,10 +22,12 @@
  */
 
 import { codeLangFor, extOf } from "../../engine/detectType";
+import { getActiveWindow } from "../../engine/window";
 import { STRINGS } from "../../strings";
 import type {
     CacheEntry, CodeViewState, FindBarModel, LoadOpts, LoadToken, Viewer, ViewerContext
 } from "../../engine/types";
+import { resetEditView, restoreEditState, snapshotEditState } from "../../edit/editMode";
 import { CodeBody, codeController, codeState } from "./CodeBody";
 import { CodeHeaderControls, toggleCodeFind } from "./CodeHeaderControls";
 
@@ -33,6 +35,7 @@ import { CodeHeaderControls, toggleCodeFind } from "./CodeHeaderControls";
  *  entry is ALWAYS filled (even if superseded, so a later return is a hit), but the
  *  live content is written ONLY while the token is current (a newer load wins). */
 function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): void {
+    resetEditView(ctx.window); // a fresh code file opens in read mode, unedited
     if (!opts.url) {
         ctx.content.loading = false;
         ctx.content.error = STRINGS.error.noSource.title;
@@ -78,18 +81,21 @@ function resetState(vs: CodeViewState): void {
     vs.findCase = false;
 }
 
-/** Park the find state on the entry so a cache return reopens it as left. (The
- *  shared scrollTop is saved by engine/viewState through scrollerSelector.) The vs
- *  can be missing on the init-order edge window; treat that as the default state. */
-function snapshot(vs: CodeViewState, entry: CacheEntry): void {
+/** Park the find state on the entry so a cache return reopens it as left, plus the
+ *  cross-cutting edit mode + buffer (delegated to edit/ so the engine stays edit-
+ *  agnostic). The shared scrollTop is saved by engine/viewState through
+ *  scrollerSelector. The vs can be missing on the init-order edge window. */
+function snapshot(vs: CodeViewState, entry: CacheEntry, ctx: ViewerContext): void {
     entry.view.codeFindOpen = vs?.findOpen ?? false;
     entry.view.codeFindQuery = vs?.findQuery ?? "";
     entry.view.codeFindCase = vs?.findCase ?? false;
+    snapshotEditState(ctx.window, entry);
 }
 
-/** Restore the find state from the entry on a cache return. Match counts/active
- *  are recomputed by CodeBody's rebuildFind once the editor mounts, so we only
- *  carry the query + the toggles. */
+/** Restore the find state from the entry on a cache return, plus the cross-cutting
+ *  edit mode + buffer (restore runs on the active window in showContent). Match
+ *  counts/active are recomputed by CodeBody's rebuildFind once the editor mounts, so
+ *  we only carry the query + the toggles. */
 function restore(vs: CodeViewState, entry: CacheEntry): void {
     if (!vs) return; // missing slice (init-order edge) — CodeBody back-fills on mount
     vs.findOpen = entry.view.codeFindOpen ?? false;
@@ -97,6 +103,7 @@ function restore(vs: CodeViewState, entry: CacheEntry): void {
     vs.findCase = entry.view.codeFindCase ?? false;
     vs.findMatches = 0;
     vs.findActive = 0;
+    restoreEditState(getActiveWindow(), entry);
 }
 
 /** The find model — a FindBarModel wired to the live "code" controller. Returns

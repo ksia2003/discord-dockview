@@ -21,20 +21,28 @@
  * only built inside load(), and the components read React at call time.
  */
 
+import { React } from "@webpack/common";
+
 import { injectNonce, pageNonce, setArtifactHtml } from "../../engine/nonce";
+import { getActiveWindow } from "../../engine/window";
 import { STRINGS } from "../../strings";
 import type {
     CacheEntry, LoadOpts, LoadToken, Viewer, ViewerContext
 } from "../../engine/types";
+import type { FindBarModel } from "../../engine/types";
+import { resetEditView, restoreEditState, snapshotEditState } from "../../edit/editMode";
+import { CodeBody } from "../text/CodeBody";
+import { CodeViewer } from "../text/CodeViewer";
 import { DocHeaderControls } from "./DocHeaderControls";
 import { HtmlBody, wrapMarkdownDoc } from "./iframe";
 import { highlightMarkdownCode, markdownToHtml } from "./markdown";
 
 /** The full markdown → dark sandboxed-doc pipeline (marked + code highlight +
  *  KaTeX-aware wrapper). Pulled out so the loader (first render from the fetched
- *  source) and the P8 edit toggle (re-render from the edited buffer) render
- *  identically. */
-function renderMarkdownDoc(md: string): string {
+ *  source) and the edit toggle (re-render from the edited buffer) render
+ *  identically. Exported so edit/ (the cross-cutting edit layer) and external/
+ *  (the pop-out window) re-render markdown the same way the viewer does. */
+export function renderMarkdownDoc(md: string): string {
     const { html, hasMath } = markdownToHtml(md);
     const bodyHtml = highlightMarkdownCode(html);
     return wrapMarkdownDoc(bodyHtml, hasMath);
@@ -42,6 +50,7 @@ function renderMarkdownDoc(md: string): string {
 
 /** MARKDOWN loader: fetch → marked → dark doc → nonce sandbox iframe path. */
 function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): void {
+    resetEditView(ctx.window); // a fresh markdown file opens rendered + unedited
     if (!opts.url) {
         ctx.content.loading = false;
         ctx.content.error = STRINGS.error.noSource.title;
@@ -90,13 +99,32 @@ function createState(): unknown {
     return {};
 }
 function resetState(): void {
-    /* markdown view has no per-window view-state of its own this phase */
+    /* markdown has no per-window view-state of its own (edit mode rides editView) */
 }
-function snapshot(): void {
-    /* nothing format-specific to park; the shared scrollTop is handled by the engine */
+/** Park the cross-cutting edit mode + buffer so a cache return reopens the edited
+ *  source / the rendered-vs-edit mode (markdown has no format-specific view-state). */
+function snapshot(_vs: unknown, entry: CacheEntry, ctx: ViewerContext): void {
+    snapshotEditState(ctx.window, entry);
 }
-function restore(): void {
-    /* nothing format-specific to restore */
+/** Restore the edit mode + buffer (restore runs on the active window in showContent). */
+function restore(_vs: unknown, entry: CacheEntry): void {
+    restoreEditState(getActiveWindow(), entry);
+}
+
+/** The markdown body dispatcher: the rendered dark iframe in VIEW mode; the shared
+ *  editable CodeBody over the raw md source in EDIT mode (the edit/ capability rides
+ *  this body swap — toggleEditMode bumps content.seq + re-renders on the way back). */
+function MarkdownBodyDispatch() {
+    return getActiveWindow().editView.mode === "edit"
+        ? React.createElement(CodeBody, null)
+        : React.createElement(HtmlBody, null);
+}
+
+/** Find only has a target in EDIT mode (the editable CM over the raw source); the
+ *  rendered iframe has no in-page find target, so VIEW mode returns null. */
+function findModel(ctx: ViewerContext): FindBarModel | null {
+    if (ctx.window.editView.mode !== "edit") return null;
+    return CodeViewer.findModel ? CodeViewer.findModel(ctx) : null;
 }
 
 export const MarkdownViewer: Viewer = {
@@ -106,11 +134,12 @@ export const MarkdownViewer: Viewer = {
     resetState,
     snapshot,
     restore,
-    Body: HtmlBody,
+    Body: MarkdownBodyDispatch,
     HeaderControls: DocHeaderControls,
-    // The iframe owns its own scroll (the srcdoc document scrolls), so the engine's
-    // default .dockview-body scroller doesn't apply — the body has no host scroller
-    // to snapshot. No findModel (the rendered iframe has no in-page find target;
-    // find is a P8 edit-mode concern). No dispose (the iframe is GC'd with its DOM).
-    capabilities: { editable: true } // edit/ mode (P8) rides the markdown viewer
+    findModel,
+    // VIEW mode: the srcdoc iframe owns its own scroll (no host scroller). EDIT mode:
+    // the CM editor owns the scroll, so the snapshot/restore reads through to it.
+    scrollerSelector: (ctx: ViewerContext) =>
+        ctx.window.editView.mode === "edit" ? ".cm-scroller" : "",
+    capabilities: { editable: true } // edit/ mode rides the markdown viewer
 };
