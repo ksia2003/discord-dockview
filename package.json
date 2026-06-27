@@ -1,8 +1,8 @@
 {
-    "name": "dockview",
-    "version": "1.7.0",
+    "name": "vesktop",
+    "version": "1.7.1",
     "private": true,
-    "description": "DockView is a Discord desktop app (Vesktop fork) with the DockView Vencord plugin built in",
+    "description": "Vesktop, a Discord desktop app, with the DockView side-panel plugin built in",
     "keywords": [],
     "homepage": "https://github.com/ksia2003/discord-dockview",
     "repository": {
@@ -73,9 +73,9 @@
         "pnpm": ">=8"
     },
     "build": {
-        "appId": "com.github.ksia2003.dockview",
-        "productName": "DockView",
-        "executableName": "dockview",
+        "appId": "dev.vencord.Vesktop",
+        "productName": "Vesktop",
+        "executableName": "vesktop",
         "files": [
             "!*",
             "!node_modules",
@@ -128,13 +128,13 @@
             ],
             "desktop": {
                 "entry": {
-                    "Name": "DockView",
+                    "Name": "Vesktop",
                     "GenericName": "Internet Messenger",
                     "Type": "Application",
                     "Categories": "Network;InstantMessaging;Chat;",
-                    "Keywords": "discord;vencord;dockview;electron;chat;",
+                    "Keywords": "discord;vencord;vesktop;electron;chat;",
                     "MimeType": "x-scheme-handler/discord",
-                    "StartupWMClass": "dockview"
+                    "StartupWMClass": "Vesktop"
                 }
             }
         },

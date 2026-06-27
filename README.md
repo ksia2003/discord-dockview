@@ -1,18 +1,20 @@
-# DockView
+# Vesktop · DockView panel
 
-Open PDFs, Office docs, code, data, diagrams, notebooks, and interactive files in a side panel — right inside Discord.
+A build of [Vesktop](https://github.com/Vencord/Vesktop) with the **DockView**
+side panel bundled in — open PDFs, Office docs, code, data, diagrams, notebooks,
+and interactive files in a panel right inside Discord.
 
-![DockView side panel](docs/hero.png)
+![The DockView side panel](docs/hero.png)
 
 ## What is this
 
-DockView is a Discord desktop app for Windows and Linux. Click any attachment in
-chat and it opens in a panel docked to the side of the window, so you can read a
-PDF or look at a screenshot without leaving the conversation. It looks and feels
-like Discord because it's built on the same foundation — it just adds the side
-panel on top.
+This is **Vesktop** — the lightweight Discord desktop app — with the **DockView**
+side panel built in. Click any attachment in chat and it opens in a panel docked
+to the side of the window, so you can read a PDF or look at a screenshot without
+leaving the conversation. Everything else is exactly the Vesktop you know;
+DockView just adds the side panel on top.
 
-Download it, install it, sign in. That's the whole setup.
+Install it, sign in. That's the whole setup.
 
 ## Features
 
@@ -43,10 +45,10 @@ the left, read the file on the right.
 
 **The app (recommended).** [Download the latest release](https://github.com/ksia2003/discord-dockview/releases/latest) and run the installer for your system:
 
-- **Windows** — `DockView-Setup-*.exe`
+- **Windows** — `Vesktop-Setup-*.exe`
 - **Linux** — `.AppImage`, `.deb`, `.rpm`, or `.tar.gz`
 
-Install, launch, log in to Discord. There's nothing else to set up — the side panel is built in.
+Install, launch, log in to Discord. There's nothing else to set up — the side panel is built in. It installs as Vesktop (same app identity), so if you already run Vesktop it just becomes this build.
 
 **Already running Vesktop?** Grab the `DockView-Vencord-*.zip` bundle from the release, unzip it, and run the included installer — `install-dockview.sh` on Linux, `install-dockview.ps1` on Windows. It drops DockView's Vencord build into Vesktop's custom-Vencord folder; restart Vesktop and the panel is there. This replaces your Vencord with ours (which is stock Vencord plus DockView, so your existing Vencord plugins keep working).
 
@@ -71,10 +73,10 @@ what it does:
 
 ## Built on / License
 
-DockView is a fork of [Vesktop](https://github.com/Vencord/Vesktop) and bundles
-[Vencord](https://github.com/Vendicated/Vencord). All credit for the underlying
-Discord desktop app and client mod goes to Vendicated and the Vesktop / Vencord
-contributors.
+This is a fork of [Vesktop](https://github.com/Vencord/Vesktop) that bundles
+[Vencord](https://github.com/Vendicated/Vencord) plus the DockView side-panel
+plugin. All credit for the underlying Discord desktop app and client mod goes to
+Vendicated and the Vesktop / Vencord contributors.
 
 Licensed under **GPL-3.0-or-later**, the same as its upstream projects. All
 original copyright notices and license headers are kept intact.
