@@ -40,6 +40,16 @@ const PNPM = "pnpm";
 // DockView userplugin source, shipped in this repo.
 const PLUGIN_SRC = join(ROOT, "plugin");
 
+// plugin/version.ts is the SINGLE home of the running plugin version. This is a
+// .mjs and can't import a .ts, so read the literal as text and regex it out.
+// Keeps the build the SOLE writer of version.txt with version.ts the one source.
+function readPluginVersion() {
+    const src = readFileSync(join(PLUGIN_SRC, "version.ts"), "utf-8");
+    const m = src.match(/DOCKVIEW_PLUGIN_VERSION\s*=\s*["']([^"']+)["']/);
+    if (!m) throw new Error("Could not extract DOCKVIEW_PLUGIN_VERSION from plugin/version.ts");
+    return m[1];
+}
+
 // Import prefixes that Vencord already provides — never `pnpm add` these.
 // (Vencord aliases + the React runtime + node builtins.)
 const VENCORD_PROVIDED_PREFIXES = ["@webpack", "@utils/", "@api/", "@components/", "@vencord/"];
@@ -198,7 +208,8 @@ try {
     } catch {
         /* not a git checkout (e.g. source tarball) — fall back to "local" */
     }
-    writeFileSync(join(OUT_DIR, "version.txt"), `${VENCORD_REF}+dockview-${pluginRev}\n`);
+    const ver = readPluginVersion();
+    writeFileSync(join(OUT_DIR, "version.txt"), `dockview:${ver} ${VENCORD_REF} ${pluginRev}\n`);
 
     // 6. Verify DockView made it in.
     verifyOutput();
