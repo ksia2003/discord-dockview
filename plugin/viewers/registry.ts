@@ -6,8 +6,11 @@
  * adding a format touches exactly: the new viewers/<fmt>/ module, one entry
  * here, one extension mapping in engine/detectType.ts, and one in embed.ts.
  *
- * The MCP viewer is registered conditionally (see maybeRegisterMcp) so the
- * parked bridge stays dormant unless its setting is on.
+ * The MCP viewer is the one exception: it is NOT imported here. mcp/ is fully
+ * isolated behind its settings toggle, so its mcpapp viewer is registered from
+ * mcp/index.ts (maybeRegisterMcpViewer) — and ONLY when the bridge is enabled —
+ * via the registerViewer hook below. This file must never statically import
+ * McpViewer, or the parked feature would leak into the core graph.
  */
 
 import type { ContentType, Viewer } from "../engine/types";

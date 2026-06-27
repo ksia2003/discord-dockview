@@ -56,6 +56,7 @@ import { editBufferText, toggleEditMode } from "./edit/editMode";
 import { onNewFile } from "./edit/newFile";
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
+import { maybeRegisterMcpViewer, startMcp, stopMcp } from "./mcp";
 import { settings } from "./settings";
 import { STRINGS } from "./strings";
 
@@ -201,6 +202,11 @@ export default definePlugin({
     },
 
     start() {
+        // 0. MCP is PARKED: register its mcpapp viewer ONLY when the bridge toggle is
+        //    on (a no-op otherwise), BEFORE the first window is built so its view-state
+        //    slice is included. With the toggle off nothing here runs — the mcpapp
+        //    viewer never enters the registry and the feature stays fully dormant.
+        maybeRegisterMcpViewer();
         // 1. mount the host + register it with the engine bridge (so the engine's
         //    open/close/channel/tab paths drive real DOM) + seed the channel mem.
         startHost();
@@ -249,9 +255,16 @@ export default definePlugin({
         // 7. chat-side KaTeX (separate concern, kept) + the debug surface.
         startLatex();
         exposeDebug();
+
+        // 8. MCP bridge (PARKED): start the WS client + frame→host JSON-RPC router.
+        //    A NO-OP unless mcpBridgeEnabled — no socket, no listener when off.
+        startMcp();
     },
 
     stop() {
+        // 0. MCP bridge (PARKED): tear down the WS client + its frame→host listener +
+        //    registries. Safe no-op if it was never started (toggle off).
+        stopMcp();
         // 1. window listeners + chip-click delegation.
         if (onKeyDown) { window.removeEventListener("keydown", onKeyDown); onKeyDown = null; }
         if (onResize) { window.removeEventListener("resize", onResize); onResize = null; }

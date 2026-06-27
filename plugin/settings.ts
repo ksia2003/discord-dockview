@@ -19,13 +19,13 @@
 import { definePluginSettings } from "@api/Settings";
 import { OptionType } from "@utils/types";
 
-// Reconnect the bridge after a setting changes. The MCP bridge is PARKED in the
-// rewrite (it lands isolated under mcp/ in P9), so this is a no-op for now — and
-// crucially it no longer lazy-imports the OLD panel.tsx, which would otherwise drag
-// the whole legacy monolith (+ its heavy deps) into the build as a dynamic chunk.
-// When mcp/ is wired this reaches mcp/index.ts's restartMcpClient lazily instead.
+// Reconnect the bridge after a setting changes. The MCP bridge is PARKED under
+// mcp/ (registered only behind these toggles), so we reach restartMcpClient LAZILY
+// via a dynamic import: that keeps mcp/ (and its transitive engine/host imports) out
+// of settings' eval-time graph — no cycle, no eager pull of the bridge into the
+// core. restartMcpClient is itself a safe no-op while the feature isn't running.
 function reconnectBridge() {
-    /* parked until P9 (mcp/) */
+    import("./mcp/bridge").then(m => m.restartMcpClient()).catch(() => { /* not running */ });
 }
 
 export const settings = definePluginSettings({
