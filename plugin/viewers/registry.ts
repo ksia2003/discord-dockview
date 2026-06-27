@@ -38,6 +38,12 @@ export function allViewers(): Viewer[] {
 import { CodeViewer } from "./text/CodeViewer";
 registerViewer(CodeViewer);
 
+// pdf/ — the pdf.js page column (canvas + detached selectable text layer), with
+// page nav / zoom / fit / drag-mode / find. The only viewer that needs dispose()
+// (it releases the pdf.js doc on cache eviction).
+import { PdfViewer } from "./pdf/PdfViewer";
+registerViewer(PdfViewer);
+
 import { ImageViewer } from "./image/ImageViewer";
 registerViewer(ImageViewer);
 
