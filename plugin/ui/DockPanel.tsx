@@ -40,6 +40,7 @@ import { applyOpenState } from "../host/mount";
 import { toggle } from "../host/open";
 import { getViewer } from "../viewers/registry";
 import type { ViewerContext } from "../engine/types";
+import { attachToolbar, isAttachBarOpen } from "../edit/attach";
 import { DockTabs } from "./DockTabs";
 import { FindBar } from "./FindBar";
 import { HeaderControls, hasViewerControls } from "./HeaderControls";
@@ -254,11 +255,13 @@ export function DockPanel() {
         )
     );
 
-    // The header grows to TWO rows whenever there's a viewer's relocated controls
-    // strip below the top row. With zero viewers hasViewerControls() is false, so the
-    // header stays one row. (The attach bar second row rides P8.)
-    const showViewerRow = hasViewerControls();
-    const twoRow = showViewerRow;
+    // The header grows to TWO rows for the second-row strip: the attach filename bar
+    // (when the user picked "Attach to message") OVERRIDES the viewer controls strip;
+    // otherwise the active viewer's controls show when it has any. An empty/loading/
+    // errored body has no controls row.
+    const showAttachBar = isAttachBarOpen() && hasContent;
+    const showViewerRow = !showAttachBar && hasViewerControls();
+    const twoRow = showAttachBar || showViewerRow;
 
     return React.createElement(
         "div",
@@ -298,14 +301,17 @@ export function DockPanel() {
                         closeBtn
                     )
                 ),
-                // SECOND ROW: the active viewer's controls strip (none in P2).
-                showViewerRow
-                    ? React.createElement(
-                        "div",
-                        { className: "dockview-viewer-toolbar" },
-                        React.createElement(HeaderControls, null)
-                    )
-                    : null
+                // SECOND ROW: the attach filename bar (when open) OR the active
+                // viewer's controls strip. The attach bar overrides the controls.
+                showAttachBar
+                    ? attachToolbar()
+                    : showViewerRow
+                        ? React.createElement(
+                            "div",
+                            { className: "dockview-viewer-toolbar" },
+                            React.createElement(HeaderControls, null)
+                        )
+                        : null
             ),
             (() => {
                 // The find box is a floating browser-style Ctrl+F panel positioned

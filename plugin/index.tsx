@@ -20,6 +20,7 @@
  */
 
 import definePlugin from "@utils/types";
+import { Menu, React } from "@webpack/common";
 
 import managedStyle from "./style.css?managed";
 
@@ -46,9 +47,17 @@ import { applyHostWidth, clampWidth } from "./host/layout";
 import { applyOpenState, ensureHost } from "./host/mount";
 import { closePanel, registerHost, startHost, stopHost, toggle } from "./host/open";
 import { openExternalLink } from "./external/openExternal";
+import { openInVesktopWindow, popoutArtifact, vesktopWindowHtml } from "./external/vesktopWindow";
+import {
+    closeAttachBar, confirmAttachBar, isAttachBarOpen, openAttachBar, setAttachBarName,
+    attachActiveFile
+} from "./edit/attach";
+import { editBufferText, toggleEditMode } from "./edit/editMode";
+import { onNewFile } from "./edit/newFile";
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
 import { settings } from "./settings";
+import { STRINGS } from "./strings";
 
 // --- window key handlers (lifecycle-scoped, removed on stop) ----------------
 let onKeyDown: ((e: KeyboardEvent) => void) | null = null;
@@ -114,7 +123,23 @@ function exposeDebug(): void {
         // multi-window (pin-driven tabs): the collection + the tab verbs.
         get windows() { return getWindows(); },
         get activeWindowId() { return getActiveWindowId(); },
-        switchToWindow, pinActiveWindow, unpinActiveWindow, closeTab, transientWindow
+        switchToWindow, pinActiveWindow, unpinActiveWindow, closeTab, transientWindow,
+
+        // edit-mode (the cross-cutting capability): drive the view↔edit toggle +
+        // assert the temporary buffer / re-render loop.
+        toggleEditMode,
+        get editView() { return getActiveWindow().editView; },
+        get editBuffer() { return editBufferText(); },
+
+        // attach + new-file: drive the attach-edited-buffer + new-file paths.
+        attachActiveFile, onNewFile,
+        openAttachBar, closeAttachBar, confirmAttachBar,
+        get attachBarOpen() { return isAttachBarOpen(); },
+        set attachBarName(v: string) { setAttachBarName(v); },
+        get isNewFile() { return getActiveWindow().isNewFile; },
+
+        // external pop-out (in-app Vesktop window).
+        openInVesktopWindow, vesktopWindowHtml, popout: popoutArtifact
     };
 }
 
@@ -157,8 +182,23 @@ export default definePlugin({
         }
     },
 
-    // The "+" composer-menu "New file" entry is a cross-cutting edit/ concern (an
-    // empty editable markdown surface) that lands in P8 — omitted here (no-op TODO).
+    // "New file" entry point in Discord's `+` composer menu (navId "channel-attach"):
+    // opens the dock with an EMPTY editable surface (the same CodeMirror editor every
+    // viewer uses, in EDIT mode, default markdown). The user writes a brand-new file
+    // in the dock and attaches it via the second-row Attach toolbar — no original
+    // baseline, so it edits as a plain editor with no merge diff. Registering this
+    // auto-adds the ContextMenu API as a dependency.
+    contextMenus: {
+        "channel-attach": (children: any, props: any) => {
+            children.push(
+                React.createElement(Menu.MenuItem, {
+                    id: "dockview-new-file",
+                    label: STRINGS.menu.newFile,
+                    action: () => onNewFile(props?.channel ?? null)
+                })
+            );
+        }
+    },
 
     start() {
         // 1. mount the host + register it with the engine bridge (so the engine's
