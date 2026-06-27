@@ -81,11 +81,11 @@ export function unpinActiveWindow(w: DockWindow = getActiveWindow()): void {
 }
 
 /** Close a tab (the ✕ on a tab acts on THAT window). A PINNED tab is removed
- *  entirely; a TRANSIENT tab is cleared (its content detached, the window removed)
- *  so its channel reopens empty. After removal the active window falls back to a
- *  sensible neighbour. Closing the LAST remaining tab AUTO-HIDES the dock — the dock
- *  collapses to closed (native sidebars restored), exactly as the dock X would. It
- *  NEVER falls back to an empty open shell (that shell is the F9-open path only). */
+ *  entirely (globally — it's a global tab); a TRANSIENT tab is cleared (its content
+ *  detached, the window removed) so its channel reopens empty. After removal the
+ *  active window falls back to a sensible neighbour. Closing the LAST remaining real
+ *  tab HIDES the dock for this channel (native sidebars restored) — it does NOT
+ *  destroy any other (pinned) tabs, and never falls back to an empty open shell. */
 export function closeTab(id: string): void {
     const windows = getWindows();
     const idx = windows.findIndex(w => w.id === id);
@@ -98,13 +98,15 @@ export function closeTab(id: string): void {
     if (!win.pinned && win.ownerChannelId) deleteChannelState(win.ownerChannelId);
     windows.splice(idx, 1);
 
-    // Closing the last REAL tab leaves the dock with nothing worth showing. A bare
-    // content-less transient may still sit in windows[] (e.g. an F9-empty shell that
-    // was never used), but there is no longer any file/pinned tab — so the dock
-    // auto-hides. Drive the full close through the host bridge (resetToClosedTransient
-    // + LS_OPEN="0" + native-sidebar restore + render), identical to the dock X.
+    // Closing the last REAL tab leaves the dock with nothing worth showing → HIDE it
+    // for this channel via closePanel (sets this channel's visibility off + restores
+    // native sidebars). closePanel is hide-not-destroy, so any surviving content-less
+    // transient (an unused F9 shell) stays in windows[]. Repoint the active binding
+    // off the just-closed window first so nothing renders a detached tab.
     if (!hasRealTab()) {
         bump(); // any in-flight loader from the closed window must not write back
+        const survivor = windows[windows.length - 1];
+        if (survivor) setActiveWindow(survivor);
         hostActions().closePanel();
         return;
     }

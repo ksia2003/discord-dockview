@@ -22,7 +22,7 @@
 import { createRoot, React } from "@webpack/common";
 import type { Root } from "react-dom/client";
 
-import { dockHasWindows } from "../engine/channelMemory";
+import { dockVisible } from "../engine/channelMemory";
 import { DockPanel } from "../ui/DockPanel";
 import {
     hideExclusiveRightSlot, nodeMayContainExclusiveRightSlot, restoreHiddenMembers
@@ -85,7 +85,7 @@ export function applyOpenState(): void {
     // A harmless debug/compat marker; the hide path no longer depends on this class.
     if (inner) inner.classList.add("dockview-page-inner");
 
-    if (dockHasWindows()) {
+    if (dockVisible()) {
         if (host) host.classList.add("dockview-open");
         document.documentElement.classList.add("dockview-open");
     } else {
@@ -111,7 +111,7 @@ export function attachObserver(): void {
     observer?.disconnect();
     observedParent = inner;
     observer = new MutationObserver(records => {
-        if (dockHasWindows() && records.some(r =>
+        if (dockVisible() && records.some(r =>
             r.target === observedParent
             || Array.from(r.addedNodes).some(nodeMayContainExclusiveRightSlot)
         )) {

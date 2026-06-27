@@ -27,17 +27,21 @@
 
 import { findByProps } from "@webpack";
 
-import { dockHasWindows } from "../engine/channelMemory";
+import { dockVisible } from "../engine/channelMemory";
 import { getCurrentChannelId } from "./channel";
 import { findPageInner } from "./layout";
 
 const HOST_ID = "dockview-root";
 const EXCLUSIVE_HIDDEN_ATTR = "data-dockview-exclusive-hidden";
 
-// True ⟺ we collapsed the member list and owe a restore when the dock closes.
-let memberListRestorePending = false;
-// DM analogue: true only when WE collapsed the user-profile sidebar while opening.
-let profileSidebarRestorePending = false;
+// Channels where WE collapsed the native member list / DM profile sidebar and owe a
+// restore. PER-CHANNEL (not a global boolean): Discord remembers member-list state per
+// channel, so a single global flag can never reconcile across channel switches — that
+// was the root of the stranded "member list left visible/hidden" bug. We restore a
+// channel's list when the dock is hidden in THAT channel (toggle / close / a return
+// with the dock hidden), keyed by the channel that was current when we collapsed it.
+const memberListOwed = new Set<string>();
+const profileSidebarOwed = new Set<string>();
 
 // Set while WE are the ones firing CHANNEL_TOGGLE_MEMBERS_SECTION (our open-time
 // collapse / close-time restore). The action is a pure argument-less toggle Discord
@@ -147,24 +151,24 @@ export function closeNativeChannelSidebar(): boolean {
  *  open=false → if WE collapsed it and it's still collapsed, restore it. A user
  *               re-show meanwhile is left intact. */
 export function syncNativeMemberList(open: boolean): void {
+    const c = getCurrentChannelId();
     if (open) {
-        if (isMemberListShown() && dispatchMemberListToggle()) {
-            memberListRestorePending = true;
-        }
-    } else if (memberListRestorePending) {
+        // Only owe a restore if WE actually collapsed a SHOWN list (never restore one
+        // the user had already hidden themselves).
+        if (c && isMemberListShown() && dispatchMemberListToggle()) memberListOwed.add(c);
+    } else if (c && memberListOwed.has(c)) {
         if (!isMemberListShown()) dispatchMemberListToggle();
-        memberListRestorePending = false;
+        memberListOwed.delete(c);
     }
 }
 
 export function syncNativeProfileSidebar(open: boolean): void {
+    const c = getCurrentChannelId();
     if (open) {
-        if (isUserProfileSidebarShown() && dispatchUserProfileSidebarToggle()) {
-            profileSidebarRestorePending = true;
-        }
-    } else if (profileSidebarRestorePending) {
+        if (c && isUserProfileSidebarShown() && dispatchUserProfileSidebarToggle()) profileSidebarOwed.add(c);
+    } else if (c && profileSidebarOwed.has(c)) {
         if (!isUserProfileSidebarShown()) dispatchUserProfileSidebarToggle();
-        profileSidebarRestorePending = false;
+        profileSidebarOwed.delete(c);
     }
 }
 
@@ -179,7 +183,7 @@ function clearExclusiveRightSlotHidden(root: ParentNode = document): void {
  *  ONLY them while the dock holds the slot. Never marks our own host. */
 export function hideExclusiveRightSlot(inner: HTMLElement | null = findPageInner()): void {
     clearExclusiveRightSlotHidden();
-    if (!dockHasWindows() || !inner) return;
+    if (!dockVisible() || !inner) return;
 
     const host = document.getElementById(HOST_ID);
     const mark = (el: Element | null) => {
@@ -238,9 +242,11 @@ export function restoreHiddenMembers(): void {
  *  sidebar the user just opened, then close the whole dock via the registered vacate
  *  routine (open.ts). */
 function closeForExclusiveTakeover(): void {
-    if (!dockHasWindows()) return;
-    memberListRestorePending = false;
-    profileSidebarRestorePending = false;
+    if (!dockVisible()) return;
+    // The user is opening this sidebar — drop THIS channel's owed restores so the
+    // vacate (open.ts) can't re-collapse what they just asked for.
+    const c = getCurrentChannelId();
+    if (c) { memberListOwed.delete(c); profileSidebarOwed.delete(c); }
     vacateDock();
 }
 
@@ -252,10 +258,10 @@ function closeForExclusiveTakeover(): void {
  *  short ticks before closing — guarding a spurious toggle that would hide. */
 export function onMemberSectionToggle(): void {
     if (selfMemberToggle) return;       // our own collapse/restore — ignore
-    if (!dockHasWindows()) return;            // nothing of ours to evict
+    if (!dockVisible()) return;               // nothing of ours to evict
     let tries = 0;
     const check = () => {
-        if (!dockHasWindows()) return;        // closed meanwhile
+        if (!dockVisible()) return;           // hidden meanwhile
         if (isMemberListShown()) { closeForExclusiveTakeover(); return; }
         if (++tries < 4) setTimeout(check, 24);
     };
@@ -267,19 +273,19 @@ export function onMemberSectionToggle(): void {
  *  sidebar when the dock is open. */
 export function onUserProfileSidebarToggle(): void {
     if (selfProfileToggle) return;
-    if (!dockHasWindows()) return;
+    if (!dockVisible()) return;
     closeForExclusiveTakeover();
 }
 
 /** SIDEBAR_VIEW_CHANNEL subscriber: a native thread/channel sidebar opened while the
  *  dock owns the right slot — vacate, and do not restore the dock when it later closes. */
 export function onChannelSidebarView(): void {
-    if (!dockHasWindows()) return;
+    if (!dockVisible()) return;
     closeForExclusiveTakeover();
 }
 
 // --- debug accessors (the __dockView surface reads these) -------------------
-export function getMemberListRestorePending(): boolean { return memberListRestorePending; }
-export function getProfileSidebarRestorePending(): boolean { return profileSidebarRestorePending; }
+export function getMemberListRestorePending(): boolean { const c = getCurrentChannelId(); return c != null && memberListOwed.has(c); }
+export function getProfileSidebarRestorePending(): boolean { const c = getCurrentChannelId(); return c != null && profileSidebarOwed.has(c); }
 export function getSelfMemberToggle(): boolean { return selfMemberToggle; }
 export function getSelfProfileToggle(): boolean { return selfProfileToggle; }

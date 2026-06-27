@@ -29,7 +29,7 @@ import { clearContentCache } from "./engine/cache";
 import { detectType } from "./engine/detectType";
 import { requestRender } from "./engine/forceRender";
 import {
-    dockHasWindows, getChannelStates, onChannelSelect, setCurrentChannelMemId
+    clearChannelVisibility, dockVisible, getChannelStates, onChannelSelect, setCurrentChannelMemId
 } from "./engine/channelMemory";
 import { loadPersistedState } from "./engine/persist";
 import { closeTab, pinActiveWindow, switchToWindow, unpinActiveWindow } from "./engine/tabs";
@@ -40,8 +40,7 @@ import { getCurrentChannelId } from "./host/channel";
 import {
     closeNativeChannelSidebar, getMemberListRestorePending, getProfileSidebarRestorePending,
     getSelfMemberToggle, getSelfProfileToggle, isMemberListShown, isUserProfileSidebarShown,
-    onChannelSidebarView, onMemberSectionToggle, onUserProfileSidebarToggle,
-    syncNativeMemberList, syncNativeProfileSidebar
+    onChannelSidebarView, onMemberSectionToggle, onUserProfileSidebarToggle
 } from "./host/exclusivity";
 import { applyHostWidth, clampWidth } from "./host/layout";
 import { applyOpenState, ensureHost } from "./host/mount";
@@ -143,23 +142,16 @@ let onMessage: ((e: MessageEvent) => void) | null = null;
  *  to the active window + the host geometry; `open` is only ever forced TRUE from
  *  storage (a channel switch during the async gap must not be slammed shut). */
 async function applyPersisted(): Promise<void> {
-    const { openStr, widthStr } = await loadPersistedState();
+    const { widthStr } = await loadPersistedState();
     if (typeof widthStr === "string") {
         const w = clampWidth(parseInt(widthStr, 10) || getActiveWindow().state.width);
-        if (w !== getActiveWindow().state.width) {
-            getActiveWindow().state.width = w;
-            if (getActiveWindow().state.open) applyHostWidth();
-        }
+        if (w !== getActiveWindow().state.width) getActiveWindow().state.width = w;
     }
-    if (openStr === "1" && !getActiveWindow().state.open) {
-        closeNativeChannelSidebar();
-        getActiveWindow().state.open = true;
-        ensureHost();
-        applyOpenState();
-        syncNativeMemberList(true); // restored open across a restart → collapse like a thread
-        syncNativeProfileSidebar(true);
-    }
-    // Re-render with the restored state. The DockPanel keeps `width` in local React
+    // Dock VISIBILITY is per-channel and in-memory (NOT persisted): on a fresh boot the
+    // dock starts hidden. There's nothing to restore open onto anyway — stop() cleared
+    // the cache + windows, and attachment CDN links expire, so auto-reopening would
+    // only surface an empty/broken shell. Only the width persists (LS_WIDTH).
+    // Re-render with the restored width. The DockPanel keeps `width` in local React
     // state (write-only, drives persistence on a user drag); a bump never reseeds it,
     // so this can't clobber the width we just restored onto state.width.
     requestRender();
@@ -178,7 +170,7 @@ function exposeDebug(): void {
 
         // open / close / toggle.
         toggle, ensureHost, applyOpenState, closePanel,
-        get dockOpen() { return dockHasWindows(); },
+        get dockOpen() { return dockVisible(); },
 
         // content router + channel memory.
         load, retry: retryActiveLoad, clear: clearArtifact, detectType,
@@ -319,7 +311,7 @@ export default definePlugin({
         //    re-evaluate the docked/floating geometry (a narrowing window must flip a
         //    wide dock to floating even if the intended width doesn't change).
         onResize = () => {
-            if (!dockHasWindows()) return;
+            if (!dockVisible()) return;
             const w = clampWidth(getActiveWindow().state.width);
             if (w !== getActiveWindow().state.width) getActiveWindow().state.width = w;
             applyHostWidth();
@@ -376,6 +368,7 @@ export default definePlugin({
         resetToClosedTransient(null);
         clearContentCache();
         getChannelStates().clear();
+        clearChannelVisibility();
         setCurrentChannelMemId(null);
         // 4. chat-side KaTeX teardown + remove the debug handle.
         stopLatex();

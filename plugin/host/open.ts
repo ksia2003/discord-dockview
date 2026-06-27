@@ -10,13 +10,11 @@
  * closeForExclusiveTakeover() did.
  */
 
-import { dockHasWindows, saveCurrentChannelState, setCurrentChannelMemId } from "../engine/channelMemory";
+import { dockVisible, setChannelVisibility, setCurrentChannelMemId } from "../engine/channelMemory";
 import { requestRender } from "../engine/forceRender";
 import { registerHostActions } from "../engine/hostBridge";
-import { LS_OPEN, lsSet } from "../engine/persist";
 import {
-    addWindow, getActiveWindow, makeWindow, resetToClosedTransient, setActiveWindow,
-    transientWindow
+    addWindow, getActiveWindow, hasRealTab, makeWindow, setActiveWindow, transientWindow
 } from "../engine/window";
 import { getCurrentChannelId } from "./channel";
 import {
@@ -32,65 +30,64 @@ function closeLightbox(win = getActiveWindow()): void {
     if (img) img.fullscreen = false;
 }
 
-/** The full close: the dock vacates the right slot entirely (every tab — pinned +
- *  transient — is dropped, the collection collapses to one closed transient).
- *  Persists open:false, restores the native sidebars / member list we collapsed,
- *  and re-renders. (The far-right dock X drives this via toggle().) */
+/** The full close (the far-right dock X): HIDE the dock for the current channel —
+ *  flip its visibility off and let applyOpenState drop the .dockview-open class. Tabs
+ *  are NOT destroyed: every pinned + preview window stays in the collection, so a
+ *  re-open brings them all back. Restores the native sidebars / member list we
+ *  collapsed (per the owed-restore set). */
 export function closePanel(): void {
     closeLightbox();
-    resetToClosedTransient(getCurrentChannelId());
-    lsSet(LS_OPEN, "0");
-    saveCurrentChannelState();
+    setChannelVisibility(getCurrentChannelId(), false);
     applyOpenState();
     syncNativeMemberList(false);
     syncNativeProfileSidebar(false);
     requestRender();
 }
 
-/** Vacate the whole dock because a native sidebar is taking the slot (reverse
- *  takeover). Same as closePanel MINUS the member-list restore — the user just
- *  asked for that sidebar, so we must NOT re-collapse it (the exclusivity module
- *  already cleared the owed-restore flags before calling this). */
+/** Vacate (hide) the dock because a native sidebar is taking the slot (reverse
+ *  takeover). Same as closePanel MINUS the member-list restore — the user just asked
+ *  for that sidebar, so we must NOT re-collapse it (the exclusivity module already
+ *  dropped this channel's owed-restore entries before calling this). Tabs survive. */
 function closeForExclusiveTakeover(): void {
     closeLightbox();
-    resetToClosedTransient(getCurrentChannelId());
-    lsSet(LS_OPEN, "0");
-    saveCurrentChannelState();
+    setChannelVisibility(getCurrentChannelId(), false);
     applyOpenState(); // drops html.dockview-open → the sidebar is no longer CSS-hidden
     requestRender();
 }
 
-/** The dock toggle (F9 keybind + the far-right dock X): open a TAB-LESS EMPTY SHELL
- *  or fully close the dock. Opening from 0 tabs marks a lone content-less transient
- *  `open` — DockTabs renders no tab for it (it has no content + isn't pinned), so the
- *  shell shows the "Open a file…" empty-state body with an empty tab strip. This
- *  empty shell is the F9-open path ONLY; navigation/last-tab-close never produce it.
- *  The toggle never resurrects pinned tabs that were closed — pin-driven tabs come
- *  from opening files + pinning. Mirrors the open-side exclusivity (collapse member
- *  list like a thread) and the close-side restore. */
+/** The dock toggle (F9 keybind + the far-right dock X): a PURE per-channel SHOW/HIDE.
+ *  It flips this channel's visibility and NEVER destroys windows — pinned + preview
+ *  tabs persist across a hide, so re-showing brings them all back (the fix for "F9 is
+ *  a special action / it nukes my tabs"). Showing an empty channel ensures a content-
+ *  less transient so the "Open a file…" empty shell renders (DockTabs gives it no
+ *  tab). Mirrors the open-side exclusivity (collapse member list like a thread) and
+ *  the close-side restore via the per-channel owed-restore set. */
 export function toggle(): void {
-    const open = !dockHasWindows();
-    if (open) {
-        closeNativeChannelSidebar();
-        // The transient that holds the dock's "open" state. Reuse the lone transient
-        // if one exists (its identity survives), else create one. It stays CONTENT-
-        // LESS, so DockTabs gives it no tab — the F9-empty shell.
-        let t = transientWindow();
-        if (!t) {
-            t = makeWindow({ pinned: false, ownerChannelId: getCurrentChannelId() });
-            addWindow(t);
-        }
-        t.state.open = true;
-        setActiveWindow(t);
-        ensureHost();
+    const channelId = getCurrentChannelId();
+    if (dockVisible()) {
+        // HIDE — flip visibility off. Windows untouched; CSS hides via applyOpenState.
+        setChannelVisibility(channelId, false);
+        applyOpenState();
+        syncNativeMemberList(false);
+        syncNativeProfileSidebar(false);
     } else {
-        resetToClosedTransient(getCurrentChannelId());
+        // SHOW — flip visibility on. If nothing is worth a tab here, ensure a content-
+        // less transient so the empty shell renders.
+        setChannelVisibility(channelId, true);
+        if (!hasRealTab()) {
+            let t = transientWindow();
+            if (!t) {
+                t = makeWindow({ pinned: false, ownerChannelId: channelId });
+                addWindow(t);
+            }
+            setActiveWindow(t);
+        }
+        closeNativeChannelSidebar();
+        ensureHost();
+        applyOpenState();
+        syncNativeMemberList(true); // collapse the member list like a thread
+        syncNativeProfileSidebar(true);
     }
-    lsSet(LS_OPEN, open ? "1" : "0");
-    saveCurrentChannelState();
-    applyOpenState();
-    syncNativeMemberList(open); // collapse the member list like a thread / restore on close
-    syncNativeProfileSidebar(open);
     requestRender();
 }
 

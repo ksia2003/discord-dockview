@@ -14,7 +14,7 @@
  * corrected by the host's loadPersistedState handling at startup.
  */
 
-import { dockHasWindows } from "../engine/channelMemory";
+import { dockVisible } from "../engine/channelMemory";
 import { LS_WIDTH, lsGet } from "../engine/persist";
 import { getActiveWindow } from "../engine/window";
 
@@ -144,8 +144,8 @@ export function clampDockDrag(w: number): number {
 export function applyDockLayout(): void {
     const host = document.getElementById(HOST_ID);
     if (!host) return;
-    if (!dockHasWindows()) {
-        // Closed: leave no floating mark behind and drop the inline geometry.
+    if (!dockVisible()) {
+        // Hidden: leave no floating mark behind and drop the inline geometry.
         host.classList.remove("dockview-host--floating");
         return;
     }

@@ -16,17 +16,32 @@ import { getCurrentChannelId } from "../host/channel";
 import { detectType } from "./detectType";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
-import { LS_OPEN, lsSet } from "./persist";
 import { showContent } from "./showContent";
 import { snapshotActiveView } from "./viewState";
 import {
-    addWindow, getActiveWindow, getActiveWindowId, getWindows, makeWindow,
+    addWindow, getActiveWindow, getActiveWindowId, getWindows, hasRealTab, makeWindow,
     reconcileActiveFromCache, removeWindow, setActiveWindow, transientWindow
 } from "./window";
 import type { ChannelDescriptor, ChannelMemory } from "./types";
 
 const channelStates = new Map<string, ChannelMemory>();
 let currentChannelId: string | null = null;
+
+// Explicit per-channel dock VISIBILITY (show/hide), kept SEPARATE from content.
+// Absent for a channel = unset → the dock defaults to visible iff there's content to
+// show (a global pinned tab or this channel's preview). In-memory only, like
+// channelStates. This map is the single source of truth for "is the dock shown
+// here", replacing the old conflation of "a pinned window exists" with "open".
+const channelVisibility = new Map<string, boolean>();
+
+/** Set (or clear via re-set) a channel's explicit dock visibility. F9 / chip-open /
+ *  last-tab-close drive this; a channel switch reads it back through dockVisible(). */
+export function setChannelVisibility(channelId: string | null, visible: boolean): void {
+    if (channelId == null) return;
+    channelVisibility.set(channelId, visible);
+}
+/** Drop all per-channel visibility (plugin stop — paired with channelStates.clear()). */
+export function clearChannelVisibility(): void { channelVisibility.clear(); }
 
 export function getChannelStates(): Map<string, ChannelMemory> { return channelStates; }
 export function getChannelState(channelId: string): ChannelMemory | undefined { return channelStates.get(channelId); }
@@ -44,26 +59,32 @@ export function descriptorsMatch(a: ChannelDescriptor | null, b: ChannelDescript
     return a.url === b.url && a.type === b.type;
 }
 
-/** True when the dock has ANY window to show (≥1 exists): a pinned tab, or a
- *  transient with content. The "dock open" predicate for member-list exclusivity. */
-export function dockHasWindows(): boolean {
-    const windows = getWindows();
-    if (windows.some(w => w.pinned)) return true;
-    const t = transientWindow();
-    return !!t && t.state.open;
+/** Is the dock VISIBLE in the current channel? Visibility is PER-CHANNEL and separate
+ *  from content: an explicit show/hide (F9, chip-open, last-tab-close) wins; with no
+ *  explicit choice the dock shows iff there's content to show (a global pinned tab or
+ *  this channel's preview = hasRealTab). This is the single "is the dock open"
+ *  predicate driving applyOpenState (the .dockview-open class), exclusivity, and the
+ *  resize handler. It REPLACES the old dockHasWindows(), which returned true whenever a
+ *  pinned window existed — making F9 compute "close" and destroy pinned tabs, and
+ *  fusing global content with per-channel visibility (the root of the inconsistency). */
+export function dockVisible(): boolean {
+    const v = currentChannelId != null ? channelVisibility.get(currentChannelId) : undefined;
+    if (v !== undefined) return v;
+    return hasRealTab();
 }
 
-/** Persist the TRANSIENT window's state for the current channel. Pinned windows
- *  are global (NOT per-channel), so they are never written here — only the lone
- *  channel-bound transient slot is remembered per channel. */
+/** Remember the TRANSIENT window's preview DESCRIPTOR for the current channel (so a
+ *  return re-shows it). Pinned windows are global (NOT per-channel) and never written
+ *  here. Visibility lives separately in channelVisibility; we mirror it into the
+ *  record's `open` field only for debug/inspection — restore gates on the descriptor. */
 export function saveCurrentChannelState(): void {
     if (currentChannelId == null) return;
     const t = transientWindow();
-    if (t && t.ownerChannelId === currentChannelId && t.state.open && t.activeDescriptor) {
-        channelStates.set(currentChannelId, { open: true, descriptor: t.activeDescriptor });
-    } else if (t && t.ownerChannelId === currentChannelId) {
-        // transient bound to this channel but empty/closed → remember closed.
-        channelStates.set(currentChannelId, { open: t.state.open, descriptor: t.activeDescriptor });
+    if (t && t.ownerChannelId === currentChannelId) {
+        channelStates.set(currentChannelId, {
+            open: channelVisibility.get(currentChannelId) ?? false,
+            descriptor: t.activeDescriptor
+        });
     }
     // (No transient for this channel → leave any prior memory untouched.)
 }
@@ -112,9 +133,11 @@ export function onChannelSelect(newId: string | null): void {
         return;
     }
 
-    // 4. restore the entering channel's transient (if it had an open file).
+    // 4. restore the entering channel's transient CONTENT (if it had a preview). This
+    //    is purely about which tab exists — it NEVER forces the dock visible. A channel
+    //    the user F9-hid is restored with its tab present but stays hidden (step 5).
     const mem = channelStates.get(newId);
-    if (mem && mem.open && mem.descriptor) {
+    if (mem && mem.descriptor) {
         // GUARD (design §11): if a window is ALREADY open for this same file — a
         // PINNED tab pinned out of this very channel — don't spawn a second transient
         // for it (that's the channel-return duplication). Activate the existing tab
@@ -123,46 +146,35 @@ export function onChannelSelect(newId: string | null): void {
         if (dupe) {
             channelStates.delete(newId);
             setActiveWindow(dupe);
-            host.closeNativeChannelSidebar();
-            dupe.state.open = true;
-            lsSet(LS_OPEN, "1");
             if (reconcileActiveFromCache()) getActiveWindow().content.seq += 1;
         } else {
             const t = makeWindow({ pinned: false, ownerChannelId: newId });
             addWindow(t);
             setActiveWindow(t);
-            host.closeNativeChannelSidebar();
-            t.state.open = true;
-            lsSet(LS_OPEN, "1");
             restoreDescriptor(mem.descriptor);
         }
     } else if (getWindows().some(w => w.pinned)) {
-        // No transient here, but pinned tabs persist → show the last-active pinned.
+        // No preview here, but pinned tabs persist → focus the last-active pinned.
         const pinned = getWindows().filter(w => w.pinned);
         if (!pinned.some(w => w.id === getActiveWindowId())) setActiveWindow(pinned[pinned.length - 1]);
-        host.closeNativeChannelSidebar();
-        getActiveWindow().state.open = true;
-        lsSet(LS_OPEN, "1");
         // a pinned window whose loader was superseded earlier hydrates from cache.
         if (reconcileActiveFromCache()) getActiveWindow().content.seq += 1;
     } else {
-        // Nothing pinned, nothing remembered here → the dock is closed and there is
-        // NO tab for this channel. We deliberately do NOT create a transient: a bare
-        // channel switch must never conjure a junk "DockView" tab. The transient is
-        // created LAZILY only when a real file is opened (engine/load.ts →
-        // focusTransientForOpen). windows[] is left without a transient for this
-        // channel; the dock simply stays closed.
-        // (If a stale active binding points at a now-removed window, repoint it to a
-        //  surviving window so getActiveWindow() never dangles.)
+        // Nothing pinned, nothing remembered here. We deliberately do NOT create a
+        // transient (a bare channel switch must never conjure a junk tab). Repoint a
+        // dangling active binding so getActiveWindow() never dangles.
         if (!getWindows().some(w => w.id === getActiveWindowId())) {
             const fallback = getWindows()[getWindows().length - 1];
             if (fallback) setActiveWindow(fallback);
         }
-        lsSet(LS_OPEN, "0");
     }
 
-    // 5. apply the resulting dock-open state.
-    if (dockHasWindows()) {
+    // 5. apply the entering channel's VISIBILITY (per-channel, separate from content).
+    //    Exclusivity is recomputed here for the entered channel; the per-channel
+    //    owed-restore set inside syncNative* keeps the member list / profile sidebar
+    //    consistent across switches (no stranded global flag).
+    if (dockVisible()) {
+        host.closeNativeChannelSidebar();
         host.ensureHost();
         host.applyOpenState();
         host.syncNativeMemberList(true);

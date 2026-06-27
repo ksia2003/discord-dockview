@@ -16,11 +16,10 @@
  */
 
 import { getCurrentChannelId } from "../host/channel";
-import { saveCurrentChannelState } from "./channelMemory";
+import { saveCurrentChannelState, setChannelVisibility } from "./channelMemory";
 import { detectType } from "./detectType";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
-import { LS_OPEN, lsSet } from "./persist";
 import { showContent } from "./showContent";
 import { snapshotActiveView } from "./viewState";
 import {
@@ -102,8 +101,9 @@ export function focusTransientForOpen(): void {
 export function openPanelChrome(): void {
     const host = hostActions();
     host.closeNativeChannelSidebar();
-    getActiveWindow().state.open = true;
-    lsSet(LS_OPEN, "1");
+    // Opening a file = an explicit "show the dock here" for this channel.
+    setChannelVisibility(getCurrentChannelId(), true);
+    getActiveWindow().state.open = true; // vestigial per-window flag; harmless to set
     saveCurrentChannelState();
     host.ensureHost();
     host.applyOpenState();
