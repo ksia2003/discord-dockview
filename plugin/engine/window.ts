@@ -124,6 +124,20 @@ export function transientWindow(): DockWindow | null {
     return getWindows().find(w => !w.pinned) || null;
 }
 
+/** A window is a REAL tab — worth a tab in the strip / worth keeping the dock open
+ *  for — when it is PINNED, or carries content (loaded, loading, or errored). A
+ *  bare content-less transient (the F9-opened empty shell, or a transient that only
+ *  holds the dock's "open" state) is NOT a real tab: the strip shows no tab for it
+ *  and closing the last real tab auto-hides the dock. */
+export function isRealTab(w: DockWindow): boolean {
+    return w.pinned || w.content.name != null || w.content.loading || w.content.error != null;
+}
+
+/** True when any window is a real tab (a content tab or a pinned tab). */
+export function hasRealTab(): boolean {
+    return getWindows().some(isRealTab);
+}
+
 /** Append a window to the collection (used by the open / channel-switch paths). */
 export function addWindow(w: DockWindow): void {
     windows.push(w);

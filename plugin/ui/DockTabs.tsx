@@ -1,22 +1,23 @@
 /*
- * The tab strip (pin-driven multi-window). ALWAYS rendered — one window or many —
- * so the dock has a single unified header/tab model (a lone window is just a single
- * tab). The tabs ARE the header's icon/name slot.
+ * The tab strip (pin-driven multi-window). Renders one tab per REAL window — a
+ * content tab or a pinned tab (isRealTab). A content-less transient (the F9-opened
+ * empty shell) gets NO tab, so the strip is empty and the shell shows the empty-state
+ * body. The tabs ARE the header's icon/name slot.
  *
  * "header = tab" model: each tab carries its OWN persistent ⋯ + ✕ acting on THAT
  * window — the only shared header control is the far-right DOCK X (owned by
  * DockPanel). The per-tab controls are PERSISTENT on EVERY tab (no hover/active
  * gating), so tab widths are stable (no layout shift). The ⋯ opens THAT window's menu
  * IN PLACE (parameterized by `w`, never setActiveWindow → no tab switch); the ✕
- * closes THAT window (closeTab — closing the LAST tab leaves the dock open on the
- * empty card, only the dock X closes the dock). Tabs are FLAT (icon + name); the
+ * closes THAT window (closeTab — closing the LAST real tab auto-hides the dock, NOT
+ * an empty shell; the dock X also closes the dock). Tabs are FLAT (icon + name); the
  * active tab gets a subtle underline + brighter text (CSS), not a pill.
  */
 
 import { ContextMenuApi, React } from "@webpack/common";
 
 import { closeTab, switchToWindow } from "../engine/tabs";
-import { getActiveWindowId, getWindows } from "../engine/window";
+import { getActiveWindowId, getWindows, isRealTab } from "../engine/window";
 import { STRINGS } from "../strings";
 import type { ContentType } from "../engine/types";
 import { DockMoreMenu } from "./DockMoreMenu";
@@ -59,13 +60,14 @@ function tabCtrlBtn(opts: { key: string; cls: string; label: string; path: strin
 
 /** Tabs row. Every tab carries its OWN persistent ⋯ + ✕ acting on THAT window. A
  *  tab's ✕ always closes THAT window via closeTab (active or not); closing the last
- *  tab leaves the dock open on the empty card. */
+ *  tab closes the dock. A content-less transient yields NO tab (empty strip + the
+ *  empty-state body) — the tab-less empty shell is only ever the F9-open path. */
 export function DockTabs() {
     const activeId = getActiveWindowId();
     return React.createElement(
         "div",
         { className: "dockview-tabs", role: "tablist" },
-        ...getWindows().map(w => {
+        ...getWindows().filter(isRealTab).map(w => {
             const isActive = w.id === activeId;
             // An empty window (no file yet — the open-but-empty dock) shows the short
             // product name, not the long empty-card sentence.

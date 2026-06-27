@@ -6,10 +6,12 @@
  * the header (top row = the tab strip on the left + a dock-level X at the far right;
  * second row = the active viewer's controls), the body-wrap, and the find slot.
  *
- * The tab strip is ALWAYS rendered — one window or many. A lone window shows as a
- * single tab carrying its own icon/name/⋯/× (closing it via that × leaves the dock
- * open on the empty card). The far-right X is dock-level: it closes the ENTIRE dock
- * (same as the F9 toggle), distinct from a tab's × which closes just that file.
+ * The tab strip renders one tab per REAL window (a content tab or a pinned tab). A
+ * content-less transient — the F9-opened empty shell — gets NO tab: the strip is
+ * empty and the body shows the empty-state card. A tab carries its own icon/name/⋯/×;
+ * closing the LAST real tab via that × auto-hides the dock (it does NOT fall back to
+ * an empty shell). The far-right X is dock-level: it closes the ENTIRE dock (same as
+ * the F9 toggle), distinct from a tab's × which closes just that file.
  *
  * Wiring into the engine:
  *  - On mount it publishes its rerender via setRenderer(); on unmount it clears the

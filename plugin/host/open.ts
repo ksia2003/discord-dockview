@@ -60,14 +60,21 @@ function closeForExclusiveTakeover(): void {
     requestRender();
 }
 
-/** The dock toggle (F9 keybind + the far-right dock X): open the lone transient (the
- *  toggle never resurrects pinned tabs that were closed — pin-driven tabs come from
- *  opening files + pinning) or fully close the dock. Mirrors the open-side
- *  exclusivity (collapse member list like a thread) and the close-side restore. */
+/** The dock toggle (F9 keybind + the far-right dock X): open a TAB-LESS EMPTY SHELL
+ *  or fully close the dock. Opening from 0 tabs marks a lone content-less transient
+ *  `open` — DockTabs renders no tab for it (it has no content + isn't pinned), so the
+ *  shell shows the "Open a file…" empty-state body with an empty tab strip. This
+ *  empty shell is the F9-open path ONLY; navigation/last-tab-close never produce it.
+ *  The toggle never resurrects pinned tabs that were closed — pin-driven tabs come
+ *  from opening files + pinning. Mirrors the open-side exclusivity (collapse member
+ *  list like a thread) and the close-side restore. */
 export function toggle(): void {
     const open = !dockHasWindows();
     if (open) {
         closeNativeChannelSidebar();
+        // The transient that holds the dock's "open" state. Reuse the lone transient
+        // if one exists (its identity survives), else create one. It stays CONTENT-
+        // LESS, so DockTabs gives it no tab — the F9-empty shell.
         let t = transientWindow();
         if (!t) {
             t = makeWindow({ pinned: false, ownerChannelId: getCurrentChannelId() });

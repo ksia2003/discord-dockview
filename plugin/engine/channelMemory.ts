@@ -146,13 +146,19 @@ export function onChannelSelect(newId: string | null): void {
         // a pinned window whose loader was superseded earlier hydrates from cache.
         if (reconcileActiveFromCache()) getActiveWindow().content.seq += 1;
     } else {
-        // Nothing pinned, nothing remembered here → the dock is closed. Recreate
-        // an empty closed transient so the single-window invariants hold.
-        const t = makeWindow({ pinned: false, ownerChannelId: newId });
-        t.state.open = mem ? mem.open : false;
-        addWindow(t);
-        setActiveWindow(t);
-        lsSet(LS_OPEN, t.state.open ? "1" : "0");
+        // Nothing pinned, nothing remembered here → the dock is closed and there is
+        // NO tab for this channel. We deliberately do NOT create a transient: a bare
+        // channel switch must never conjure a junk "DockView" tab. The transient is
+        // created LAZILY only when a real file is opened (engine/load.ts →
+        // focusTransientForOpen). windows[] is left without a transient for this
+        // channel; the dock simply stays closed.
+        // (If a stale active binding points at a now-removed window, repoint it to a
+        //  surviving window so getActiveWindow() never dangles.)
+        if (!getWindows().some(w => w.id === getActiveWindowId())) {
+            const fallback = getWindows()[getWindows().length - 1];
+            if (fallback) setActiveWindow(fallback);
+        }
+        lsSet(LS_OPEN, "0");
     }
 
     // 5. apply the resulting dock-open state.

@@ -19,7 +19,7 @@ import { hostActions } from "./hostBridge";
 import { bump } from "./loadToken";
 import { setPendingScrollTop, snapshotActiveView } from "./viewState";
 import {
-    addWindow, getActiveWindow, getActiveWindowId, getWindows, makeWindow,
+    getActiveWindow, getActiveWindowId, getWindows, hasRealTab,
     reconcileActiveFromCache, removeWindow, setActiveWindow, transientWindow
 } from "./window";
 import type { DockWindow } from "./types";
@@ -83,8 +83,9 @@ export function unpinActiveWindow(w: DockWindow = getActiveWindow()): void {
 /** Close a tab (the ✕ on a tab acts on THAT window). A PINNED tab is removed
  *  entirely; a TRANSIENT tab is cleared (its content detached, the window removed)
  *  so its channel reopens empty. After removal the active window falls back to a
- *  sensible neighbour. Closing the LAST remaining tab leaves the dock OPEN showing
- *  the empty-state card (design §10) — only the dock X / shortcut closes the dock. */
+ *  sensible neighbour. Closing the LAST remaining tab AUTO-HIDES the dock — the dock
+ *  collapses to closed (native sidebars restored), exactly as the dock X would. It
+ *  NEVER falls back to an empty open shell (that shell is the F9-open path only). */
 export function closeTab(id: string): void {
     const windows = getWindows();
     const idx = windows.findIndex(w => w.id === id);
@@ -97,17 +98,14 @@ export function closeTab(id: string): void {
     if (!win.pinned && win.ownerChannelId) deleteChannelState(win.ownerChannelId);
     windows.splice(idx, 1);
 
-    if (windows.length === 0) {
-        // Last tab closed: the dock stays OPEN on the empty-state card (the tab ×
-        // means "close this file", not "close the dock"). Replace it with a fresh
-        // empty transient bound to the current channel, kept open, and re-render.
-        const empty = makeWindow({ pinned: false, ownerChannelId: getCurrentChannelId() });
-        empty.state.open = true;
-        addWindow(empty);
-        setActiveWindow(empty);
-        bump();
-        hostActions().applyOpenState();
-        requestRender();
+    // Closing the last REAL tab leaves the dock with nothing worth showing. A bare
+    // content-less transient may still sit in windows[] (e.g. an F9-empty shell that
+    // was never used), but there is no longer any file/pinned tab — so the dock
+    // auto-hides. Drive the full close through the host bridge (resetToClosedTransient
+    // + LS_OPEN="0" + native-sidebar restore + render), identical to the dock X.
+    if (!hasRealTab()) {
+        bump(); // any in-flight loader from the closed window must not write back
+        hostActions().closePanel();
         return;
     }
     if (win.id === getActiveWindowId()) {
