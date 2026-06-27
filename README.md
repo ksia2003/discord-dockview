@@ -7,8 +7,6 @@ A build of [Vesktop](https://github.com/Vencord/Vesktop) with the **DockView**
 side panel bundled in — open PDFs, Office docs, code, data, diagrams, notebooks,
 and interactive files in a panel right inside Discord.
 
-![The DockView side panel](docs/hero.png)
-
 ## What is this
 
 This is **Vesktop** — the lightweight Discord desktop app — with the **DockView**
@@ -32,10 +30,6 @@ Install it, sign in. That's the whole setup.
 - **The panel itself** — sits where the thread/member sidebar goes, resizes by dragging its edge, and each channel remembers the file you had open.
 
 Nothing loads until you click an attachment, and the normal download button still works exactly as before.
-
-![PDF with page navigation and zoom](docs/pdf.png)
-![Image with zoom and pan](docs/image.png)
-![Code with syntax highlighting and line numbers](docs/code.png)
 
 ## Why
 
