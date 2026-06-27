@@ -1,7 +1,6 @@
 {
     "name": "vesktop",
-    "version": "1.7.4",
-    "private": true,
+    "version": "1.7.5",
     "description": "Vesktop, a Discord desktop app, with the DockView side-panel plugin built in",
     "keywords": [],
     "homepage": "https://github.com/ksia2003/discord-dockview",

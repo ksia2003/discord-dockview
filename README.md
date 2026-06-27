@@ -1,5 +1,8 @@
 # Vesktop · DockView panel
 
+> ⚠️ **Work in progress** — DockView is under active development and not yet
+> feature-complete. Expect rough edges and breaking changes.
+
 A build of [Vesktop](https://github.com/Vencord/Vesktop) with the **DockView**
 side panel bundled in — open PDFs, Office docs, code, data, diagrams, notebooks,
 and interactive files in a panel right inside Discord.
