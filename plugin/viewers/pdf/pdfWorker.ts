@@ -25,6 +25,8 @@
  *    Installed in a try/catch, exactly as the original did.
  */
 
+import { loadLib } from "../../engine/lazyLib";
+
 // The resolved pdfjs module surface (whatever pdfjs-dist exports — getDocument,
 // TextLayer, GlobalWorkerOptions, …). Typed loose; callers cast what they use.
 export type Pdfjs = any;
@@ -71,12 +73,16 @@ let pdfjsPromise: Promise<Pdfjs> | null = null;
 export function loadPdfjs(): Promise<Pdfjs> {
     if (pdfjsPromise) return pdfjsPromise;
     pdfjsPromise = (async () => {
-        // Dynamic imports — deferred to the first PDF open (see the file header).
-        // We import the worker module ALONGSIDE pdfjs and register it on
-        // globalThis.pdfjsWorker so pdf.js runs the worker message handler on the
-        // MAIN THREAD using this bundled code (CSP-safe; no new Worker / blob URL).
-        const pdfjsLib = await import("pdfjs-dist");
-        const { WorkerMessageHandler } = await import("pdfjs-dist/build/pdf.worker.mjs");
+        // pdf.js is CHUNKED: loadLib("pdfjs") reads + evals chunk-pdfjs.js once and
+        // returns its namespace { lib, WorkerMessageHandler } (engine/chunks/pdfjs.entry.ts).
+        // pdfjs-dist + its worker are external to the renderer bundle, so a bare
+        // import("pdfjs-dist") here would be a live dangling specifier — we go through
+        // the chunk. We still register the worker handler on globalThis.pdfjsWorker so
+        // pdf.js runs it on the MAIN THREAD (CSP-safe; no new Worker / blob URL). The
+        // dead inline fallback keeps the rule-1 dynamic-import shape if ever un-chunked.
+        const mod: any = await loadLib("pdfjs", () => import("pdfjs-dist").then(m => ({ lib: m })));
+        const pdfjsLib = mod.lib;
+        const { WorkerMessageHandler } = mod;
 
         // Runtime polyfill: Map/WeakMap upsert helpers pdf.js v6 needs. In a
         // try/catch as the original did — a defineProperty failure must not abort

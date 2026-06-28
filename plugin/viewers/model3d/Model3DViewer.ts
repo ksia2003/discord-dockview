@@ -10,12 +10,15 @@
  * camera to the bounding box, adds lighting, and runs the WebGLRenderer with
  * OrbitControls.
  *
- * three.js is HEAVY (~code-dense, parses at startup if statically imported). Every
- * three import here is DYNAMIC (`() => import("three")` through withLibLoading, and
- * `import("three/examples/jsm/loaders/…")` for the loaders), so the renderer bundle
- * defers three's top-level EXECUTION off startup. NEVER add a static
- * `import … from "three"` to this module or any sibling — that re-loads three at
- * Vencord init and undoes the lazy-lib batch.
+ * three.js is HEAVY and code-dense (~23 ms of startup V8 compile, measured). It is
+ * CHUNKED: three + every example loader is bundled into chunk-three.js
+ * (engine/chunks/three.entry.ts) and EXTERNALIZED from the renderer, so its bytes
+ * leave vencordDesktopRenderer.js entirely (not just its execution). The viewer
+ * pulls the module + loaders from ONE withLibLoading("three") call, which loadLib
+ * routes to the on-disk chunk (read over IPC + eval'd). NEVER add a static
+ * `import … from "three"` (it re-inlines three and undoes the chunk) and NEVER a
+ * bare `import("three/examples/…")` (a live dangling specifier once three is
+ * external) — every loader comes off the chunk namespace.
  *
  * Resource ownership mirrors the PDF viewer: the parsed object is the big resource,
  * owned by the CACHE ENTRY (entry.model3dObject), not the body. The body only reads
@@ -70,9 +73,12 @@ export function disposeObject3D(root: any): void {
 /** Parse the fetched bytes with the loader matching `ext`, returning a normalised
  *  THREE.Object3D root. STL/PLY return a bare BufferGeometry → wrap it in a Mesh with
  *  a sane default material; OBJ meshes with the placeholder material (no map) get a
- *  neutral lit material so they aren't flat white. three is passed in so every import
- *  stays dynamic and routed through the lazy-lib loader. */
-async function parseModel(THREE: any, ext: string, buf: ArrayBuffer): Promise<any> {
+ *  neutral lit material so they aren't flat white. `mod` is chunk-three.js's namespace
+ *  (mod.default = three, mod.<Loader> = the example loaders), so every loader comes
+ *  from the ONE chunk load — no separate dynamic import (those would be live dangling
+ *  specifiers now that three is external to the renderer bundle). */
+async function parseModel(mod: any, ext: string, buf: ArrayBuffer): Promise<any> {
+    const THREE: any = mod.default;
     // A neutral, slightly glossy default material so unlit/material-less geometry
     // reads as a solid 3D surface under the scene lights (not a flat silhouette).
     const defaultMaterial = () => new THREE.MeshStandardMaterial({
@@ -90,7 +96,7 @@ async function parseModel(THREE: any, ext: string, buf: ArrayBuffer): Promise<an
 
     switch (ext) {
         case "obj": {
-            const { OBJLoader } = await import("three/examples/jsm/loaders/OBJLoader.js");
+            const { OBJLoader } = mod;
             const obj = new OBJLoader().parse(dec());
             // OBJ with no .mtl gets a placeholder MeshPhongMaterial (white, name
             // ""). Swap any unmapped/placeholder material for our neutral lit one so
@@ -106,30 +112,30 @@ async function parseModel(THREE: any, ext: string, buf: ArrayBuffer): Promise<an
             return obj;
         }
         case "stl": {
-            const { STLLoader } = await import("three/examples/jsm/loaders/STLLoader.js");
+            const { STLLoader } = mod;
             return meshFromGeometry(new STLLoader().parse(buf));
         }
         case "ply": {
-            const { PLYLoader } = await import("three/examples/jsm/loaders/PLYLoader.js");
+            const { PLYLoader } = mod;
             const geometry = new PLYLoader().parse(buf);
             return meshFromGeometry(geometry);
         }
         case "fbx": {
-            const { FBXLoader } = await import("three/examples/jsm/loaders/FBXLoader.js");
+            const { FBXLoader } = mod;
             return new FBXLoader().parse(buf, "");
         }
         case "dae": {
-            const { ColladaLoader } = await import("three/examples/jsm/loaders/ColladaLoader.js");
+            const { ColladaLoader } = mod;
             const result = new ColladaLoader().parse(dec(), "");
             return result.scene;
         }
         case "3ds": {
-            const { TDSLoader } = await import("three/examples/jsm/loaders/TDSLoader.js");
+            const { TDSLoader } = mod;
             return new TDSLoader().parse(buf, "");
         }
         case "gltf":
         case "glb": {
-            const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
+            const { GLTFLoader } = mod;
             const loader = new GLTFLoader();
             const gltf: any = await new Promise((resolve, reject) =>
                 loader.parse(buf, "", resolve, reject));
@@ -166,9 +172,14 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             // Load three through the lazy-lib loader so the dock shows "Loading 3D
             // viewer…" while the (code-dense) lib spins up the first time this
             // session; subsequent opens reuse the cached module instantly.
-            const THREE: any = await withLibLoading(ctx, STRINGS.loading.lib.threed, "three",
-                () => import("three"));
-            const object = await parseModel(THREE, ext, buf);
+            // The "three" key is CHUNKED: loadLib returns chunk-three.js's namespace,
+            // whose `default` is the three module and whose named exports are the
+            // example loaders (engine/chunks/three.entry.ts). The viewer pulls both
+            // from this one load — no separate `import("three/examples/…")` (those
+            // would be live dangling specifiers once three is external to the bundle).
+            const threeMod: any = await withLibLoading(ctx, STRINGS.loading.lib.threed, "three",
+                () => import("three").then(m => ({ default: m })));
+            const object = await parseModel(threeMod, ext, buf);
             if (!object) throw new Error("The model contained no geometry.");
 
             // Only keep the object if `entry` is STILL the cache's live entry for its

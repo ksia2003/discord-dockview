@@ -23,6 +23,7 @@
 
 import { React } from "@webpack/common";
 
+import { loadLib } from "../../engine/lazyLib";
 import { getActiveWindow } from "../../engine/window";
 import type { DockWindow, Model3DViewState } from "../../engine/types";
 
@@ -88,8 +89,14 @@ export function Model3DBody() {
         const bgColor = cssVar(host, "--background-base-lower", "#1a1a1e");
 
         (async () => {
-            const THREE: any = await import("three");
-            const { OrbitControls } = await import("three/examples/jsm/controls/OrbitControls.js");
+            // three is CHUNKED: pull the module + OrbitControls from the one cached
+            // chunk load (the loader already warmed it). NOT a bare import("three")
+            // — three is external to the renderer bundle, so a bare specifier here
+            // would be a live dangling import. loadLib("three") returns chunk-three.js's
+            // namespace (mod.default = three, mod.OrbitControls = the control).
+            const threeMod: any = await loadLib("three", () => import("three").then(m => ({ default: m })));
+            const THREE: any = threeMod.default;
+            const { OrbitControls } = threeMod;
             if (disposed || !host.isConnected) return;
 
             const width = Math.max(1, host.clientWidth);

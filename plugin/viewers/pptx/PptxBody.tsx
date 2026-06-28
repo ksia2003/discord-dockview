@@ -27,6 +27,7 @@
 import { React } from "@webpack/common";
 
 import { clearLiveController, getLiveController, requestRender, setLiveController } from "../../engine/forceRender";
+import { loadLib } from "../../engine/lazyLib";
 import { getActiveWindow } from "../../engine/window";
 import type { DockWindow, PptxViewState } from "../../engine/types";
 import { PPTX_LIB_KEY } from "./PptxViewer";
@@ -100,10 +101,13 @@ export function PptxBody() {
         const startSlide = Math.min(Math.max(1, vs.slide || 1), Math.max(1, total));
 
         (async () => {
-            // The lib is already cached (the loader awaited it through withLibLoading);
-            // this import resolves from the lazy-lib cache instantly. Still dynamic so
-            // this module never drags the renderer into startup.
-            const lib: any = await import("@aiden0z/pptx-renderer");
+            // The lib is already cached (the loader awaited it through withLibLoading),
+            // so this resolves from the lazy-lib cache instantly. Go through loadLib —
+            // NOT a bare import("@aiden0z/pptx-renderer") — so the SAME path the loader
+            // used is reused: for a chunked lib that's the on-disk chunk (the package
+            // is external to the renderer bundle, so a bare import here would be a live
+            // dangling specifier); for an inline lib it's the cached import().
+            const lib: any = await loadLib(PPTX_LIB_KEY, () => import("@aiden0z/pptx-renderer"));
             if (disposed || !host.isConnected) return;
 
             const PptxViewer = lib.PptxViewer;

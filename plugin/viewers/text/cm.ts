@@ -25,6 +25,8 @@
 // The lazily-loaded CM module surface (resolved once, then cached). Holds the
 // pieces CodeBody assembles an EditorView/EditorState from plus the language
 // resolver, the find plumbing, and the merge-diff surface (used by edit-mode).
+import { loadLib } from "../../engine/lazyLib";
+
 export interface CMModules {
     EditorState: any;
     EditorView: any;
@@ -62,13 +64,21 @@ let cmModulesPromise: Promise<CMModules> | null = null;
 export function loadCM(): Promise<CMModules> {
     if (cmModulesPromise) return cmModulesPromise;
     cmModulesPromise = (async () => {
-        // Dynamic imports — MUST NOT be hoisted to top-level (see rule 1 above).
-        const stateMod = await import("@codemirror/state");
-        const viewMod = await import("@codemirror/view");
-        const langMod = await import("@codemirror/language");
-        const searchMod = await import("@codemirror/search");
-        const lezerHl = await import("@lezer/highlight");
-        const mergeMod = await import("@codemirror/merge");
+        // CodeMirror is CHUNKED: every @codemirror/* + @lezer/highlight + lang pack
+        // is bundled into chunk-codemirror.js (engine/chunks/codemirror.entry.ts) and
+        // taken OUT of the renderer bundle. loadLib("codemirror") reads + evals that
+        // chunk once and returns its namespace; we destructure each module surface
+        // from it. There is NO bare `import("@codemirror/…")` here — those packages
+        // are external to the renderer, so a bare specifier would dangle live.
+        // (The dead inline fallback keeps the rule-1 dynamic-import shape if ever
+        // un-chunked.)
+        const cm: any = await loadLib("codemirror", () => import("@codemirror/state").then(m => ({ state: m })));
+        const stateMod = cm.state;
+        const viewMod = cm.view;
+        const langMod = cm.language;
+        const searchMod = cm.search;
+        const lezerHl = cm.lezerHighlight;
+        const mergeMod = cm.merge;
 
         const { EditorState, Compartment, StateField, StateEffect, RangeSetBuilder } = stateMod as any;
         const { EditorView, Decoration, lineNumbers } = viewMod as any;
@@ -172,25 +182,22 @@ export function loadCM(): Promise<CMModules> {
         // (still themed/wrapped/findable, just no syntax colour). Each call builds
         // a fresh LanguageSupport (cheap) so two open files never share parser
         // state. Lang packs are imported lazily alongside CM (same dynamic chunk).
-        const [
-            jsMod, jsonMod, pyMod, cssMod, htmlMod, xmlMod, mdMod,
-            rustMod, cppMod, javaMod, yamlMod, sqlMod, phpMod, goMod
-        ] = await Promise.all([
-            import("@codemirror/lang-javascript"),
-            import("@codemirror/lang-json"),
-            import("@codemirror/lang-python"),
-            import("@codemirror/lang-css"),
-            import("@codemirror/lang-html"),
-            import("@codemirror/lang-xml"),
-            import("@codemirror/lang-markdown"),
-            import("@codemirror/lang-rust"),
-            import("@codemirror/lang-cpp"),
-            import("@codemirror/lang-java"),
-            import("@codemirror/lang-yaml"),
-            import("@codemirror/lang-sql"),
-            import("@codemirror/lang-php"),
-            import("@codemirror/lang-go")
-        ]);
+        // Lang packs come from the SAME codemirror chunk (already loaded above), so
+        // there is no second import / network hop — just reads off the namespace.
+        const jsMod = cm.langJavascript;
+        const jsonMod = cm.langJson;
+        const pyMod = cm.langPython;
+        const cssMod = cm.langCss;
+        const htmlMod = cm.langHtml;
+        const xmlMod = cm.langXml;
+        const mdMod = cm.langMarkdown;
+        const rustMod = cm.langRust;
+        const cppMod = cm.langCpp;
+        const javaMod = cm.langJava;
+        const yamlMod = cm.langYaml;
+        const sqlMod = cm.langSql;
+        const phpMod = cm.langPhp;
+        const goMod = cm.langGo;
 
         const languageFor = (hljsLang: string): any | null => {
             switch (hljsLang) {
