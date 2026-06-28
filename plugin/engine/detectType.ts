@@ -71,9 +71,16 @@ export const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg
 //   psd       -> ag-psd (the composited/flattened image, any bit depth 8/16/32)
 //   heic/heif -> heic2any (libheif wasm, dynamic-imported so the wasm only
 //                downloads when a HEIC is actually opened)
+//   tga       -> tga-js (Truevision Targa → RGBA; we flip bottom-origin files
+//                ourselves since tga-js leaves them upside-down)
+//   ico/cur   -> icojs (multi-frame icon → we pick the largest frame's PNG bytes)
+//   jp2/jpx/j2k/j2c -> jpeg2000 (pdf.js JpxImage → component planes → RGBA)
 // raw camera (cr2/nef/dng/…), eps/ai, dicom and indd are NOT here — they need
 // server-side conversion and stay "unknown" gaps until a download-fallback batch.
-export const RASTER_IMG_EXT = new Set(["tiff", "tif", "psd", "heic", "heif"]);
+export const RASTER_IMG_EXT = new Set([
+    "tiff", "tif", "psd", "heic", "heif",
+    "tga", "ico", "cur", "jp2", "jpx", "j2k", "j2c"
+]);
 // 3D models — fetched as text/bytes, parsed by the matching three.js loader, added
 // to a Scene and rendered to a WebGLRenderer canvas with OrbitControls. three.js +
 // its loaders are DYNAMIC-imported (off Vesktop startup) inside the viewer.

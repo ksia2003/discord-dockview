@@ -38,6 +38,7 @@ const h = (...args: any[]) => (React.createElement as any)(...args);
 const MIME_BY_EXT: Record<string, string> = {
     pdf: "application/pdf",
     png: "image/png", tif: "image/tiff", heic: "image/heic", psd: "image/vnd.adobe.photoshop",
+    tga: "image/x-tga", ico: "image/x-icon", jp2: "image/jp2",
     md: "text/markdown", py: "text/x-python", json: "application/json", html: "text/html",
     csv: "text/csv",
     xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

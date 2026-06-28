@@ -59,7 +59,10 @@ export const SAMPLE_CATALOG: SampleCategory[] = [
             { label: "Image (PNG)", ext: "png", file: "example.png", blurb: "Raster image — fit to width, zoom, lightbox." },
             { label: "TIFF", ext: "tif", file: "example.tif", blurb: "TIFF decoded to a canvas (utif); multi-page TIFFs get a page selector." },
             { label: "HEIC", ext: "heic", file: "example.heic", blurb: "Apple HEIC decoded via libheif wasm (downloads on first open)." },
-            { label: "Photoshop", ext: "psd", file: "example.psd", blurb: "PSD composite decoded to an image (ag-psd, any bit depth 8/16/32)." }
+            { label: "Photoshop", ext: "psd", file: "example.psd", blurb: "PSD composite decoded to an image (ag-psd, any bit depth 8/16/32)." },
+            { label: "Targa", ext: "tga", file: "example.tga", blurb: "Truevision TGA decoded to a canvas (tga-js), bottom-origin flipped upright." },
+            { label: "Icon", ext: "ico", file: "example.ico", blurb: "Windows ICO — the largest frame is decoded and shown (icojs)." },
+            { label: "JPEG 2000", ext: "jp2", file: "example.jp2", blurb: "JPEG 2000 decoded to a canvas (pdf.js JpxImage port)." }
         ]
     },
     {

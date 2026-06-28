@@ -11,6 +11,12 @@
  *   tiff/tif  -> utif    (UTIF.decode lists every IFD = page; we decode the chosen one)
  *   psd       -> ag-psd  (readPsd → composited image, ANY bit depth 8/16/32 + Raw/RLE/Zip)
  *   heic/heif -> heic2any (libheif wasm → a PNG/JPEG Blob)
+ *   tga       -> tga-js  (Tga.load → getImageData RGBA; we vertically flip bottom-origin
+ *                         files ourselves — tga-js leaves them upside-down)
+ *   ico/cur   -> icojs   (decodeIco → frames; we pick the LARGEST frame, whose .buffer is
+ *                         already PNG bytes for the requested mime → straight to a blob)
+ *   jp2/jpx/j2k/j2c -> jpeg2000 (pdf.js JpxImage.parse → interleaved component planes →
+ *                         RGBA; parse() needs a Node Buffer view, not a bare Uint8Array)
  *
  * MULTI-PAGE TIFF (the one case that KEEPS the "rasterimage" type instead of retyping):
  * UTIF.decode returns ALL pages. When there are 2+ pages we keep our own surface — the
@@ -231,6 +237,116 @@ async function heicToBlobUrl(buf: ArrayBuffer, ctx: ViewerContext): Promise<{ ur
 }
 
 /**
+ * Decode a TGA (Truevision Targa) to RGBA with tga-js. tga-js's Tga.load parses the
+ * header + pixel data; getImageData() writes RGBA into the buffer we hand it.
+ *
+ * ORIGIN FLIP (the load-bearing correctness fix): a TGA stores its origin in header
+ * flag bit 5 (0x20) — set = top-left origin, clear = BOTTOM-left (the common default
+ * ImageMagick / Photoshop write). tga-js's getImageData does NOT correctly un-flip a
+ * bottom-origin file (verified: a bottom-origin Targa comes out vertically mirrored),
+ * so we flip the rows ourselves when bit 5 is clear. A top-origin file is left as-is.
+ */
+async function decodeTga(buf: ArrayBuffer, ctx: ViewerContext): Promise<Decoded> {
+    const TgaCtor: any = await withLibLoading(ctx, STRINGS.loading.lib.tga, "tga-js",
+        async () => (await import("tga-js")).default);
+    const tga = new TgaCtor();
+    tga.load(new Uint8Array(buf));
+    const width = tga.header?.width as number;
+    const height = tga.header?.height as number;
+    if (!width || !height) throw new Error("Empty TGA frame");
+    const out = { width, height, data: new Uint8ClampedArray(width * height * 4) };
+    tga.getImageData(out);
+    let rgba = out.data;
+    // bit 5 clear ⇒ bottom-origin ⇒ flip rows so the image is top-down (browser order).
+    const topOrigin = !!((tga.header.flags as number) & 0x20);
+    if (!topOrigin) {
+        const rowBytes = width * 4;
+        const flipped = new Uint8ClampedArray(rgba.length);
+        for (let y = 0; y < height; y++) {
+            flipped.set(rgba.subarray(y * rowBytes, y * rowBytes + rowBytes), (height - 1 - y) * rowBytes);
+        }
+        rgba = flipped;
+    }
+    return { rgba, width, height };
+}
+
+/**
+ * Decode an ICO/CUR to a blob: url with icojs. decodeIco returns every frame; the
+ * browser build's converter hands each frame's pixels back already RE-ENCODED to the
+ * requested mime (image/png), so a frame's `.buffer` is PNG bytes — we pick the
+ * LARGEST frame (most pixels) and wrap its PNG buffer straight as a blob: url, no
+ * second canvas round-trip. (icojs uses createImageBitmap internally, a browser API,
+ * so this path only runs in the renderer, never headless.)
+ */
+async function icoToBlobUrl(buf: ArrayBuffer, ctx: ViewerContext): Promise<{ url: string }> {
+    const mod: any = await withLibLoading(ctx, STRINGS.loading.lib.ico, "icojs",
+        async () => await import("icojs"));
+    const decodeIco = mod.decodeIco ?? mod.default?.decodeIco;
+    if (typeof decodeIco !== "function") throw new Error("icojs decoder unavailable");
+    const frames: Array<{ width: number; height: number; buffer: ArrayBuffer }> =
+        await decodeIco(buf, "image/png");
+    if (!frames || !frames.length) throw new Error("No image in icon");
+    const largest = frames.reduce((a, b) => (b.width * b.height > a.width * a.height ? b : a));
+    if (!largest.buffer || !largest.buffer.byteLength) throw new Error("Empty icon frame");
+    const blob = new Blob([largest.buffer], { type: "image/png" });
+    return { url: URL.createObjectURL(blob) };
+}
+
+/**
+ * Decode a JPEG 2000 (.jp2/.jpx/.j2k/.j2c) to RGBA with the pdf.js JpxImage port.
+ * parse() reads the codestream OR the JP2 box container; afterwards width/height/
+ * componentsCount + tiles[0].items (the interleaved component samples, length =
+ * w*h*componentsCount) describe the image. We fold the component planes to RGBA:
+ *   1 comp → greyscale, 3 → RGB, 4 → RGBA (CMYK is rare from chat tools; treat the
+ *   4th plane as alpha, which matches an RGBA-origin .jp2).
+ *
+ * BUFFER REQUIREMENT (the load-bearing browser fix): JpxImage reads the input with
+ * Node Buffer methods (data.readInt8 / readUInt16BE / readUInt32BE), which a bare
+ * Uint8Array does NOT have — parse(new Uint8Array(buf)) throws "readUInt16BE is not a
+ * function". Rather than pull in the node `buffer` polyfill (Vencord's browser build
+ * BANS node builtins), we hand parse() a tiny Uint8Array SUBCLASS that adds exactly the
+ * three big-endian readers it calls — keeping all native Uint8Array behaviour (indexing,
+ * .length, .subarray) the decoder also relies on. This is the minimal, dependency-free
+ * way to satisfy the lib's Node-Buffer expectation in the browser.
+ */
+class BufferLikeBytes extends Uint8Array {
+    readInt8(o: number): number { return (this[o] << 24) >> 24; }
+    readUInt16BE(o: number): number { return (this[o] << 8) | this[o + 1]; }
+    readUInt32BE(o: number): number {
+        return ((this[o] << 24) | (this[o + 1] << 16) | (this[o + 2] << 8) | this[o + 3]) >>> 0;
+    }
+}
+
+async function decodeJp2(buf: ArrayBuffer, ctx: ViewerContext): Promise<Decoded> {
+    const mod: any = await withLibLoading(ctx, STRINGS.loading.lib.jp2, "jpeg2000",
+        async () => await import("jpeg2000"));
+    const JpxImage = mod.JpxImage ?? mod.default?.JpxImage;
+    if (typeof JpxImage !== "function") throw new Error("JPEG 2000 decoder unavailable");
+    const jpx = new JpxImage();
+    jpx.parse(new BufferLikeBytes(buf));
+    const width = jpx.width as number;
+    const height = jpx.height as number;
+    const comps = jpx.componentsCount as number;
+    const tile = jpx.tiles && jpx.tiles[0];
+    if (!width || !height || !tile || !tile.items) throw new Error("Empty JPEG 2000 frame");
+    const items: ArrayLike<number> = tile.items;
+    const rgba = new Uint8ClampedArray(width * height * 4);
+    for (let i = 0, p = 0; i < width * height; i++) {
+        const s = i * comps;
+        if (comps >= 3) {
+            rgba[p++] = items[s];
+            rgba[p++] = items[s + 1];
+            rgba[p++] = items[s + 2];
+            rgba[p++] = comps >= 4 ? items[s + 3] : 255;
+        } else {
+            const g = items[s];
+            rgba[p++] = g; rgba[p++] = g; rgba[p++] = g; rgba[p++] = 255;
+        }
+    }
+    return { rgba, width, height };
+}
+
+/**
  * Re-blob a specific page of an already-decoded multi-page TIFF and point the live
  * content.url (+ entry.url) at it. Used by the page selector: it re-decodes the chosen
  * IFD from the cached TIFF bytes (no re-fetch), memoising the blob per page on the
@@ -282,8 +398,15 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
                 blobUrl = (await heicToBlobUrl(buf, ctx)).url;
             } else if (ext === "psd") {
                 blobUrl = (await rgbaToBlobUrl(await decodePsd(buf, ctx))).url;
+            } else if (ext === "tga") {
+                blobUrl = (await rgbaToBlobUrl(await decodeTga(buf, ctx))).url;
+            } else if (ext === "ico" || ext === "cur") {
+                blobUrl = (await icoToBlobUrl(buf, ctx)).url;
+            } else if (ext === "jp2" || ext === "jpx" || ext === "j2k" || ext === "j2c") {
+                blobUrl = (await rgbaToBlobUrl(await decodeJp2(buf, ctx))).url;
             } else {
-                // any other future single-image raster ext routed here
+                // any other raster ext that mapped here without a branch — treat as PSD
+                // (the only remaining single-image decoder) rather than silently failing.
                 blobUrl = (await rgbaToBlobUrl(await decodePsd(buf, ctx))).url;
             }
             finishAsImage(blobUrl, token, entry, ctx);
