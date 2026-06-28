@@ -68,6 +68,13 @@ export const STRINGS = {
         text: "Open a file and it'll show up here."
     },
 
+    // --- audio / video fallback (an unplayable container) -------------------
+    media: {
+        title: "Can't play this here",
+        // {name} -> the file name.
+        sub: (name: string) => `${name} — download it to play in another app.`
+    },
+
     // --- system messages: loading -------------------------------------------
     loading: {
         title: "Loading…"

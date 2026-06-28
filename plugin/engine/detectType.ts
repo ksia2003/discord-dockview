@@ -51,6 +51,12 @@ export const STRUCTURED_EXT = new Set(["json", "json5", "xml"]);
 // Extensions rendered as an <img> (fit-width) in the panel instead of opening
 // Discord's native lightbox.
 export const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "apng", "avif"]);
+// Audio — played by a native <audio controls> (the element streams the url directly).
+// HTML5-playable containers only; an unplayable one surfaces a download fallback.
+export const AUDIO_EXT = new Set(["mp3", "wav", "m4a", "aac", "ogg", "oga", "opus", "flac", "weba"]);
+// Video — played by a native <video controls>. ".ts" is deliberately NOT here (it is
+// TypeScript in a dev context, not an MPEG transport stream). ".mov" usually plays.
+export const VIDEO_EXT = new Set(["mp4", "m4v", "webm", "ogv", "mov"]);
 
 /** Decide the content type from an explicit hint or the url/name extension. */
 export function detectType(opts: { type?: ContentType; url?: string | null; name?: string | null }): ContentType {
@@ -69,6 +75,9 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     const ext = probe(opts.url) || probe(opts.name);
     if (ext === "pdf") return "pdf";
     if (ext && IMG_EXT.has(ext)) return "image";
+    // Media — a native <audio>/<video controls> streams the attachment url directly.
+    if (ext && AUDIO_EXT.has(ext)) return "audio";
+    if (ext && VIDEO_EXT.has(ext)) return "video";
     if (ext && MD_EXT.has(ext)) return "markdown";
     // .docx -> mammoth converts to HTML, rendered through the markdown iframe shell.
     if (ext && DOCX_EXT.has(ext)) return "docx";

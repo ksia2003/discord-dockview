@@ -50,6 +50,12 @@ registerViewer(PdfViewer);
 import { ImageViewer } from "./image/ImageViewer";
 registerViewer(ImageViewer);
 
+// media/ — native <audio>/<video controls> that stream the attachment url directly
+// (nothing to fetch/decode, like the image viewer); audio + video share one body.
+import { AudioViewer, VideoViewer } from "./media/MediaViewer";
+registerViewer(AudioViewer);
+registerViewer(VideoViewer);
+
 // csv/ — the spreadsheet grid (csv/tsv + xlsx-origin csv text), with a grid↔raw
 // toggle whose raw view reuses the text CodeBody.
 import { CsvViewer } from "./csv/CsvViewer";

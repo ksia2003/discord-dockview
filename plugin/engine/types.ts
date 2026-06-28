@@ -24,6 +24,8 @@ export type ContentType =
     | "code"
     | "markdown"
     | "image"
+    | "audio"
+    | "video"
     | "unknown"
     | "csv"
     | "mcpapp"
