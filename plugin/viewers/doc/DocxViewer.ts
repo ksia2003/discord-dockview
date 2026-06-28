@@ -10,19 +10,19 @@
  * VIEW-ONLY: there is no editable source for a converted .docx, so it has no
  * HeaderControls and never enters edit mode (no capabilities.editable).
  *
- * mammoth is a plain bundled import (safe at module top); it is only CALLED inside
- * load(). No module-top executable work.
+ * mammoth (+ its jszip/xmldom dependencies) is pulled in with a DYNAMIC import()
+ * routed through engine/lazyLib, so its module top-level leaves Vencord startup and
+ * only runs on the first .docx opened, behind a "Loading document viewer…" dock state.
  */
 
 import { escapeHtml } from "../../engine/html";
+import { withLibLoading } from "../../engine/lazyLib";
 import { injectNonce, pageNonce, setArtifactHtml } from "../../engine/nonce";
 import { STRINGS } from "../../strings";
 import type {
     CacheEntry, LoadOpts, LoadToken, Viewer, ViewerContext
 } from "../../engine/types";
 import { HtmlBody, wrapMarkdownDoc } from "./iframe";
-
-import * as mammoth from "mammoth";
 
 /** DOCX loader: fetch as ArrayBuffer → mammoth → HTML → dark markdown doc shell →
  *  nonce sandbox iframe. The verbatim dual-write is preserved (entry always filled,
@@ -40,7 +40,11 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             if (!r.ok) throw new Error(r.status + " " + r.statusText);
             return r.arrayBuffer();
         })
-        .then(buf => mammoth.convertToHtml({ arrayBuffer: buf }))
+        .then(async buf => {
+            const mammoth: any = await withLibLoading(ctx, STRINGS.loading.lib.docx, "mammoth",
+                async () => await import("mammoth"));
+            return mammoth.convertToHtml({ arrayBuffer: buf });
+        })
         .then(result => {
             // mammoth returns the body HTML in result.value; wrap it in the dark
             // markdown doc shell (no math) so it themes + sandboxes identically.

@@ -19,17 +19,17 @@
  * exists yet (it won't until P6 registers the viewer) — defensive, like showContent's
  * closeLightbox guard.
  *
- * SheetJS (XLSX) is a plain bundled import (safe at module top); only CALLED inside
- * load(). No module-top executable work.
+ * SheetJS (XLSX) is pulled in with a DYNAMIC import() routed through engine/lazyLib,
+ * so its module top-level leaves Vencord startup and only runs on the first .xlsx
+ * opened, behind a "Loading spreadsheet viewer…" dock state.
  */
 
+import { withLibLoading } from "../../engine/lazyLib";
 import { STRINGS } from "../../strings";
 import type {
     CacheEntry, CsvViewState, LoadOpts, LoadToken, Viewer, ViewerContext
 } from "../../engine/types";
 import { HtmlBody } from "./iframe";
-
-import * as XLSX from "xlsx";
 
 /** XLSX loader: fetch as ArrayBuffer → SheetJS → first sheet as CSV → retype to
  *  "csv". The entry is retyped too, so a re-open restores it as a csv grid (its key
@@ -47,7 +47,9 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             if (!r.ok) throw new Error(r.status + " " + r.statusText);
             return r.arrayBuffer();
         })
-        .then(buf => {
+        .then(async buf => {
+            const XLSX: any = await withLibLoading(ctx, STRINGS.loading.lib.xlsx, "xlsx",
+                async () => await import("xlsx"));
             const wb = XLSX.read(new Uint8Array(buf), { type: "array" });
             const firstName = wb.SheetNames[0];
             const sheet = firstName ? wb.Sheets[firstName] : null;

@@ -7,20 +7,24 @@
  * so we render here and ship only the inert SVG into the (script-free) sandbox — no
  * mermaid runtime ever runs inside the iframe.
  *
- * ★ LAZY INIT (the cycle trap) ★ mermaid.initialize() is NOT called at module top —
- * it self-initializes against the DOM and would do work during the registry↔viewer
- * import cycle. ensureMermaid() runs it exactly once, on the FIRST diagram render.
+ * ★ LAZY LOAD + INIT ★ mermaid is the single most expensive lib in the bundle to
+ * PARSE at startup (~72 ms of V8 pre-parse, measured) AND its module top-level runs
+ * real setup. A STATIC `import mermaid from "mermaid"` would execute that top-level
+ * at Vencord init (an esbuild IIFE bundle has no code-splitting, but a static import
+ * still runs the module). So mermaid is pulled in with a DYNAMIC import() routed
+ * through engine/lazyLib — its execution leaves startup entirely and only happens on
+ * the first .mmd opened, behind a "Loading diagram engine…" dock state.
+ *
+ * mermaid.initialize() is then run exactly once (it self-initializes against the DOM).
  * startOnLoad:false (we drive every render explicitly); securityLevel "strict" strips
  * any embedded HTML/JS in node labels so a hostile diagram can't inject script when
  * we drop the SVG in.
  *
  * VIEW-ONLY: no editable source, no HeaderControls, no editable capability.
- *
- * mermaid is a plain bundled import (safe at module top); it is only CALLED inside
- * the functions below. No module-top executable work.
  */
 
 import { escapeHtml } from "../../engine/html";
+import { withLibLoading } from "../../engine/lazyLib";
 import { injectNonce, pageNonce, setArtifactHtml } from "../../engine/nonce";
 import { STRINGS } from "../../strings";
 import type {
@@ -28,22 +32,24 @@ import type {
 } from "../../engine/types";
 import { HtmlBody, wrapMarkdownDoc } from "./iframe";
 
-import mermaid from "mermaid";
-
-// mermaid is initialized once, lazily, on the first diagram render (see LAZY INIT).
-let _mermaidReady = false;
-function ensureMermaid(): void {
-    if (_mermaidReady) return;
+// mermaid is loaded + initialized once, lazily, on the first diagram render. The
+// instance is cached after the first load so a second diagram reuses it.
+let _mermaid: any = null;
+async function ensureMermaid(ctx: ViewerContext): Promise<any> {
+    if (_mermaid) return _mermaid;
+    const mermaid: any = await withLibLoading(ctx, STRINGS.loading.lib.mermaid, "mermaid",
+        async () => (await import("mermaid")).default);
     mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
-    _mermaidReady = true;
+    _mermaid = mermaid;
+    return mermaid;
 }
 
 /** Render mermaid source to a full dark sandboxed-iframe document. mermaid.render is
  *  async and DOM-dependent, so this returns a Promise<string>. On a parse/render error
  *  we degrade to the raw source in a red <pre> (one bad diagram never throws out of the
  *  loader). The finished SVG is centred in a scrollable dark body. */
-async function renderMermaidDoc(src: string): Promise<string> {
-    ensureMermaid();
+async function renderMermaidDoc(src: string, ctx: ViewerContext): Promise<string> {
+    const mermaid = await ensureMermaid(ctx);
     const id = "dvMermaid" + Math.random().toString(36).slice(2);
     let body: string;
     try {
@@ -72,7 +78,7 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             if (!r.ok) throw new Error(r.status + " " + r.statusText);
             return r.text();
         })
-        .then(src => renderMermaidDoc(src))
+        .then(src => renderMermaidDoc(src, ctx))
         .then(fullHtml => {
             if (entry) {
                 entry.html = fullHtml;

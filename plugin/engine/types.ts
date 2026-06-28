@@ -59,6 +59,10 @@ export interface PanelContent {
     codeLang: string;
     url: string | null;
     loading: boolean;
+    /** Optional label shown by LoadingBody while a heavy viewer library spins up
+     *  ("Loading HEIC decoder…"). null → the generic "Loading…" copy. Set via
+     *  engine/lazyLib withLibLoading and always cleared when the lib resolves. */
+    loadingLabel: string | null;
     error: string | null;
     binary: boolean; // an "unknown" file sniffed as binary → unsupported fallback
     seq: number;

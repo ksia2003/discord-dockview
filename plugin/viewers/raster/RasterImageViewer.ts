@@ -37,6 +37,7 @@ import type {
     CacheEntry, LoadOpts, LoadToken, Viewer, ViewerContext
 } from "../../engine/types";
 import { extOf } from "../../engine/detectType";
+import { withLibLoading } from "../../engine/lazyLib";
 import { ImageBody, resetImgView } from "../image/ImageBody";
 
 /** A decoded bitmap: RGBA bytes laid out row-major (4 bytes/px), plus dimensions. */
@@ -52,9 +53,12 @@ interface Decoded {
 const JPEG_PIXEL_THRESHOLD = 8_000_000;
 
 /** Decode TIFF (first page) with utif. Synchronous; multi-page TIFFs show page 1
- *  (a future depth item — most TIFFs in chat are single-page scans/exports). */
-async function decodeTiff(buf: ArrayBuffer): Promise<Decoded> {
-    const UTIF: any = (await import("utif")).default ?? (await import("utif"));
+ *  (a future depth item — most TIFFs in chat are single-page scans/exports). The
+ *  utif import is routed through the lazy-lib loader so the dock shows a labelled
+ *  "Loading TIFF decoder…" while it spins up the first time. */
+async function decodeTiff(buf: ArrayBuffer, ctx: ViewerContext): Promise<Decoded> {
+    const UTIF: any = await withLibLoading(ctx, STRINGS.loading.lib.tiff, "utif",
+        async () => (await import("utif")).default ?? (await import("utif")));
     const ifds = UTIF.decode(buf);
     if (!ifds || !ifds.length) throw new Error("No image in TIFF");
     const ifd = ifds[0];
@@ -66,9 +70,11 @@ async function decodeTiff(buf: ArrayBuffer): Promise<Decoded> {
     return { rgba: new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength), width, height };
 }
 
-/** Decode a PSD's composited (flattened) image with @webtoon/psd. */
-async function decodePsd(buf: ArrayBuffer): Promise<Decoded> {
-    const Psd: any = (await import("@webtoon/psd")).default;
+/** Decode a PSD's composited (flattened) image with @webtoon/psd. The decoder is
+ *  lazy-loaded behind a "Loading PSD decoder…" dock state on first use. */
+async function decodePsd(buf: ArrayBuffer, ctx: ViewerContext): Promise<Decoded> {
+    const Psd: any = await withLibLoading(ctx, STRINGS.loading.lib.psd, "@webtoon/psd",
+        async () => (await import("@webtoon/psd")).default);
     const psd = Psd.parse(buf);
     const rgba: Uint8ClampedArray = await psd.composite(); // RGBA, w*h*4
     const width = psd.width as number;
@@ -104,8 +110,13 @@ function rgbaToBlobUrl(d: Decoded): Promise<{ url: string; width: number; height
 /** Decode HEIC/HEIF straight to a Blob with heic2any (libheif wasm), then wrap it in
  *  a blob: url. heic2any already paints through libheif → canvas internally and hands
  *  back a PNG/JPEG Blob, so we don't go via our own canvas for this branch. */
-async function heicToBlobUrl(buf: ArrayBuffer): Promise<{ url: string }> {
-    const heic2any: any = (await import("heic2any")).default;
+async function heicToBlobUrl(buf: ArrayBuffer, ctx: ViewerContext): Promise<{ url: string }> {
+    // heic2any bundles libheif as a base64 wasm string. Loading it instantiates the
+    // wasm (the slow part), so route it through withLibLoading: the dock shows a
+    // "Loading HEIC decoder…" state on the FIRST heic of the session, then the lib is
+    // cached and a second heic decodes with no extra load.
+    const heic2any: any = await withLibLoading(ctx, STRINGS.loading.lib.heic, "heic2any",
+        async () => (await import("heic2any")).default);
     const out = await heic2any({ blob: new Blob([buf]), toType: "image/png" });
     const blob: Blob = Array.isArray(out) ? out[0] : out; // multi-image HEIC → first frame
     if (!blob) throw new Error("HEIC produced no image");
@@ -133,12 +144,12 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
         .then(async buf => {
             let blobUrl: string;
             if (ext === "heic" || ext === "heif") {
-                blobUrl = (await heicToBlobUrl(buf)).url;
+                blobUrl = (await heicToBlobUrl(buf, ctx)).url;
             } else if (ext === "psd") {
-                blobUrl = (await rgbaToBlobUrl(await decodePsd(buf))).url;
+                blobUrl = (await rgbaToBlobUrl(await decodePsd(buf, ctx))).url;
             } else {
                 // tiff / tif (and any future raster ext routed here)
-                blobUrl = (await rgbaToBlobUrl(await decodeTiff(buf))).url;
+                blobUrl = (await rgbaToBlobUrl(await decodeTiff(buf, ctx))).url;
             }
 
             // Park the decoded result on the entry as an "image" so a cache restore

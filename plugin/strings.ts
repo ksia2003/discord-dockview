@@ -77,7 +77,21 @@ export const STRINGS = {
 
     // --- system messages: loading -------------------------------------------
     loading: {
-        title: "Loading…"
+        title: "Loading…",
+        // Labels shown while a viewer spins up a heavy library for the first time
+        // this session (engine/lazyLib withLibLoading). Each heavy viewer picks one.
+        lib: {
+            heic: "Loading HEIC decoder…",
+            psd: "Loading PSD decoder…",
+            tiff: "Loading TIFF decoder…",
+            pdf: "Loading PDF viewer…",
+            mermaid: "Loading diagram engine…",
+            graphviz: "Loading Graphviz engine…",
+            docx: "Loading document viewer…",
+            xlsx: "Loading spreadsheet viewer…",
+            code: "Loading code viewer…",
+            math: "Loading math typesetter…"
+        }
     },
 
     // --- shared action buttons (state cards) --------------------------------

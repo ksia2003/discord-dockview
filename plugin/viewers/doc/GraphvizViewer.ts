@@ -8,20 +8,21 @@
  * iframe the mermaid/markdown viewers use — no viz runtime ever runs inside the
  * sandbox (mirrors the mermaid viewer exactly).
  *
- * ★ LAZY WASM INIT ★ instance() returns a Promise<Viz>; ensureViz() memoizes that
- * promise so every later diagram reuses the same WASM module (no re-instantiation),
- * and it is resolved on the FIRST .dot/.gv render — never at module top.
+ * ★ LAZY LOAD + WASM INIT ★ @viz-js/viz is pulled in with a DYNAMIC import() routed
+ * through engine/lazyLib, so its module top-level leaves Vencord startup (an esbuild
+ * IIFE bundle has no code-splitting, but a static import still RUNS the module at
+ * init). instance() then returns a Promise<Viz>; ensureViz() memoizes that promise so
+ * every later diagram reuses the same WASM module (no re-instantiation), resolved on
+ * the FIRST .dot/.gv render behind a "Loading Graphviz engine…" dock state.
  *
  * Graphviz uses black-on-white by default; MD_STYLE draws the SVG on a light card
  * (.dv-graphviz) so the black text/edges stay legible on the dark page.
  *
  * VIEW-ONLY: no editable source, no HeaderControls, no editable capability.
- *
- * The `instance` import is a plain bundled import (safe at module top); only CALLED
- * inside ensureViz(). No module-top executable work.
  */
 
 import { escapeHtml } from "../../engine/html";
+import { withLibLoading } from "../../engine/lazyLib";
 import { injectNonce, pageNonce, setArtifactHtml } from "../../engine/nonce";
 import { STRINGS } from "../../strings";
 import type {
@@ -29,13 +30,17 @@ import type {
 } from "../../engine/types";
 import { HtmlBody, wrapMarkdownDoc } from "./iframe";
 
-import { instance as vizInstance } from "@viz-js/viz";
-
-// viz-js (Graphviz WASM) is resolved ONCE, lazily, on the first .dot/.gv render. The
-// binary is bundled in-module (no fetch), so this resolves fully offline.
+// viz-js (Graphviz WASM) is loaded + resolved ONCE, lazily, on the first .dot/.gv
+// render. The binary is bundled in-module (no fetch), so this resolves fully offline.
 let _vizPromise: Promise<any> | null = null;
-function ensureViz(): Promise<any> {
-    if (!_vizPromise) _vizPromise = vizInstance();
+function ensureViz(ctx: ViewerContext): Promise<any> {
+    if (!_vizPromise) {
+        _vizPromise = withLibLoading(ctx, STRINGS.loading.lib.graphviz, "@viz-js/viz",
+            async () => {
+                const { instance } = await import("@viz-js/viz");
+                return instance();
+            });
+    }
     return _vizPromise;
 }
 
@@ -44,10 +49,10 @@ function ensureViz(): Promise<any> {
  *  so this returns a Promise<string>. On a parse/render error we degrade to the raw
  *  source in a red <pre> (mirrors the mermaid viewer). The SVG is centred in a
  *  scrollable body on a light card (Graphviz uses black-on-white by default). */
-async function renderGraphvizDoc(src: string): Promise<string> {
+async function renderGraphvizDoc(src: string, ctx: ViewerContext): Promise<string> {
     let body: string;
     try {
-        const viz = await ensureViz();
+        const viz = await ensureViz(ctx);
         const svg = viz.renderString(src, { format: "svg" });
         body = `<div class="dv-graphviz">${svg}</div>`;
     } catch (e) {
@@ -72,7 +77,7 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             if (!r.ok) throw new Error(r.status + " " + r.statusText);
             return r.text();
         })
-        .then(src => renderGraphvizDoc(src))
+        .then(src => renderGraphvizDoc(src, ctx))
         .then(fullHtml => {
             if (entry) {
                 entry.html = fullHtml;

@@ -66,6 +66,7 @@ export function makeWindow(opts: { pinned: boolean; ownerChannelId: string | nul
             codeLang: "plaintext",
             url: null,
             loading: false,
+            loadingLabel: null,
             error: null,
             binary: false,
             seq: 0

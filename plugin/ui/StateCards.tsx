@@ -156,7 +156,9 @@ export function renderUnsupportedBody() {
 
 /** Loading state — a spinner glyph + one title line, no actions. Visibility is
  *  DELAYED ~150ms so a fast cache hit or quick fetch never flashes a spinner; only
- *  a genuinely slow load shows it. */
+ *  a genuinely slow load shows it. The title is content.loadingLabel when a viewer
+ *  is spinning up a heavy library (set via engine/lazyLib withLibLoading, e.g.
+ *  "Loading HEIC decoder…"), else the generic "Loading…". */
 export function LoadingBody() {
     const { useState, useEffect } = React;
     const [show, setShow] = useState(false);
@@ -168,6 +170,7 @@ export function LoadingBody() {
         // Hold an empty body for the first ~150ms (no flicker on fast loads).
         return React.createElement("div", { className: "dockview-status" });
     }
+    const label = getActiveWindow().content.loadingLabel || STRINGS.loading.title;
     return React.createElement(
         "div",
         { className: "dockview-loading" },
@@ -178,7 +181,7 @@ export function LoadingBody() {
         React.createElement(
             "div",
             { className: "dockview-loading-title", role: "status", "aria-live": "polite" },
-            STRINGS.loading.title
+            label
         )
     );
 }

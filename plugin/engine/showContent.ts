@@ -107,6 +107,7 @@ export function showContent(opts: ShowOpts): "noop" | "cache" | "fetch" {
     win.content.name = name;
     win.content.url = url;
     win.content.error = null;
+    win.content.loadingLabel = null; // a fresh load starts with the generic spinner
     win.content.binary = false;
     win.content.seq += 1;
     win.content.type = type;
