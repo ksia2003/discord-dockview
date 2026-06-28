@@ -273,6 +273,20 @@ interface GhRelease {
     assets?: GhAsset[];
 }
 
+/** Compare two "plugin-vX.Y.Z" tags by NUMERIC version (so 0.1.10 > 0.1.9, which a
+ *  lexical compare gets wrong). Returns >0 when `a` is the newer version. Self-
+ *  contained (native.ts imports only Node builtins, so no shared compare helper). */
+function cmpPluginTag(a: string, b: string): number {
+    const ver = (t: string) => t.slice(PLUGIN_TAG_PREFIX.length).split(".").map(n => parseInt(n, 10) || 0);
+    const av = ver(a);
+    const bv = ver(b);
+    for (let i = 0; i < Math.max(av.length, bv.length); i++) {
+        const d = (av[i] || 0) - (bv[i] || 0);
+        if (d !== 0) return d;
+    }
+    return 0;
+}
+
 /**
  * Discover the newest published plugin update via the GitHub Releases API.
  *
@@ -306,11 +320,15 @@ export async function discoverManifest(
         }
         if (!Array.isArray(releases)) return null;
 
-        // Newest-first from the API: take the first non-draft plugin-v* release.
-        const release = releases.find(
+        // The GitHub API list order is NOT reliably newest-first BY VERSION (a two-digit
+        // patch like 0.1.10 lands after 0.1.9 in the list). Pick the non-draft plugin-v*
+        // release with the highest NUMERIC version, not the first one the API returns.
+        const candidates = releases.filter(
             r => !r?.draft && typeof r?.tag_name === "string" && r.tag_name.startsWith(PLUGIN_TAG_PREFIX)
         );
-        if (!release || !release.tag_name) return null;
+        if (!candidates.length) return null;
+        const release = candidates.reduce((best, r) => (cmpPluginTag(r.tag_name!, best.tag_name!) > 0 ? r : best));
+        if (!release.tag_name) return null;
 
         const manifestAsset = (release.assets ?? []).find(a => a?.name === "manifest.json");
         const manifestUrl = manifestAsset?.browser_download_url;
