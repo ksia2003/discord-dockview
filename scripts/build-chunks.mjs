@@ -27,9 +27,21 @@
 
 import { createRequire } from "module";
 import { existsSync, mkdirSync, writeFileSync, rmSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 
 import { readChunks } from "./chunkList.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Node builtins that a chunk lib references ONLY in dead/debug paths but that esbuild
+// must still resolve to bundle for the browser. ag-psd reaches for `util.inspect` in
+// debug console.logs; alias it to a no-op browser stub so the chunk builds clean
+// (the inspect() calls never run). Kept narrow — only the builtins we have proven a
+// chunk lib references in unreachable code, never a blanket node polyfill.
+const BUILTIN_BROWSER_STUBS = {
+    util: join(__dirname, "utils", "util-browser-stub.mjs")
+};
 
 const vencordDir = process.argv[2];
 if (!vencordDir) {
@@ -88,6 +100,10 @@ for (const c of chunks) {
             minify: true,
             target: ["esnext"],
             platform: "browser",
+            // Alias node builtins a chunk lib references only in dead/debug code to a
+            // harmless browser stub (see BUILTIN_BROWSER_STUBS) so the browser bundle
+            // resolves them — ag-psd's debug `util.inspect`.
+            alias: { ...BUILTIN_BROWSER_STUBS },
             // Same React handling as the renderer: a chunk lib must NOT bundle its
             // own React copy. None of the current chunk libs import React, but keep
             // them external to be safe (matches the renderer's @webpack/common world).

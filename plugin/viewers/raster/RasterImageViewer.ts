@@ -4,41 +4,51 @@
  * TIFF / PSD / HEIC can't be put into an <img src> directly (the browser has no
  * native decoder for them), so this loader does what the xlsx loader does for the
  * csv grid: it FETCHES the bytes, DECODES them per-format to an RGBA bitmap, paints
- * that to an offscreen <canvas>, exports a same-origin `blob:` PNG/JPEG url, and
- * RETYPES the file to "image" — so the existing image viewer surface (fit-width,
- * wheel-zoom, drag-pan, fullscreen lightbox) renders it with zero extra UI.
+ * that to an offscreen <canvas>, exports a same-origin `blob:` PNG/JPEG url, and —
+ * for SINGLE-image files — RETYPES the file to "image" so the existing image viewer
+ * surface (fit-width, wheel-zoom, drag-pan, fullscreen lightbox) renders it.
  *
- *   tiff/tif  -> utif         (UTIF.decode + decodeImage + toRGBA8; first page only)
- *   psd       -> @webtoon/psd (Psd.parse(...).composite() → the flattened image)
- *   heic/heif -> heic2any     (libheif wasm → a PNG/JPEG Blob)
+ *   tiff/tif  -> utif    (UTIF.decode lists every IFD = page; we decode the chosen one)
+ *   psd       -> ag-psd  (readPsd → composited image, ANY bit depth 8/16/32 + Raw/RLE/Zip)
+ *   heic/heif -> heic2any (libheif wasm → a PNG/JPEG Blob)
  *
- * Every decoder is loaded with a DYNAMIC import() inside the per-format branch, so
- * none of them (and especially not the large heic/libheif wasm) lands in the base
- * renderer bundle — the code only downloads when a file of that type is actually
- * opened.
+ * MULTI-PAGE TIFF (the one case that KEEPS the "rasterimage" type instead of retyping):
+ * UTIF.decode returns ALL pages. When there are 2+ pages we keep our own surface — the
+ * image render surface wrapped with a small page selector (prev/next + "n / N"), the
+ * way the xlsx viewer wraps the csv grid with a sheet switcher. The original TIFF bytes
+ * + the page count live on the cache entry (entry.rasterTiff); flipping a page re-decodes
+ * that page's IFD → RGBA → canvas → a fresh blob (memoised per page in entry.rasterPageUrls)
+ * and re-points content.url at it, with NO re-fetch. The current page is parked in the
+ * raster view-state so a cache return reopens the same page. A SINGLE-page TIFF has no
+ * page chrome and retypes to "image" exactly as before.
+ *
+ * Every decoder is loaded with a DYNAMIC import() inside the per-format branch (utif +
+ * heic2any inline, ag-psd as an out-of-bundle chunk), so none of them lands in the base
+ * renderer eagerly — the code only loads when a file of that type is actually opened.
  *
  * blob: urls are same-origin and NOT subject to Discord's CSP connect-src, so once
- * decoded the picture renders anywhere. The url is OWNED by this viewer: we revoke
- * it in dispose() when the cache entry is evicted, so a long session doesn't leak
- * decoded bitmaps. (The image viewer never creates blob urls itself — only this one
- * does, which is why the cache's generic disposeCacheEntry hands the entry to the
- * owning viewer's dispose.)
+ * decoded the picture renders anywhere. The urls are OWNED by this viewer: dispose()
+ * revokes them on cache eviction (the single retyped url on entry.url AND every page url
+ * in entry.rasterPageUrls), so a long session doesn't leak decoded bitmaps.
  *
  * Cache contract (mirrors xlsx): the entry KEY stays "rasterimage|<cdn-url>" (set by
- * detectType at open time), but after decode we store the BLOB url on entry.url so a
- * cache restore re-points the <img> at the decoded bitmap, not the CSP-blocked CDN
- * url. The descriptor that re-keys a restore derives its type from the original file
- * NAME (e.g. "photo.heic"), so the routing type stays "rasterimage" and the key still
- * matches — the blob url has no extension and would otherwise detect as "unknown".
+ * detectType at open time). For a single-image file we retype entry.type to "image" and
+ * park the blob on entry.url (a restore re-points the <img>). For a multi-page TIFF the
+ * entry STAYS "rasterimage" (so a restore routes back here, restores the page, and re-
+ * blobs it) with entry.url holding the current page's blob. The descriptor that re-keys a
+ * restore derives its type from the original file NAME (e.g. "scan.tiff"), so the routing
+ * type stays "rasterimage" and the key still matches.
  */
 
 import { STRINGS } from "../../strings";
 import type {
-    CacheEntry, LoadOpts, LoadToken, Viewer, ViewerContext
+    CacheEntry, LoadOpts, LoadToken, RasterViewState, Viewer, ViewerContext
 } from "../../engine/types";
 import { extOf } from "../../engine/detectType";
 import { withLibLoading } from "../../engine/lazyLib";
-import { ImageBody, resetImgView } from "../image/ImageBody";
+import { resetImgView } from "../image/ImageBody";
+import { RasterImageBody, rasterState, resetRasterView } from "./RasterImageBody";
+import { RasterHeaderControls } from "./RasterHeaderControls";
 
 /** A decoded bitmap: RGBA bytes laid out row-major (4 bytes/px), plus dimensions. */
 interface Decoded {
@@ -52,16 +62,28 @@ interface Decoded {
  *  PNG (lossless). 8 MP ≈ a 4K-ish frame. */
 const JPEG_PIXEL_THRESHOLD = 8_000_000;
 
-/** Decode TIFF (first page) with utif. Synchronous; multi-page TIFFs show page 1
- *  (a future depth item — most TIFFs in chat are single-page scans/exports). The
- *  utif import is routed through the lazy-lib loader so the dock shows a labelled
- *  "Loading TIFF decoder…" while it spins up the first time. */
-async function decodeTiff(buf: ArrayBuffer, ctx: ViewerContext): Promise<Decoded> {
-    const UTIF: any = await withLibLoading(ctx, STRINGS.loading.lib.tiff, "utif",
+/** Load utif once (lazy). The decoder is routed through the lazy-lib loader so the
+ *  dock shows a labelled "Loading TIFF decoder…" while it spins up the first time. */
+async function loadUtif(ctx: ViewerContext): Promise<any> {
+    return withLibLoading(ctx, STRINGS.loading.lib.tiff, "utif",
         async () => (await import("utif")).default ?? (await import("utif")));
+}
+
+/** Count the pages (IFDs) in a TIFF without fully decoding pixels. UTIF.decode parses
+ *  every IFD header (cheap — it does NOT decode the image data until decodeImage), so
+ *  the list length is the page count. */
+function tiffPageCount(UTIF: any, buf: ArrayBuffer): number {
+    const ifds = UTIF.decode(buf);
+    return Array.isArray(ifds) ? ifds.length : 0;
+}
+
+/** Decode ONE page (0-based IFD index) of a TIFF to RGBA. UTIF.decode re-lists the
+ *  IFDs (cheap header parse); decodeImage + toRGBA8 decode the chosen page's pixels. */
+function decodeTiffPage(UTIF: any, buf: ArrayBuffer, pageIndex: number): Decoded {
     const ifds = UTIF.decode(buf);
     if (!ifds || !ifds.length) throw new Error("No image in TIFF");
-    const ifd = ifds[0];
+    const i = Math.min(Math.max(0, pageIndex), ifds.length - 1);
+    const ifd = ifds[i];
     UTIF.decodeImage(buf, ifd);
     const rgba = UTIF.toRGBA8(ifd); // Uint8Array, length = w*h*4
     const width = ifd.width as number;
@@ -70,17 +92,106 @@ async function decodeTiff(buf: ArrayBuffer, ctx: ViewerContext): Promise<Decoded
     return { rgba: new Uint8ClampedArray(rgba.buffer, rgba.byteOffset, rgba.byteLength), width, height };
 }
 
-/** Decode a PSD's composited (flattened) image with @webtoon/psd. The decoder is
- *  lazy-loaded behind a "Loading PSD decoder…" dock state on first use. */
+/**
+ * Decode a PSD's composited (flattened) image with ag-psd. ag-psd is the only PSD
+ * reader we found that handles every depth/compression chat throws at it — 8/16/32-bit
+ * channels and Raw/RLE/Zip composite data — where the previous reader parse-threw on
+ * Zip PSDs and its WASM compositor panicked on 16-bit.
+ *
+ * We read the composite with `useImageData: true` (ag-psd's "keep bytes, not a canvas"
+ * mode) and normalise to 8-bit RGBA ourselves — see normalizeImageData for the exact
+ * per-channel handling, which is the load-bearing part of the high-bit-depth support.
+ * (ag-psd's own `psd.canvas` came out all-black for 16-bit PSDs in this renderer, so we
+ * do NOT rely on it; useImageData gives the real pixels.)
+ *
+ * ag-psd loads as an out-of-bundle CHUNK (engine/chunkRegistry.ts) behind the "Loading
+ * PSD decoder…" dock state, so its ~290 KB stays out of the base renderer.
+ */
 async function decodePsd(buf: ArrayBuffer, ctx: ViewerContext): Promise<Decoded> {
-    const Psd: any = await withLibLoading(ctx, STRINGS.loading.lib.psd, "@webtoon/psd",
-        async () => (await import("@webtoon/psd")).default);
-    const psd = Psd.parse(buf);
-    const rgba: Uint8ClampedArray = await psd.composite(); // RGBA, w*h*4
+    const mod: any = await withLibLoading(ctx, STRINGS.loading.lib.psd, "ag-psd",
+        async () => await import("ag-psd"));
+    // ag-psd auto-installs a browser canvas factory when `document` exists; install it
+    // explicitly + idempotently so any internal canvas use is deterministic.
+    try {
+        mod.initializeCanvas?.((w: number, h: number) => {
+            const c = document.createElement("canvas");
+            c.width = w; c.height = h;
+            return c;
+        });
+    } catch { /* already initialized — fine */ }
+
+    const psd: any = mod.readPsd(buf, {
+        useImageData: true,
+        skipLayerImageData: true,
+        skipThumbnail: true
+    });
     const width = psd.width as number;
     const height = psd.height as number;
     if (!width || !height) throw new Error("Empty PSD canvas");
+
+    const id = psd.imageData;
+    if (!id || !id.data) throw new Error("PSD has no composite image");
+    const rgba = normalizeImageData(id.data, width, height);
     return { rgba, width, height };
+}
+
+/**
+ * Normalise ag-psd's `useImageData` composite buffer to 8-bit RGBA (length w*h*4).
+ *
+ * ag-psd's useImageData output is NOT uniformly scaled across depths/channels:
+ *   - 8-bit PSD  → Uint8ClampedArray/Uint8Array, all channels 0..255  → pass through.
+ *   - 16-bit PSD → Uint16Array where the COLOUR channels (R,G,B) are already 8-bit-scaled
+ *                  (0..255) but ALPHA is full 16-bit (0..65535). Scaling the whole array
+ *                  by >> 8 turns the (already-byte) colours to ~0 → a black image (the bug
+ *                  the first cut hit). So we detect per-channel: a channel whose max is
+ *                  > 255 is 16-bit (scale by /257 → 0..255); a channel whose max is ≤ 255
+ *                  is already a byte (pass through). This makes RGB pass through and ALPHA
+ *                  down-convert — the correct result.
+ *   - 32-bit PSD → Float32Array; same per-channel rule, but a float channel (max ≤ 1.0 for
+ *                  normalised, or 0..255-ish) is scaled by its own max to fill 0..255.
+ * Per-channel detection (not a single global rule) is what makes this robust to ag-psd's
+ * mixed scaling without hard-coding "RGB is bytes, alpha is 16-bit".
+ */
+function normalizeImageData(data: ArrayLike<number>, width: number, height: number): Uint8ClampedArray {
+    const need = width * height * 4;
+    if (data.length < need) throw new Error("Truncated PSD pixel data");
+
+    // Fast path: already an 8-bit byte buffer.
+    if (data instanceof Uint8ClampedArray) return data;
+    if (data instanceof Uint8Array) return new Uint8ClampedArray(data.buffer, data.byteOffset, need);
+
+    const isFloat = data instanceof Float32Array || data instanceof Float64Array;
+
+    // Per-channel max over the 4 interleaved channels (R,G,B,A), so each channel is scaled
+    // by what it actually carries (ag-psd mixes byte colours with 16-bit alpha).
+    const max = [0, 0, 0, 0];
+    for (let i = 0; i < need; i++) {
+        const c = i & 3;
+        const v = data[i] as number;
+        if (v > max[c]) max[c] = v;
+    }
+    // Per-channel scale to map that channel's range onto 0..255:
+    //   byte channel (max ≤ 255, integer)  → factor 1 (pass through)
+    //   16-bit channel (max > 255)         → 255 / max  (≈ /257 for full-scale 65535)
+    //   float channel                      → 255 / max  (normalises 0..max → 0..255)
+    const scale = max.map(m => {
+        if (m <= 0) return 0;
+        if (!isFloat && m <= 255) return 1; // already a byte
+        return 255 / m;
+    });
+
+    const out = new Uint8ClampedArray(need);
+    for (let i = 0; i < need; i++) {
+        const c = i & 3;
+        const f = scale[c];
+        out[i] = f === 1 ? (data[i] as number) : Math.round((data[i] as number) * f);
+    }
+    // A fully-opaque image whose alpha channel was absent (max 0) must not render fully
+    // transparent: if alpha came through as all-zero, force it opaque.
+    if (max[3] === 0) {
+        for (let i = 3; i < need; i += 4) out[i] = 255;
+    }
+    return out;
 }
 
 /** Paint RGBA → an offscreen canvas → a blob: url (PNG, or JPEG past the pixel
@@ -111,10 +222,6 @@ function rgbaToBlobUrl(d: Decoded): Promise<{ url: string; width: number; height
  *  a blob: url. heic2any already paints through libheif → canvas internally and hands
  *  back a PNG/JPEG Blob, so we don't go via our own canvas for this branch. */
 async function heicToBlobUrl(buf: ArrayBuffer, ctx: ViewerContext): Promise<{ url: string }> {
-    // heic2any bundles libheif as a base64 wasm string. Loading it instantiates the
-    // wasm (the slow part), so route it through withLibLoading: the dock shows a
-    // "Loading HEIC decoder…" state on the FIRST heic of the session, then the lib is
-    // cached and a second heic decodes with no extra load.
     const heic2any: any = await withLibLoading(ctx, STRINGS.loading.lib.heic, "heic2any",
         async () => (await import("heic2any")).default);
     const out = await heic2any({ blob: new Blob([buf]), toType: "image/png" });
@@ -123,10 +230,33 @@ async function heicToBlobUrl(buf: ArrayBuffer, ctx: ViewerContext): Promise<{ ur
     return { url: URL.createObjectURL(blob) };
 }
 
-/** RASTER-IMAGE loader: fetch bytes → decode per ext → blob: url → retype to "image".
- *  Always writes the cache `entry` (even when superseded, so dispose can revoke the
- *  blob), only writes live `content` while the token is current. */
+/**
+ * Re-blob a specific page of an already-decoded multi-page TIFF and point the live
+ * content.url (+ entry.url) at it. Used by the page selector: it re-decodes the chosen
+ * IFD from the cached TIFF bytes (no re-fetch), memoising the blob per page on the
+ * entry so flipping back is instant. Returns the blob url. Throws if the page can't be
+ * decoded (the caller surfaces it). The utif lib is already loaded by the initial open.
+ */
+export async function blobForTiffPage(entry: CacheEntry, ctx: ViewerContext, pageIndex0: number): Promise<string> {
+    const tiff = entry.rasterTiff;
+    if (!tiff) throw new Error("No TIFF source on entry");
+    const urls = entry.rasterPageUrls || (entry.rasterPageUrls = []);
+    const cached = urls[pageIndex0];
+    if (cached) return cached;
+    const UTIF = await loadUtif(ctx);
+    const decoded = decodeTiffPage(UTIF, tiff.buf, pageIndex0);
+    const { url } = await rgbaToBlobUrl(decoded);
+    urls[pageIndex0] = url;
+    return url;
+}
+
+/** RASTER-IMAGE loader: fetch bytes → decode per ext. SINGLE-image files (psd / heic /
+ *  single-page tiff) retype to "image"; a MULTI-page tiff keeps the "rasterimage" type
+ *  and drives a page selector over the image surface. Always writes the cache `entry`
+ *  (even when superseded, so dispose can revoke the blob), only writes live `content`
+ *  while the token is current. */
 function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): void {
+    resetRasterView(ctx.window);
     if (!opts.url) {
         ctx.content.loading = false;
         ctx.content.error = STRINGS.error.noSource.title;
@@ -142,73 +272,141 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             return r.arrayBuffer();
         })
         .then(async buf => {
+            if (ext === "tiff" || ext === "tif") {
+                await loadTiff(buf, opts, token, entry, ctx);
+                return;
+            }
+            // Single-image formats: decode → blob → retype to "image".
             let blobUrl: string;
             if (ext === "heic" || ext === "heif") {
                 blobUrl = (await heicToBlobUrl(buf, ctx)).url;
             } else if (ext === "psd") {
                 blobUrl = (await rgbaToBlobUrl(await decodePsd(buf, ctx))).url;
             } else {
-                // tiff / tif (and any future raster ext routed here)
-                blobUrl = (await rgbaToBlobUrl(await decodeTiff(buf, ctx))).url;
+                // any other future single-image raster ext routed here
+                blobUrl = (await rgbaToBlobUrl(await decodePsd(buf, ctx))).url;
             }
-
-            // Park the decoded result on the entry as an "image" so a cache restore
-            // re-points the <img> at the blob (mountFromCache sets content.url = e.url).
-            // The KEY stays "rasterimage|<cdn-url>"; only the render type + url change.
-            if (entry) {
-                entry.type = "image";
-                entry.url = blobUrl;
-                entry.loading = false;
-                entry.error = null;
-            }
-
-            if (!token.isCurrent()) {
-                // Superseded mid-decode: the entry holds the blob (dispose will revoke
-                // it on eviction); don't touch live content.
-                return;
-            }
-            ctx.content.type = "image";
-            ctx.content.url = blobUrl;
-            resetImgView(ctx.window); // a fresh open lands at fit, like a normal image
-            ctx.content.loading = false;
-            ctx.content.error = null;
-            ctx.requestRender();
+            finishAsImage(blobUrl, token, entry, ctx);
         })
         .catch(e => {
             if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
             if (!token.isCurrent()) return;
             ctx.content.loading = false;
+            ctx.content.loadingLabel = null;
             ctx.content.error = String(e?.message || e);
             ctx.requestRender();
         });
 }
 
-function createState(): unknown {
-    return {};
-}
-function resetState(): void {
-    /* no rasterimage-specific view-state — it renders through the image viewer
-       post-retype, which owns the zoom/pan slice keyed "image". */
-}
-function snapshot(): void {
-    /* nothing format-specific to park (the image viewer parks its own zoom/pan) */
-}
-function restore(): void {
-    /* nothing format-specific to restore */
-}
+/** Decode a TIFF: count pages, decode the FIRST page (or the cache-restored page), and
+ *  either retype to "image" (single page) or keep "rasterimage" with the page state +
+ *  the source bytes parked on the entry for page switching (multi-page). */
+async function loadTiff(buf: ArrayBuffer, _opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): Promise<void> {
+    const UTIF = await loadUtif(ctx);
+    const pages = tiffPageCount(UTIF, buf);
+    if (!pages) throw new Error("No image in TIFF");
 
-/** Revoke the decoded blob: url when the cache entry is evicted, so a long session
- *  doesn't leak decoded bitmaps. By eviction time entry.type is "image" and
- *  entry.url is the blob: url (the loader retyped it); guard on the blob: scheme so
- *  we only ever revoke urls WE created, never a CDN url. */
-function dispose(entry: CacheEntry): void {
-    const u = entry.url;
-    if (u && u.startsWith("blob:")) {
-        try { URL.revokeObjectURL(u); } catch { /* already gone */ }
+    const vs = rasterState(ctx.window);
+    // The page to open: a cache restore set vs.page via restore(); clamp into range.
+    // A fresh open lands on page 1.
+    const startPage = Math.min(Math.max(1, vs.page || 1), pages);
+    const decoded = decodeTiffPage(UTIF, buf, startPage - 1);
+    const { url } = await rgbaToBlobUrl(decoded);
+
+    if (pages <= 1) {
+        // Single-page TIFF — behave exactly like before (plain image surface, no nav).
+        finishAsImage(url, token, entry, ctx);
+        return;
     }
+
+    // Multi-page TIFF — keep the "rasterimage" surface (image + page selector). Park the
+    // source bytes + page count on the entry so page switches re-blob with no re-fetch.
+    if (entry) {
+        entry.type = "rasterimage";
+        entry.url = url;
+        entry.rasterTiff = { buf, pages };
+        entry.rasterPageUrls = [];
+        entry.rasterPageUrls[startPage - 1] = url;
+        entry.loading = false;
+        entry.error = null;
+    }
+    if (!token.isCurrent()) return;
+    vs.total = pages;
+    vs.page = startPage;
+    ctx.content.type = "rasterimage";
+    ctx.content.url = url;
+    resetImgView(ctx.window); // a fresh open lands at fit, like a normal image
+    ctx.content.loading = false;
+    ctx.content.loadingLabel = null;
+    ctx.content.error = null;
+    ctx.requestRender();
 }
 
-export const RasterImageViewer: Viewer = {
+/** Park a decoded single-image blob on the entry as an "image" and (if current) point
+ *  live content at it, retyping to the image viewer surface. */
+function finishAsImage(blobUrl: string, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): void {
+    if (entry) {
+        entry.type = "image";
+        entry.url = blobUrl;
+        entry.loading = false;
+        entry.error = null;
+    }
+    if (!token.isCurrent()) return; // superseded — entry holds the blob; dispose revokes it
+    ctx.content.type = "image";
+    ctx.content.url = blobUrl;
+    resetImgView(ctx.window);
+    ctx.content.loading = false;
+    ctx.content.loadingLabel = null;
+    ctx.content.error = null;
+    ctx.requestRender();
+}
+
+function createState(): RasterViewState {
+    return { page: 1, total: 1 };
+}
+function resetState(vs: RasterViewState): void {
+    if (!vs) return;
+    vs.page = 1;
+    vs.total = 1;
+}
+
+/** Park the current TIFF page on the entry so a cache return reopens it on the same
+ *  page (single-image files retype to "image" before this fires and never reach here). */
+function snapshot(vs: RasterViewState, entry: CacheEntry): void {
+    if (entry.type !== "rasterimage") return;
+    entry.view.rasterPage = vs?.page ?? 1;
+}
+
+/** Restore the saved TIFF page on a cache return. The total is re-derived from the
+ *  cached source bytes (entry.rasterTiff.pages) so the selector is right before the
+ *  body mounts; the page is clamped into range. */
+function restore(vs: RasterViewState, entry: CacheEntry): void {
+    if (!vs) return;
+    const pages = entry.rasterTiff?.pages ?? 1;
+    vs.total = pages;
+    vs.page = Math.min(Math.max(1, entry.view.rasterPage ?? 1), Math.max(1, pages));
+}
+
+/** Revoke every decoded blob: url this viewer created when the cache entry is evicted.
+ *  A single-image file leaves one url on entry.url (entry.type === "image"); a multi-
+ *  page TIFF leaves the per-page urls in entry.rasterPageUrls (entry.type stays
+ *  "rasterimage", entry.url is one of those page urls). Guard on the blob: scheme so we
+ *  only ever revoke urls WE created, never a CDN url. */
+function dispose(entry: CacheEntry): void {
+    const revoke = (u: string | null | undefined) => {
+        if (u && u.startsWith("blob:")) {
+            try { URL.revokeObjectURL(u); } catch { /* already gone */ }
+        }
+    };
+    revoke(entry.url);
+    if (entry.rasterPageUrls) {
+        for (const u of entry.rasterPageUrls) revoke(u);
+        entry.rasterPageUrls = [];
+    }
+    entry.rasterTiff = null;
+}
+
+export const RasterImageViewer: Viewer<RasterViewState> = {
     type: "rasterimage",
     load,
     createState,
@@ -216,10 +414,14 @@ export const RasterImageViewer: Viewer = {
     snapshot,
     restore,
     dispose,
-    // Body is never actually mounted for "rasterimage": load() retypes content.type to
-    // "image" before the body renders, so the dispatcher routes to the image viewer's
-    // Body. ImageBody is the right placeholder to satisfy the contract (it reads
-    // content.url, which by then is the decoded blob). No HeaderControls / gallery /
-    // editable here — those belong to the image viewer the retype hands off to.
-    Body: ImageBody,
+    // For a SINGLE-image file load() retypes content.type to "image" before the body
+    // renders, so the dispatcher routes to the image viewer's Body — this Body is never
+    // mounted for those. For a MULTI-page TIFF content.type stays "rasterimage", so the
+    // dispatcher mounts RasterImageBody (the image surface + a page selector) and
+    // RasterHeaderControls (the image controls + page nav).
+    Body: RasterImageBody,
+    HeaderControls: RasterHeaderControls,
+    // The multi-page surface renders the same <img> the image viewer uses (sits in
+    // .dockview-body) — the default scroller is correct.
+    capabilities: { openInWindow: true }
 };

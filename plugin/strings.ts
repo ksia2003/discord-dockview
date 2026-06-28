@@ -158,6 +158,19 @@ export const STRINGS = {
         rotate: "Rotate"
     },
 
+    // --- raster (multi-page TIFF) header controls ---------------------------
+    // A multi-page TIFF keeps its own surface (the image viewer + a page selector);
+    // the page nav mirrors the PDF page nav — prev/next chevrons + a jump input with
+    // a " / N" total. Single-page TIFF / PSD / HEIC retype to a plain image and show
+    // none of this. Copy speaks in "pages" (the TIFF's image directories).
+    raster: {
+        prevPage: "Previous page (←)",
+        nextPage: "Next page (→)",
+        goToPage: "Go to page",
+        goToPageHint: "Type a page number, Enter to jump",
+        pageIndicator: "Current page / total"
+    },
+
     // --- pptx (presentation) header controls --------------------------------
     // Slide navigation mirrors the PDF page nav: prev/next chevrons + a jump input
     // with a " / N" total. Copy speaks in "slides", not "pages".

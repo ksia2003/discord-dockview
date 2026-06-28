@@ -57,9 +57,9 @@ export const SAMPLE_CATALOG: SampleCategory[] = [
         title: "Images",
         entries: [
             { label: "Image (PNG)", ext: "png", file: "example.png", blurb: "Raster image — fit to width, zoom, lightbox." },
-            { label: "TIFF", ext: "tif", file: "example.tif", blurb: "TIFF decoded to a canvas (utif) then shown as an image." },
+            { label: "TIFF", ext: "tif", file: "example.tif", blurb: "TIFF decoded to a canvas (utif); multi-page TIFFs get a page selector." },
             { label: "HEIC", ext: "heic", file: "example.heic", blurb: "Apple HEIC decoded via libheif wasm (downloads on first open)." },
-            { label: "Photoshop", ext: "psd", file: "example.psd", blurb: "Flattened PSD composite decoded to an image (@webtoon/psd)." }
+            { label: "Photoshop", ext: "psd", file: "example.psd", blurb: "PSD composite decoded to an image (ag-psd, any bit depth 8/16/32)." }
         ]
     },
     {

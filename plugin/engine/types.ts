@@ -144,6 +144,17 @@ export interface ImgViewState {
     fullscreen: boolean;
 }
 
+/** The raster viewer's per-window view-state: the current PAGE of a multi-page TIFF
+ *  (1-based) + the total page count. Single-page raster files (psd/heic/single TIFF)
+ *  retype to "image" and never reach this slice; only a multi-page TIFF keeps its
+ *  "rasterimage" surface and drives a page selector off these numbers. `total` is 1
+ *  until the loader has counted the TIFF's IFDs. Parked on the cache entry so a
+ *  return reopens the same page. */
+export interface RasterViewState {
+    page: number; // 1-based current page
+    total: number; // page count (1 = single page, no nav chrome)
+}
+
 export interface CodeViewState {
     findOpen: boolean;
     findQuery: string;
@@ -271,6 +282,9 @@ export interface CachedView {
     // the xlsx sheet (0-based index) the user was on, so a cache return reopens the
     // workbook on the same sheet.
     xlsxSheet?: number;
+    // the raster TIFF page (1-based) the user was on, so a cache return reopens the
+    // multi-page TIFF on the same page.
+    rasterPage?: number;
     scrollTop?: number; // shared scroll of the active body scroller
     csvMode?: "grid" | "raw";
     treeMode?: "tree" | "raw";
@@ -307,6 +321,15 @@ export interface CacheEntry {
     // while cached so a re-open re-renders without a re-fetch/re-parse. Plain decoded
     // text — no GPU/worker handle — so no dispose() needed.
     xlsxWorkbook?: { names: string[]; csv: string[] } | null;
+    // A multi-page TIFF keeps its decoded source on the entry so page switches re-blob
+    // a different IFD with NO re-fetch: `rasterTiff.buf` is the original TIFF bytes and
+    // `rasterTiff.pages` is the IFD count. Single-page raster files (which retype to
+    // "image") never set this. `rasterPageUrls` memoises the blob: url per already-
+    // visited page (index 0-based) so flipping back to a page is instant; the raster
+    // viewer's dispose() revokes every url here on eviction (mirrors the single blob
+    // the retype path leaves on entry.url). Plain bytes — no GPU/worker handle.
+    rasterTiff?: { buf: ArrayBuffer; pages: number } | null;
+    rasterPageUrls?: (string | null)[];
     binary?: boolean;
     error?: string | null;
     loading: boolean;

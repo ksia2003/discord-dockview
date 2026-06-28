@@ -51,8 +51,9 @@ import { ImageViewer } from "./image/ImageViewer";
 registerViewer(ImageViewer);
 
 // raster/ — TIFF / PSD / HEIC: the loader fetches the bytes, decodes per-format to
-// RGBA (utif / @webtoon/psd / heic2any, each dynamic-imported), paints to a canvas,
-// exports a blob: url and RETYPES to "image" so the image viewer surface renders it.
+// RGBA (utif / ag-psd / heic2any, each dynamic-imported), paints to a canvas, exports
+// a blob: url and RETYPES to "image" so the image viewer surface renders it — EXCEPT a
+// multi-page TIFF, which keeps its own "rasterimage" surface (image + a page selector).
 import { RasterImageViewer } from "./raster/RasterImageViewer";
 registerViewer(RasterImageViewer);
 

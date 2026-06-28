@@ -66,8 +66,9 @@ export const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg
 // bytes, decoded per-format to RGBA, painted to a canvas and exported as a blob:
 // url, then RETYPED to "image" so the whole image UX (fit/zoom/lightbox) is reused
 // — the same decode→retype trick the xlsx loader uses to reach the csv grid.
-//   tiff/tif  -> utif (first page; multi-page is a future depth item)
-//   psd       -> @webtoon/psd (the composited/flattened image)
+//   tiff/tif  -> utif (multi-page TIFFs keep a "rasterimage" surface w/ a page selector;
+//                single-page retypes to image)
+//   psd       -> ag-psd (the composited/flattened image, any bit depth 8/16/32)
 //   heic/heif -> heic2any (libheif wasm, dynamic-imported so the wasm only
 //                downloads when a HEIC is actually opened)
 // raw camera (cr2/nef/dng/…), eps/ai, dicom and indd are NOT here — they need
