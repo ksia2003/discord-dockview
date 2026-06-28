@@ -215,7 +215,10 @@ function isImageUrl(url: string): boolean {
 function mediaFromContainer(wrapper: HTMLElement): { url: string; name: string; type: ContentType; } | null {
     const vid = wrapper.querySelector("video") as HTMLVideoElement | null;
     if (vid) {
-        const vurl = fiberImageUrl(wrapper) || vid.src || vid.currentSrc || null;
+        // Prefer the url the inline <video> is ACTUALLY playing (currentSrc/src) — it's
+        // the signed, playable one. fiberImageUrl can hand back a different/un-signed
+        // attachment url that the dock's <video> then 403s on ("Can't play this here").
+        const vurl = vid.currentSrc || vid.src || fiberImageUrl(wrapper) || null;
         if (vurl && detectType({ url: vurl }) === "video") return { url: vurl, name: nameFromUrl(vurl), type: "video" };
     }
     const img = wrapper.querySelector("img");
@@ -250,7 +253,7 @@ function resolveInlineMediaClick(target: EventTarget | null): { url: string; nam
         if (/(?:^|[^a-z])visualMediaItem|mosaicItem/i.test(cls)) {
             const vid = el.querySelector("video") as HTMLVideoElement | null;
             if (vid) {
-                const vurl = fiberImageUrl(el) || vid.src || vid.currentSrc || null;
+                const vurl = vid.currentSrc || vid.src || fiberImageUrl(el) || null;
                 if (vurl && detectType({ url: vurl }) === "video") return { url: vurl, name: nameFromUrl(vurl), type: "video" };
             }
         }
