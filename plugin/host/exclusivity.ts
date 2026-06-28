@@ -6,7 +6,7 @@
  *
  * THE RULES (agreed model — "the dock acts like a native thread"):
  *  1. Dock OPENS → it takes the slot: collapse the member list / profile sidebar
- *     (remembering, PER CHANNEL, that WE collapsed it) and close any open thread.
+ *     (remembering that WE collapsed it) and close any open thread.
  *  2. Dock CLOSES (F9 / X) → restore what it displaced: the member list / profile
  *     reappears (back to the pre-dock state). A thread does NOT reopen — closing a
  *     thread is navigation, not a sidebar toggle (mirrors native).
@@ -14,8 +14,11 @@
  *     → the dock YIELDS (closes) so that thing shows; it does NOT come back on its
  *     own when that thing later closes. The slot holds one thing; the switch was the
  *     user's. Member list, thread, and profile are treated identically here.
- *  4. All of this is tracked PER CHANNEL (owed-restore is a Set keyed by channelId),
- *     so switching channels never strands a collapsed/visible member list.
+ *  4. The member list / profile sidebar are GLOBAL Discord toggles, so the owed-restore
+ *     is a single global flag — but it's RECONCILED on every channel switch (via
+ *     syncNative*(dockVisible())), so the list ends up matching the CURRENT channel:
+ *     collapsed where the dock holds the slot, restored where it doesn't. Opening the
+ *     dock in one channel never leaves the list collapsed in a channel that has no dock.
  *
  * Implemented as two directions:
  *  FORWARD (we open) → collapse whatever holds the slot: close the native channel/
@@ -56,8 +59,14 @@ const EXCLUSIVE_HIDDEN_ATTR = "data-dockview-exclusive-hidden";
 // was the root of the stranded "member list left visible/hidden" bug. We restore a
 // channel's list when the dock is hidden in THAT channel (toggle / close / a return
 // with the dock hidden), keyed by the channel that was current when we collapsed it.
-const memberListOwed = new Set<string>();
-const profileSidebarOwed = new Set<string>();
+// Discord's member list / DM profile sidebar are GLOBAL client toggles (not per
+// channel): collapsing the list in one channel collapses it everywhere. So the
+// owed-restore is a single GLOBAL flag — true ⟺ WE collapsed it and owe a restore.
+// It's reconciled on EVERY channel switch (onChannelSelect calls syncNative*(
+// dockVisible())), so the global list ends up matching "is the dock visible in the
+// CURRENT channel": collapsed where the dock holds the slot, restored where it doesn't.
+let memberListCollapsedByUs = false;
+let profileSidebarCollapsedByUs = false;
 // At most one pending member-list reconcile poll (catches an async reappearance).
 let memberReconcileTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -187,27 +196,25 @@ function scheduleMemberListReconcile(): void {
 }
 
 export function syncNativeMemberList(open: boolean): void {
-    const c = getCurrentChannelId();
     if (open) {
         // Only owe a restore if WE actually collapsed a SHOWN list (never restore one
         // the user had already hidden themselves).
-        if (c && isMemberListShown() && dispatchMemberListToggle()) memberListOwed.add(c);
+        if (isMemberListShown() && dispatchMemberListToggle()) memberListCollapsedByUs = true;
         // The list may also reappear a tick later (e.g. a thread we just closed) — watch
         // for that and collapse it so it never lingers beside the dock.
         scheduleMemberListReconcile();
-    } else if (c && memberListOwed.has(c)) {
+    } else if (memberListCollapsedByUs) {
         if (!isMemberListShown()) dispatchMemberListToggle();
-        memberListOwed.delete(c);
+        memberListCollapsedByUs = false;
     }
 }
 
 export function syncNativeProfileSidebar(open: boolean): void {
-    const c = getCurrentChannelId();
     if (open) {
-        if (c && isUserProfileSidebarShown() && dispatchUserProfileSidebarToggle()) profileSidebarOwed.add(c);
-    } else if (c && profileSidebarOwed.has(c)) {
+        if (isUserProfileSidebarShown() && dispatchUserProfileSidebarToggle()) profileSidebarCollapsedByUs = true;
+    } else if (profileSidebarCollapsedByUs) {
         if (!isUserProfileSidebarShown()) dispatchUserProfileSidebarToggle();
-        profileSidebarOwed.delete(c);
+        profileSidebarCollapsedByUs = false;
     }
 }
 
@@ -283,10 +290,10 @@ export function restoreHiddenMembers(): void {
  *  routine (open.ts). */
 function closeForExclusiveTakeover(): void {
     if (!dockVisible()) return;
-    // The user is opening this sidebar — drop THIS channel's owed restores so the
-    // vacate (open.ts) can't re-collapse what they just asked for.
-    const c = getCurrentChannelId();
-    if (c) { memberListOwed.delete(c); profileSidebarOwed.delete(c); }
+    // The user is opening this sidebar — drop the owed restores so the vacate (open.ts)
+    // can't re-collapse what they just asked for.
+    memberListCollapsedByUs = false;
+    profileSidebarCollapsedByUs = false;
     vacateDock();
 }
 
@@ -325,7 +332,7 @@ export function onChannelSidebarView(): void {
 }
 
 // --- debug accessors (the __dockView surface reads these) -------------------
-export function getMemberListRestorePending(): boolean { const c = getCurrentChannelId(); return c != null && memberListOwed.has(c); }
-export function getProfileSidebarRestorePending(): boolean { const c = getCurrentChannelId(); return c != null && profileSidebarOwed.has(c); }
+export function getMemberListRestorePending(): boolean { return memberListCollapsedByUs; }
+export function getProfileSidebarRestorePending(): boolean { return profileSidebarCollapsedByUs; }
 export function getSelfMemberToggle(): boolean { return selfMemberToggle; }
 export function getSelfProfileToggle(): boolean { return selfProfileToggle; }
