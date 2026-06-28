@@ -119,3 +119,9 @@ registerViewer(GraphvizViewer);
 
 import { IpynbViewer } from "./doc/IpynbViewer";
 registerViewer(IpynbViewer);
+
+// email/ — .eml (RFC 822 / MIME): postal-mime parses the message; the loader builds a
+// header card + body + attachment list into one HTML doc (remote images neutralised)
+// and renders it through the same dark sandboxed-iframe shell as docx/rtf/odt.
+import { EmailViewer } from "./email/EmailViewer";
+registerViewer(EmailViewer);

@@ -161,6 +161,34 @@ table:hover::-webkit-scrollbar-thumb, table:hover::-webkit-scrollbar-track { vis
 .dv-nb-out-err { color: #ff938a !important; background: #2b1d1d !important; border-color: #5a2626 !important; }
 .dv-nb-img { max-width: 100%; background: #fff; border-radius: 6px; }
 .dv-nb-sep { height: 1px; border: 0; background: #2b2d31; margin: 0 0 14px; }
+/* email (.eml): a header card (From/To/Subject/Date) above the message body, plus an
+   attachment list. The body — the sender's own HTML or a plaintext fallback — sits in
+   a neutral wrapper; we strip remote image sources before render so nothing phones home
+   (a "remote content blocked" pill marks where an image was). The card reuses the dark
+   doc palette so it reads as chrome, not content. */
+.dv-eml-head { margin: 0 0 18px; padding: 0 0 14px; border-bottom: 1px solid #3f4147; }
+.dv-eml-subject { color: #f2f3f5; font-size: 1.35em; font-weight: 600; line-height: 1.3; margin: 0 0 10px; word-break: break-word; }
+.dv-eml-row { display: flex; gap: 8px; font-size: 13px; line-height: 1.5; margin: 2px 0; }
+.dv-eml-label { flex: 0 0 64px; color: #949ba4; text-align: right; user-select: none; }
+.dv-eml-val { flex: 1 1 auto; min-width: 0; color: #dbdee1; word-break: break-word; }
+.dv-eml-val .dv-eml-addr { color: #dbdee1; }
+.dv-eml-val .dv-eml-email { color: #949ba4; }
+.dv-eml-att { margin: 16px 0 0; padding: 12px 0 0; border-top: 1px solid #3f4147; }
+.dv-eml-att-title { color: #949ba4; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; margin: 0 0 8px; }
+.dv-eml-att-list { list-style: none; margin: 0; padding: 0; }
+.dv-eml-att-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin: 4px 0; background: #2b2d31; border: 1px solid #1e1f22; border-radius: 6px; font-size: 13px; color: #dbdee1; }
+.dv-eml-att-item .dv-eml-att-icon { flex: 0 0 auto; color: #949ba4; }
+.dv-eml-att-item .dv-eml-att-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dv-eml-att-item .dv-eml-att-size { flex: 0 0 auto; color: #949ba4; font-size: 12px; }
+.dv-eml-body { color: #dbdee1; line-height: 1.6; word-wrap: break-word; }
+.dv-eml-body img { max-width: 100%; }
+.dv-eml-body a { color: #00a8fc; text-decoration: none; }
+.dv-eml-body a:hover { text-decoration: underline; }
+.dv-eml-body blockquote { margin: 0 0 14px; padding: 0 1em; color: #b5bac1; border-left: 4px solid #4e5058; }
+.dv-eml-body table { max-width: 100%; }
+.dv-eml-body-text { white-space: pre-wrap; word-break: break-word; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+.dv-eml-blocked { display: inline-block; padding: 1px 8px; margin: 2px; background: #2b2d31; border: 1px dashed #4e5058; border-radius: 4px; color: #949ba4; font-size: 12px; }
+.dv-eml-empty { color: #949ba4; font-style: italic; }
 </style>`;
 
 // Dark-theme overlay for KaTeX math, injected after KATEX_CSS only when a doc

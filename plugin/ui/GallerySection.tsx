@@ -40,7 +40,7 @@ const MIME_BY_EXT: Record<string, string> = {
     png: "image/png", tif: "image/tiff", heic: "image/heic", psd: "image/vnd.adobe.photoshop",
     tga: "image/x-tga", ico: "image/x-icon", jp2: "image/jp2",
     md: "text/markdown", py: "text/x-python", json: "application/json", html: "text/html",
-    csv: "text/csv",
+    csv: "text/csv", eml: "message/rfc822",
     xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",

@@ -39,7 +39,8 @@ export type ContentType =
     | "structured"
     | "rasterimage"
     | "model3d"
-    | "pptx";
+    | "pptx"
+    | "email";
 
 // ── panel content ───────────────────────────────────────────────────────────
 

@@ -87,6 +87,7 @@ export const STRINGS = {
             tga: "Loading TGA decoder…",
             ico: "Loading icon decoder…",
             jp2: "Loading JPEG 2000 decoder…",
+            email: "Loading email viewer…",
             pdf: "Loading PDF viewer…",
             mermaid: "Loading diagram engine…",
             graphviz: "Loading Graphviz engine…",

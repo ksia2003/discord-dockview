@@ -56,6 +56,10 @@ export const MERMAID_EXT = new Set(["mmd", "mermaid"]);
 export const GRAPHVIZ_EXT = new Set(["dot", "gv"]);
 // Jupyter notebooks (JSON cells -> one HTML doc -> markdown dark sandboxed iframe).
 export const IPYNB_EXT = new Set(["ipynb"]);
+// Email / MIME messages (postal-mime parse -> header block + body + attachment list
+// -> dark sandboxed iframe). .eml is RFC 822/MIME text; Outlook's binary .msg is a
+// different OLE container postal-mime can't read, so it stays a gap (Wave 2 native).
+export const EML_EXT = new Set(["eml"]);
 // JSON / XML structured data: rendered as an interactive collapsible TREE by
 // default, with a Raw toggle back to the highlighted code view.
 export const STRUCTURED_EXT = new Set(["json", "json5", "xml"]);
@@ -161,6 +165,10 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     // .ipynb -> the notebook cells are built into one HTML doc and rendered through
     // the markdown dark-iframe pipeline (view-only).
     if (ext && IPYNB_EXT.has(ext)) return "ipynb";
+    // .eml -> postal-mime parses the MIME message; the loader builds a header block +
+    // body + attachment list into one HTML doc and renders it through the same dark
+    // sandboxed iframe (remote images are NOT auto-loaded — view-only, sandboxed).
+    if (ext && EML_EXT.has(ext)) return "email";
     // .json/.json5/.xml -> the interactive collapsible tree (with a Raw toggle back
     // to the highlighted code view). Checked BEFORE the CODE_LANG fallthrough so
     // these route to the tree, not the plain code viewer. (.svg stays image, .plist

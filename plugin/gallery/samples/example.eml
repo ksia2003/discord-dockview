@@ -1,0 +1,47 @@
+From: Ada Lovelace <ada@analytical.example>
+To: Charles Babbage <charles@engine.example>
+Cc: Notes List <notes@analytical.example>
+Subject: Notes on the Analytical Engine
+Date: Tue, 10 Jun 2025 14:32:00 +0000
+Message-ID: <demo-0001@analytical.example>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="OUTER"
+
+--OUTER
+Content-Type: multipart/alternative; boundary="ALT"
+
+--ALT
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Dear Charles,
+
+The Engine can do far more than calculate — it can WEAVE algebraic patterns.
+See the attached note.
+
+— Ada
+
+--ALT
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+<html><body>
+<p>Dear Charles,</p>
+<p>The Engine can do far more than calculate &mdash; it can
+<strong>weave algebraic patterns</strong>. See the attached note.</p>
+<p>A remote tracking pixel follows (should be blocked):</p>
+<p><img src="http://tracker.example/pixel.gif" alt="tracking pixel" width="1" height="1"></p>
+<blockquote>It is desirable to guard against the possibility of exaggerated ideas.</blockquote>
+<p>&mdash; Ada</p>
+</body></html>
+
+--ALT--
+
+--OUTER
+Content-Type: text/plain; charset="utf-8"; name="note.txt"
+Content-Disposition: attachment; filename="note.txt"
+Content-Transfer-Encoding: base64
+
+Tm90ZTogdGhlIEFuYWx5dGljYWwgRW5naW5lIHdlYXZlcyBhbGdlYnJhaWMgcGF0dGVybnMuCg==
+
+--OUTER--

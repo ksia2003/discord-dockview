@@ -101,6 +101,12 @@ export const SAMPLE_CATALOG: SampleCategory[] = [
         entries: [
             { label: "PowerPoint", ext: "pptx", file: "example.pptx", blurb: "3-slide deck — step through slides (pptx renderer, lazy chunk)." }
         ]
+    },
+    {
+        title: "Email",
+        entries: [
+            { label: "Email", ext: "eml", file: "example.eml", blurb: "MIME message (postal-mime) — header card, HTML body, attachment; remote images blocked." }
+        ]
     }
 ];
 
