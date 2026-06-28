@@ -14,14 +14,17 @@
  * shape `async fn(_: IpcMainInvokeEvent, ...realArgs)` and ignores the event.
  *
  * Main has full Node and no CSP, so this file talks to the network and the disk
- * directly. It imports ONLY Node builtins (fs/promises, path, crypto) plus the
- * global `fetch` (Node 18+) — NO npm package. The build's deriveDockviewDeps()
- * scans plugin/**\/*.ts for external-package import specifiers and would `pnpm
- * add` anything it finds into the (electron-less) Vencord clone, so importing
- * even an `electron` type would pull a heavy new dependency. We deliberately keep
- * zero module imports beyond Node builtins and declare a local minimal stand-in
- * for Electron's IpcMainInvokeEvent; the functions never read the event, so the
- * exact type is immaterial.
+ * directly. The OTA primitives below import ONLY Node builtins (fs/promises, path,
+ * crypto) plus the global `fetch` (Node 18+). The ONE npm dependency is the
+ * attachment-converter module (./native-convert), which the convertAttachment IPC
+ * dispatches to: those Node-only libs (@kenjiuno/msgreader, utif, …) belong in the
+ * MAIN bundle precisely because the renderer can't run them (Buffer / web-Worker
+ * bans). The build's deriveDockviewDeps() scans plugin/**\/*.ts for external-package
+ * import specifiers and `pnpm add`s + bundles them — so importing native-convert here
+ * pulls its libs into vencordDesktopMain.js (Node target, no browser-builtin ban)
+ * automatically. We still declare a local minimal stand-in for Electron's
+ * IpcMainInvokeEvent rather than importing "electron" (the event is never read, so
+ * the exact type is immaterial and an electron type-dep is avoided).
  *
  * ATOMIC APPLY CONTRACT (applyUpdate)
  * -----------------------------------
@@ -45,6 +48,8 @@
 import { createHash } from "crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "fs/promises";
 import { join } from "path";
+
+import { runConverter } from "./native-convert";
 
 /**
  * Local stand-in for Electron's IpcMainInvokeEvent. We do NOT import it from
@@ -168,6 +173,93 @@ export async function readChunk(_: IpcMainInvokeEvent, targetDir: string, name: 
         return await readFile(join(targetDir, name), "utf-8");
     } catch {
         return null;
+    }
+}
+
+/** Discord CDN hosts the convertAttachment IPC will fetch from. The IPC is NOT an
+ *  open proxy: only an attachment served from one of these hosts is fetched, so a
+ *  compromised/poisoned renderer can't turn main into a general-purpose fetcher. */
+const ALLOWED_CDN_HOSTS = new Set(["cdn.discordapp.com", "media.discordapp.net"]);
+
+/** Cap the bytes the converter will fetch (a RAW can be large, but a 64 MB ceiling
+ *  keeps a pathological/hostile url from exhausting main's memory). */
+const CONVERT_MAX_BYTES = 64 * 1024 * 1024;
+
+/** The shape convertAttachment returns to the renderer. On success `mime` + `b64`
+ *  carry the converted bytes (base64); on failure `error` carries a short message
+ *  the renderer surfaces as a load error. */
+interface ConvertResult { ok: boolean; mime?: string; b64?: string; error?: string; }
+
+/**
+ * Convert an attachment that the RENDERER cannot decode (its CSP / its esbuild
+ * browser-builtin ban), by fetching + decoding it HERE in main and handing back
+ * renderable bytes.
+ * ---------------------------------------------------------------------------
+ * The renderer calls VencordNative.pluginHelpers.DockView.convertAttachment(kind, url)
+ * for two formats that need a Node-only library:
+ *   kind "msg" → @kenjiuno/msgreader parses the binary Outlook OLE message → a clean
+ *                HTML doc (header block + body + attachment list; remote images
+ *                neutralised). Returned as mime "text/html".
+ *   kind "raw" → a camera RAW (cr2/nef/dng/arw/raf/orf/rw2) → its embedded JPEG
+ *                preview (fast, decoder-free) or, failing that, a utif full decode →
+ *                PNG. Returned as mime "image/jpeg" or "image/png".
+ * (Both libs run in Node main with NO web Worker — libraw-wasm's web Worker throws
+ * "Worker is not defined" under Node, build-confirmed, which is exactly why RAW
+ * uses utif + the embedded-preview path here. See native-convert.ts.)
+ *
+ * SECURITY: main has no CSP, so this could be an open proxy if it fetched any url.
+ * It does NOT: `url` MUST parse and resolve to a Discord CDN host (ALLOWED_CDN_HOSTS)
+ * over https, or the call returns { ok:false } without fetching. The fetched body is
+ * size-capped (CONVERT_MAX_BYTES). The converter output is bytes only (HTML/PNG/JPEG)
+ * the renderer wraps in a same-origin blob: — never executed in main.
+ *
+ * Errors (bad host, fetch failure, parse/decoder failure, size cap) are returned as
+ * { ok:false, error } rather than thrown — the renderer shows the message on the
+ * dock's error card.
+ */
+export async function convertAttachment(_: IpcMainInvokeEvent, kind: string, url: string): Promise<ConvertResult> {
+    if (typeof kind !== "string" || (kind !== "msg" && kind !== "raw")) {
+        return { ok: false, error: "Unsupported conversion" };
+    }
+    if (typeof url !== "string" || !url) {
+        return { ok: false, error: "No source to convert" };
+    }
+
+    // Host allowlist — only Discord CDN over https; never an open proxy.
+    let parsed: URL;
+    try {
+        parsed = new URL(url);
+    } catch {
+        return { ok: false, error: "Invalid file URL" };
+    }
+    if (parsed.protocol !== "https:" || !ALLOWED_CDN_HOSTS.has(parsed.hostname)) {
+        return { ok: false, error: "This file can't be converted (unexpected host)" };
+    }
+
+    // Fetch the attachment bytes in main (no CSP here — same path as OTA fetches),
+    // size-capped to keep a pathological url from exhausting memory.
+    let input: Uint8Array;
+    try {
+        const res = await fetchWithTimeout(url, true);
+        const len = Number(res.headers.get("content-length") || 0);
+        if (len && len > CONVERT_MAX_BYTES) {
+            return { ok: false, error: "File is too large to preview" };
+        }
+        const buf = await res.arrayBuffer();
+        if (buf.byteLength > CONVERT_MAX_BYTES) {
+            return { ok: false, error: "File is too large to preview" };
+        }
+        input = new Uint8Array(buf);
+    } catch (err) {
+        return { ok: false, error: `Couldn't fetch the file: ${(err as Error)?.message ?? err}` };
+    }
+
+    // Decode (synchronous, pure-JS — no Worker). A throw becomes a structured error.
+    try {
+        const out = runConverter(kind, input);
+        return { ok: true, mime: out.mime, b64: Buffer.from(out.bytes).toString("base64") };
+    } catch (err) {
+        return { ok: false, error: (err as Error)?.message ?? String(err) };
     }
 }
 

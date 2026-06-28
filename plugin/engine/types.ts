@@ -41,7 +41,9 @@ export type ContentType =
     | "model3d"
     | "dxf"
     | "pptx"
-    | "email";
+    | "email"
+    | "msg"
+    | "raw";
 
 // ── panel content ───────────────────────────────────────────────────────────
 
