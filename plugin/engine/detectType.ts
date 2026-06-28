@@ -38,7 +38,10 @@ export const MD_EXT = new Set(["md", "markdown", "mdown", "mkd"]);
 // Word documents (mammoth -> HTML -> dark sandboxed iframe, view-only).
 export const DOCX_EXT = new Set(["docx"]);
 // Spreadsheets (SheetJS -> first sheet -> CSV text -> retyped to the csv grid).
-export const XLSX_EXT = new Set(["xlsx", "xls"]);
+// SheetJS reads xlsm (macro-enabled OOXML) and ods (OpenDocument) natively too,
+// so they ride the same xlsx pipeline. (.numbers is NOT here — Apple iWork is not
+// readable by SheetJS; it would falsely route and render empty, so leave it a gap.)
+export const XLSX_EXT = new Set(["xlsx", "xls", "xlsm", "ods"]);
 // Mermaid diagram source (mermaid.render -> SVG -> dark sandboxed iframe).
 export const MERMAID_EXT = new Set(["mmd", "mermaid"]);
 // Graphviz / DOT source (viz-js renderString -> SVG -> dark sandboxed iframe).
@@ -81,7 +84,7 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     if (ext && MD_EXT.has(ext)) return "markdown";
     // .docx -> mammoth converts to HTML, rendered through the markdown iframe shell.
     if (ext && DOCX_EXT.has(ext)) return "docx";
-    // .xlsx/.xls -> SheetJS reads it; the loader retypes to "csv" and feeds the grid.
+    // .xlsx/.xls/.xlsm/.ods -> SheetJS reads it; the loader retypes to "csv" and feeds the grid.
     if (ext && XLSX_EXT.has(ext)) return "xlsx";
     // .mmd/.mermaid -> mermaid renders the diagram to SVG in a dark sandboxed iframe.
     if (ext && MERMAID_EXT.has(ext)) return "mermaid";
