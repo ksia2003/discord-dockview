@@ -100,6 +100,15 @@ for (const c of chunks) {
             minify: true,
             target: ["esnext"],
             platform: "browser",
+            // A chunk lib may ship a wasm file it loads at runtime (e.g. @jsquash/jxl's
+            // jxl_dec.wasm). The renderer can't fetch it (Discord CSP blocks a wasm
+            // fetch), so the chunk entry imports the .wasm as raw BYTES and the viewer
+            // compiles a WebAssembly.Module from them to hand the codec via its
+            // instantiateWasm hook. The "binary" loader folds the wasm into the chunk as
+            // a typed-array literal (pure data) instead of emitting it as a separate
+            // asset — no extra file to ship, no runtime fetch. Harmless for chunks that
+            // import no wasm.
+            loader: { ".wasm": "binary" },
             // Alias node builtins a chunk lib references only in dead/debug code to a
             // harmless browser stub (see BUILTIN_BROWSER_STUBS) so the browser bundle
             // resolves them — ag-psd's debug `util.inspect`.

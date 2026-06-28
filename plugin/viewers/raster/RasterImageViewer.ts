@@ -17,6 +17,9 @@
  *                         already PNG bytes for the requested mime → straight to a blob)
  *   jp2/jpx/j2k/j2c -> jpeg2000 (pdf.js JpxImage.parse → interleaved component planes →
  *                         RGBA; parse() needs a Node Buffer view, not a bare Uint8Array)
+ *   jxl       -> @jsquash/jxl (libjxl wasm → ImageData; codec + 849 KB wasm ship as the
+ *                         out-of-bundle "jxl" chunk, and we hand the codec the wasm bytes
+ *                         ourselves so it never fetches — Discord CSP would block that)
  *
  * MULTI-PAGE TIFF (the one case that KEEPS the "rasterimage" type instead of retyping):
  * UTIF.decode returns ALL pages. When there are 2+ pages we keep our own surface — the
@@ -317,6 +320,59 @@ class BufferLikeBytes extends Uint8Array {
     }
 }
 
+/**
+ * Decode a JPEG-XL (.jxl) to RGBA with @jsquash/jxl (the Squoosh libjxl codec). The
+ * codec + its 849 KB jxl_dec.wasm ship as the out-of-bundle "jxl" CHUNK
+ * (engine/chunks/jxl.entry.ts), loaded here on first .jxl open behind the "Loading
+ * JPEG XL decoder…" dock state — keeping the wasm off the base renderer + every Vesktop
+ * startup.
+ *
+ * WASM HANDOFF (the load-bearing CSP fix): the codec's default path fetches
+ * `new URL("jxl_dec.wasm", import.meta.url)`, which Discord's CSP connect-src BLOCKS in
+ * the renderer (and which throws "fetch failed" even headless). @jsquash/jxl's init()
+ * accepts a WebAssembly.Module as its first argument and wires it through Emscripten's
+ * instantiateWasm hook (no fetch). The chunk carries the raw wasm bytes (esbuild binary
+ * loader) as `mod.wasm`; we compile a WebAssembly.Module from them ONCE per session
+ * (memoised) and init() the codec with it, then decode(buffer) → ImageData. This mirrors
+ * how the HEIC path hands libheif its own wasm rather than letting it fetch.
+ */
+let jxlInited: Promise<void> | null = null;
+async function decodeJxl(buf: ArrayBuffer, ctx: ViewerContext): Promise<Decoded> {
+    const mod: any = await withLibLoading(ctx, STRINGS.loading.lib.jxl, "jxl",
+        async () => await import("@jsquash/jxl/decode"));
+    // The chunk exposes { init, decode, wasm }. Compile + init the codec with OUR wasm
+    // bytes exactly once per session so it never fetches; concurrent first opens share
+    // the one init via the cached promise.
+    if (!jxlInited) {
+        jxlInited = (async () => {
+            const bytes: Uint8Array = mod.wasm;
+            if (!bytes || !bytes.byteLength) throw new Error("JPEG XL codec wasm missing from chunk");
+            const wasmModule = await WebAssembly.compile(bytes);
+            // Pass a no-op locateFile so the codec takes its `Module["locateFile"]`
+            // branch ("jxl_dec.wasm" → locateFile(...)) instead of the else branch,
+            // which does `new URL("jxl_dec.wasm", import.meta.url)`. In the eval'd chunk
+            // `import.meta.url` is undefined, so that `new URL` throws "Invalid URL"
+            // BEFORE our instantiateWasm short-circuits the (never-run) fetch — verified
+            // live. With locateFile set, wasmBinaryFile is just a harmless string and our
+            // WebAssembly.Module is what actually instantiates (no fetch). (`p => p`.)
+            await mod.init(wasmModule, { locateFile: (p: string) => p });
+        })().catch(e => { jxlInited = null; throw e; });
+    }
+    await jxlInited;
+    const image: { data: ArrayLike<number>; width: number; height: number } = await mod.decode(buf);
+    const width = image.width;
+    const height = image.height;
+    if (!width || !height) throw new Error("Empty JPEG XL frame");
+    const src = image.data;
+    const rgba = src instanceof Uint8ClampedArray
+        ? src
+        : new Uint8ClampedArray(width * height * 4);
+    if (!(src instanceof Uint8ClampedArray)) {
+        for (let i = 0; i < rgba.length; i++) rgba[i] = src[i] as number;
+    }
+    return { rgba, width, height };
+}
+
 async function decodeJp2(buf: ArrayBuffer, ctx: ViewerContext): Promise<Decoded> {
     const mod: any = await withLibLoading(ctx, STRINGS.loading.lib.jp2, "jpeg2000",
         async () => await import("jpeg2000"));
@@ -404,6 +460,8 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
                 blobUrl = (await icoToBlobUrl(buf, ctx)).url;
             } else if (ext === "jp2" || ext === "jpx" || ext === "j2k" || ext === "j2c") {
                 blobUrl = (await rgbaToBlobUrl(await decodeJp2(buf, ctx))).url;
+            } else if (ext === "jxl") {
+                blobUrl = (await rgbaToBlobUrl(await decodeJxl(buf, ctx))).url;
             } else {
                 // any other raster ext that mapped here without a branch — treat as PSD
                 // (the only remaining single-image decoder) rather than silently failing.
