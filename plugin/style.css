@@ -1790,3 +1790,35 @@ html.dockview-open .dockview-page-inner {
 .dockview-pptx-container [class*="label"] {
     color: var(--text-muted, #949ba4);
 }
+
+/* NATIVE VIDEO-CHIP CENTER PLAY BUTTON — enlarge the small/subtle center play icon
+   that Discord overlays on an inline VIDEO attachment's preview thumbnail (clicking
+   it opens the dock player). The overlay container is `.playCenter_<hash>` — part of
+   Discord's VIDEO/audio attachment-player module; it is rendered ONLY for video (an
+   audio attachment shows inline controls, never a center play button), so scoping to
+   it does NOT touch audio, image embeds, GIFs, link-embed thumbnails, or any other
+   media overlay. We match on the stable class STEM `playCenter_` via a substring
+   selector so a webpack hash reshuffle doesn't silently drop the rule (the hash, not
+   the stem, is what changes build-to-build).
+
+   The container is flex-centered + pointer-events:none; the actual button is its
+   child (an icon wrapper holding the play SVG), which keeps its own pointer cursor.
+   We scale that child up and grow its SVG to match, keeping it crisp and centered.
+
+   FRAGILITY NOTE: if Discord renames the `playCenter` stem or restructures the video
+   overlay, this rule stops matching (a no-op — the small default button returns) and
+   the stem needs re-pinning against the live DOM. It will not mis-target other media:
+   the `playCenter_` stem is unique to the video attachment player. */
+[class*="playCenter_"] > * {
+    /* the center play button: grow the wrapper from ~48px to a clearly larger,
+       easier-to-hit ~72px, kept perfectly centered by the flex container. */
+    width: 72px !important;
+    height: 72px !important;
+    cursor: pointer;
+}
+[class*="playCenter_"] > * svg {
+    /* scale the play glyph up with the wrapper so it stays proportionate + crisp
+       (vector, no blur). The default SVG is ~24-32px; fill the larger wrapper. */
+    width: 100% !important;
+    height: 100% !important;
+}
