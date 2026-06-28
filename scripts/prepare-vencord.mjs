@@ -132,14 +132,18 @@ const DOCKVIEW_DEPS = deriveDockviewDeps();
 // The core desktop bundle files plus the out-of-bundle CHUNK files (chunk-<lib>.js)
 // the chunk build emits. The chunked code-dense libs (mermaid, pptx, three, pdfjs,
 // codemirror) are externalized from the renderer and shipped as these separate
-// files so they no longer cost V8 compile at every Vesktop startup.
+// files so they no longer cost V8 compile at every Vesktop startup. chunk-samples.js
+// (the gallery's example fixtures, base64) ships the same way — out of the renderer,
+// loaded on demand over readChunk when the Examples gallery is first opened.
 const CHUNK_OUTPUT_FILES = chunkFileNames();
+const SAMPLE_CHUNK_FILE = "chunk-samples.js";
 const FILES = [
     "vencordDesktopMain.js",
     "vencordDesktopPreload.js",
     "vencordDesktopRenderer.js",
     "vencordDesktopRenderer.css",
-    ...CHUNK_OUTPUT_FILES
+    ...CHUNK_OUTPUT_FILES,
+    SAMPLE_CHUNK_FILE
 ];
 
 // Packages the renderer build must treat as external (their bytes go into a chunk
@@ -219,6 +223,13 @@ try {
     run("node", [join(__dirname, "build-chunks.mjs"), vencordDir], ROOT, {
         DOCKVIEW_CHUNK_REGISTRY: join(vencordDir, "src", "userplugins", "dockView", "engine", "chunkRegistry.ts"),
         DOCKVIEW_PLUGIN_DIR: join(vencordDir, "src", "userplugins", "dockView")
+    });
+
+    // 4c. Emit the gallery SAMPLES data chunk (chunk-samples.js) — the example
+    //     fixtures base64-embedded, written next to the renderer like a lib chunk
+    //     and loaded on demand over readChunk when the Examples gallery is opened.
+    run("node", [join(__dirname, "build-sample-chunk.mjs"), join(vencordDir, "dist")], ROOT, {
+        DOCKVIEW_SAMPLES_DIR: join(vencordDir, "src", "userplugins", "dockView", "gallery", "samples")
     });
 
     // 5. Copy the desktop dist files + the chunk files into static/vencordDist.

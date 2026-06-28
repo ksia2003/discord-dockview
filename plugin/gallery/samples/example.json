@@ -1,0 +1,14 @@
+{
+  "name": "DockView",
+  "kind": "universal-attachment-viewer",
+  "version": "0.1.x",
+  "categories": ["Documents", "Spreadsheets", "Images", "Code", "Diagrams", "Media", "3D", "Presentation"],
+  "formats": {
+    "documents": ["pdf", "docx", "rtf", "odt"],
+    "images": ["png", "tiff", "heic", "psd"],
+    "threeD": ["obj", "glb"]
+  },
+  "nested": { "a": { "b": { "c": [1, 2, 3, { "deep": true }] } } },
+  "enabled": true,
+  "count": 23
+}

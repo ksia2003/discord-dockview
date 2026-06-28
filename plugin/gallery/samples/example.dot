@@ -1,0 +1,14 @@
+digraph DockView {
+    rankdir=LR;
+    node [shape=box, style=rounded, fontname="sans-serif"];
+    chip   [label="Attachment\nchip"];
+    detect [label="detectType()", shape=diamond];
+    dock   [label="Dock panel"];
+    chip -> detect;
+    detect -> "PDF viewer"   [label="pdf"];
+    detect -> "Image viewer" [label="png/heic"];
+    detect -> "3D viewer"    [label="glb/obj"];
+    "PDF viewer"   -> dock;
+    "Image viewer" -> dock;
+    "3D viewer"    -> dock;
+}
