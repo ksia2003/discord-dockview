@@ -37,6 +37,14 @@ export const CODE_LANG: Record<string, string> = {
 export const MD_EXT = new Set(["md", "markdown", "mdown", "mkd"]);
 // Word documents (mammoth -> HTML -> dark sandboxed iframe, view-only).
 export const DOCX_EXT = new Set(["docx"]);
+// Rich Text Format (self-contained rtf->HTML transform -> dark sandboxed iframe).
+// .rtf is text markup, NOT the legacy binary .doc (which mammoth can't read and is
+// left a gap). View-only.
+export const RTF_EXT = new Set(["rtf"]);
+// OpenDocument Text (fflate unzip + ODF XML -> HTML -> dark sandboxed iframe).
+// .fodt (flat single-XML ODF) is NOT here — it's a different container the unzip
+// path can't read, so it stays a gap rather than falsely routing. View-only.
+export const ODT_EXT = new Set(["odt"]);
 // Spreadsheets (SheetJS -> first sheet -> CSV text -> retyped to the csv grid).
 // SheetJS reads xlsm (macro-enabled OOXML) and ods (OpenDocument) natively too,
 // so they ride the same xlsx pipeline. (.numbers is NOT here — Apple iWork is not
@@ -99,6 +107,10 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     if (ext && MD_EXT.has(ext)) return "markdown";
     // .docx -> mammoth converts to HTML, rendered through the markdown iframe shell.
     if (ext && DOCX_EXT.has(ext)) return "docx";
+    // .rtf -> the self-contained rtf->HTML transform, rendered through the same shell.
+    if (ext && RTF_EXT.has(ext)) return "rtf";
+    // .odt -> fflate unzip + ODF XML -> HTML, rendered through the same shell.
+    if (ext && ODT_EXT.has(ext)) return "odt";
     // .xlsx/.xls/.xlsm/.ods -> SheetJS reads it; the loader retypes to "csv" and feeds the grid.
     if (ext && XLSX_EXT.has(ext)) return "xlsx";
     // .mmd/.mermaid -> mermaid renders the diagram to SVG in a dark sandboxed iframe.

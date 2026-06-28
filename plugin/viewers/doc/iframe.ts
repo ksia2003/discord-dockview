@@ -123,9 +123,16 @@ table:hover::-webkit-scrollbar-thumb, table:hover::-webkit-scrollbar-track { vis
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
 .hljs-deletion { color: #ff938a; }
-/* .docx affordance: a quiet "Converted from .docx" pill above the converted body
-   so a user knows this is a rendering, not the literal file. Muted, not loud. */
+/* .docx/.rtf/.odt affordance: a quiet "Converted from .docx" pill above the
+   converted body so a user knows this is a rendering, not the literal file. The
+   .rtf/.odt converters reuse this same note class. Muted, not loud. */
 .dv-docx-note { color: #949ba4; font-size: 12px; margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid #3f4147; }
+/* .rtf / .odt converted bodies sit inside the same .md article, so they inherit the
+   markdown type scale. Embedded ODF pictures get the same max-width clamp as .md img
+   and a light card so a transparent PNG reads on the dark page; empty paragraphs the
+   converters emit keep their vertical rhythm. */
+.rtf-doc p:empty, .odt-doc p:empty { min-height: 1em; }
+.odt-img { max-width: 100%; height: auto; background: #fff; border-radius: 4px; }
 /* mermaid: the rendered SVG sits centred on the dark page and may be wider/taller
    than the panel, so the body scrolls to it. The SVG keeps its own intrinsic size
    (no forced width) so a large diagram stays legible and pannable via scroll. */

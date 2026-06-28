@@ -30,6 +30,8 @@ export type ContentType =
     | "csv"
     | "mcpapp"
     | "docx"
+    | "rtf"
+    | "odt"
     | "xlsx"
     | "mermaid"
     | "graphviz"

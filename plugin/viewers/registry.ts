@@ -83,6 +83,16 @@ registerViewer(HtmlViewer);
 import { DocxViewer } from "./doc/DocxViewer";
 registerViewer(DocxViewer);
 
+// rtf — the self-contained RTF→HTML transform (no deps) rendered through the same
+// dark doc-iframe shell as docx.
+import { RtfViewer } from "./doc/RtfViewer";
+registerViewer(RtfViewer);
+
+// odt — OpenDocument Text: fflate unzips the package and the ODF body XML is mapped
+// to HTML (embedded pictures → data: URLs), rendered through the same shell.
+import { OdtViewer } from "./doc/OdtViewer";
+registerViewer(OdtViewer);
+
 import { XlsxViewer } from "./doc/XlsxViewer";
 registerViewer(XlsxViewer);
 
