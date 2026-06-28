@@ -142,6 +142,36 @@ export async function readInstalledVersion(_: IpcMainInvokeEvent, targetDir: str
 }
 
 /**
+ * Read an out-of-bundle CHUNK file's source text from the install dir.
+ * ---------------------------------------------------------------------------
+ * The code-dense heavy libs (mermaid, pptx, codemirror, pdfjs, three) are built
+ * as standalone chunk-<lib>.js files that ship ALONGSIDE the renderer/main
+ * bundles in VENCORD_FILES_DIR (the same dir an OTA writes into). They are NOT
+ * inline in vencordDesktopRenderer.js — that is the whole point (their bytes no
+ * longer cost V8 compile at startup). The renderer pulls one in on first use via
+ * this IPC: engine/lazyLib.ts asks for "chunk-mermaid.js", main reads it off disk
+ * and returns the source, and the renderer eval()s it (CSP allows 'unsafe-eval').
+ *
+ * SECURITY: `name` is constrained to `chunk-<id>.js` (alphanumerics, dash, dot)
+ * and joined onto targetDir, so it cannot escape the install dir via "../" or an
+ * absolute path. Anything else returns null. The renderer only ever passes names
+ * from its compiled-in chunk registry, but this guard keeps the IPC honest.
+ *
+ * Returns the file's utf-8 text, or null if missing/unreadable/rejected — the
+ * renderer surfaces that as a load failure (and a chunked viewer can't render).
+ */
+export async function readChunk(_: IpcMainInvokeEvent, targetDir: string, name: string): Promise<string | null> {
+    // Only `chunk-<safe>.js`, no path separators — cannot traverse out of targetDir.
+    if (typeof name !== "string" || !/^chunk-[A-Za-z0-9._-]+\.js$/.test(name)) return null;
+    if (typeof targetDir !== "string" || !targetDir) return null;
+    try {
+        return await readFile(join(targetDir, name), "utf-8");
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Atomically apply an update into targetDir. See the ATOMIC APPLY CONTRACT in the
  * module header: download + sha256-verify EVERY file to ".dockview-tmp" first,
  * then rename them all over the live files (version.txt last). Never returns a

@@ -19,15 +19,19 @@
  *     highlight.js ~0 ms) because V8 pre-parse scans function bodies, not data
  *     literals (heic2any's libheif is a base64 string, not code).
  *
- * So the cheap, infra-free win is: make every heavy lib a dynamic import() so its
- * top-level EXECUTION leaves startup, and surface a dock "loading" state while the
- * lib instantiates. That is exactly what this module gives every viewer.
+ * So the first win is: make every heavy lib a dynamic import() so its top-level
+ * EXECUTION leaves startup, and surface a dock "loading" state while the lib
+ * instantiates. That is what withLibLoading gives every viewer.
  *
- * (Removing the inline BYTES — a separate out-of-bundle chunk fetched over IPC and
- * eval'd — is a heavier, main-process-touching mechanism worth it only for the
- * code-dense libs, and only once the bundle parse becomes the bottleneck. It is NOT
- * done here; see docs. This module is the renderer-only layer those viewers already
- * sit behind, so a future chunk loader can slot in under loadLib() transparently.)
+ * The SECOND win — removing the inline BYTES — is now LIVE for the code-dense libs
+ * (mermaid, pptx, three, pdfjs, codemirror; see engine/chunkRegistry.ts). Those are
+ * EXTERNALIZED from the renderer and built as standalone chunk-<lib>.js files; loadLib
+ * routes a chunked key to loadChunk() below — read the chunk source over the readChunk
+ * IPC (main reads it off disk next to the renderer bundle) and eval it (Vencord patches
+ * 'unsafe-eval' into the CSP). The viewers' withLibLoading call sites do NOT change: the
+ * chunk-vs-inline decision lives entirely here, and the loading label finally covers a
+ * real async disk read + eval. DATA/wasm-dense libs (heic2any, viz, highlight.js) gain
+ * ~0 ms from byte removal, so they stay INLINE (not in the registry).
  *
  * CONTRACT
  *   loadLib(key, () => import("heavy"))  → caches the module promise by key, so the
@@ -41,6 +45,7 @@
  *   shows the right copy while a multi-MB wasm/lib spins up.
  */
 
+import { CHUNK_BY_KEY, type ChunkSpec } from "./chunkRegistry";
 import type { ViewerContext } from "./types";
 
 /** Memoised module promises, keyed by a stable string a viewer chooses (usually the
@@ -48,18 +53,94 @@ import type { ViewerContext } from "./types";
  *  simultaneous opens share one in-flight import() instead of racing two. */
 const libCache = new Map<string, Promise<any>>();
 
+/** chunk file name → global the chunk's IIFE assigns its exports to. Kept stable
+ *  per chunk so concurrent evals of DIFFERENT chunks never clash, and we can read
+ *  the export right back off globalThis after a synchronous eval. */
+function chunkGlobalName(spec: ChunkSpec): string {
+    return `__dockviewChunk_${spec.chunkId}`;
+}
+
 /**
- * Load a heavy library exactly once, caching the import() promise by `key`.
- * The importer is the viewer's own `() => import("pkg")` so esbuild still sees a
- * literal specifier (the build's dep-deriver scans for it) and the dynamic-import
- * deferral applies. Subsequent calls with the same key return the cached promise.
+ * Load an out-of-bundle CHUNK lib: ask main (over the readChunk IPC) for the
+ * chunk-<lib>.js source that ships next to the renderer bundle, eval it (CSP
+ * allows 'unsafe-eval'), and hand back the module export. This is the byte-removal
+ * path: the lib is NOT inline in vencordDesktopRenderer.js, so its V8 compile cost
+ * left startup; the eval here is the deferred, on-first-open cost the dock's
+ * loading label already covers.
+ *
+ * The chunk's IIFE (built with globalName = chunkGlobalName(spec)) assigns its
+ * exports object to globalThis.<name>; we read it straight back (eval is sync),
+ * normalise to the same shape the inline `import("pkg")` gave the viewer, and
+ * return it. Throws (so loadLib evicts + the viewer shows an error) if the bridge
+ * is missing, the read fails, or the eval doesn't produce the expected export.
+ */
+async function loadChunk(spec: ChunkSpec): Promise<any> {
+    const w = window as any;
+    const dir: string | null = (() => {
+        try {
+            const d = w.VesktopNative?.fileManager?.getVencordDir?.();
+            return typeof d === "string" && d ? d : null;
+        } catch {
+            return null;
+        }
+    })();
+    if (!dir) throw new Error("DockView: cannot locate Vencord files dir to load chunk " + spec.chunkId);
+
+    const native = w.VencordNative?.pluginHelpers?.DockView;
+    if (!native || typeof native.readChunk !== "function") {
+        throw new Error("DockView: readChunk IPC unavailable (build/preload out of date) for " + spec.chunkId);
+    }
+
+    const fileName = `chunk-${spec.chunkId}.js`;
+    const src: string | null = await native.readChunk(dir, fileName);
+    if (typeof src !== "string" || !src) {
+        throw new Error("DockView: chunk file missing or empty: " + fileName);
+    }
+
+    const globalName = chunkGlobalName(spec);
+    // The chunk is an esbuild IIFE: `"use strict";var <globalName>=(()=>{…})();`.
+    // We run it as the body of a `new Function`, then `return <globalName>`. The
+    // chunk's own "use strict" makes the function body strict, so `var <globalName>`
+    // is FUNCTION-scoped (not a global-object property — strict eval/indirect-eval
+    // does NOT attach top-level vars to globalThis), and the trailing `return` reads
+    // it straight back. This keeps globalThis clean and works under Discord's strict
+    // module renderer. (CSP allows this: Vencord patches in 'unsafe-eval'.)
+    let exportsObj: any;
+    try {
+        // eslint-disable-next-line no-new-func
+        exportsObj = new Function(`${src}\nreturn ${globalName};`)();
+    } catch (e) {
+        throw new Error(`DockView: chunk ${spec.chunkId} failed to evaluate: ${(e as Error)?.message ?? e}`);
+    }
+    if (!exportsObj) {
+        throw new Error("DockView: chunk did not expose its export object: " + globalName);
+    }
+    // Match the shape the viewer's inline importer returned: "default" mode hands
+    // back the package's default export; "star" mode the whole namespace object.
+    return spec.exportMode === "default" ? exportsObj.default : exportsObj;
+}
+
+/**
+ * Load a heavy library exactly once, caching the load promise by `key`.
+ *
+ * Two paths, chosen by whether `key` is in the chunk registry:
+ *   - CHUNKED key → ignore `importer` entirely; read + eval the on-disk chunk file
+ *     (loadChunk). The lib's bytes are not in the renderer bundle, so the literal
+ *     `import("pkg")` inside `importer` is dead code that never runs (the renderer
+ *     build marks `pkg` external; nothing reaches the importer).
+ *   - INLINE key → call the viewer's `() => import("pkg")`. esbuild sees the literal
+ *     specifier (the build's dep-deriver scans for it) so the lib ships inline and
+ *     the import() resolves in a microtask.
+ * Subsequent calls with the same key return the cached promise either way.
  */
 export function loadLib<T = any>(key: string, importer: () => Promise<T>): Promise<T> {
     let p = libCache.get(key);
     if (!p) {
-        // On failure, evict so a later open can retry (a transient init failure
+        const spec = CHUNK_BY_KEY.get(key);
+        const start = spec ? loadChunk(spec) : importer();
+        // On failure, evict so a later open can retry (a transient init/read failure
         // shouldn't poison the format for the rest of the session).
-        p = importer().catch(err => {
+        p = start.catch(err => {
             libCache.delete(key);
             throw err;
         });
