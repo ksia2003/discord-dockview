@@ -70,6 +70,14 @@ registerViewer(VideoViewer);
 import { Model3DViewer } from "./model3d/Model3DViewer";
 registerViewer(Model3DViewer);
 
+// dxf/ — AutoCAD DXF (2D CAD drawing): the loader fetches the text, parses it to an
+// entity AST with dxf-parser (inline), draws the entities (lines/arcs/circles/poly-
+// lines/ellipses/splines/text, blocks expanded) to a high-res canvas, exports a blob:
+// PNG and RETYPES to "image" so the image viewer's pan/zoom/fit/fullscreen render the
+// drawing. Owns the blob: url on the cache entry and revokes it on eviction.
+import { DxfViewer } from "./dxf/DxfViewer";
+registerViewer(DxfViewer);
+
 // pptx/ — PowerPoint (OOXML presentation): the loader fetches the ZIP, lazily loads
 // @aiden0z/pptx-renderer (off startup), runs its DOM-free parse and owns the parsed
 // PresentationData on the cache entry; the body mounts a renderer over it as a

@@ -62,7 +62,14 @@ export const SAMPLE_CATALOG: SampleCategory[] = [
             { label: "Photoshop", ext: "psd", file: "example.psd", blurb: "PSD composite decoded to an image (ag-psd, any bit depth 8/16/32)." },
             { label: "Targa", ext: "tga", file: "example.tga", blurb: "Truevision TGA decoded to a canvas (tga-js), bottom-origin flipped upright." },
             { label: "Icon", ext: "ico", file: "example.ico", blurb: "Windows ICO — the largest frame is decoded and shown (icojs)." },
-            { label: "JPEG 2000", ext: "jp2", file: "example.jp2", blurb: "JPEG 2000 decoded to a canvas (pdf.js JpxImage port)." }
+            { label: "JPEG 2000", ext: "jp2", file: "example.jp2", blurb: "JPEG 2000 decoded to a canvas (pdf.js JpxImage port)." },
+            { label: "JPEG XL", ext: "jxl", file: "example.jxl", blurb: "JPEG XL decoded via libjxl wasm (@jsquash/jxl, lazy chunk — wasm handed in, no fetch)." }
+        ]
+    },
+    {
+        title: "CAD",
+        entries: [
+            { label: "AutoCAD DXF", ext: "dxf", file: "example.dxf", blurb: "2D CAD drawing (dxf-parser) rendered to a canvas — pan, zoom and fit the drawing." }
         ]
     },
     {

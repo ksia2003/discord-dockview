@@ -79,12 +79,23 @@ export const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg
 //                ourselves since tga-js leaves them upside-down)
 //   ico/cur   -> icojs (multi-frame icon → we pick the largest frame's PNG bytes)
 //   jp2/jpx/j2k/j2c -> jpeg2000 (pdf.js JpxImage → component planes → RGBA)
+//   jxl       -> @jsquash/jxl (libjxl wasm → RGBA; the codec + its 849 KB wasm ship
+//                as an out-of-bundle chunk loaded on first .jxl open, and the wasm is
+//                handed to the codec directly so it never fetches — CSP-safe)
 // raw camera (cr2/nef/dng/…), eps/ai, dicom and indd are NOT here — they need
 // server-side conversion and stay "unknown" gaps until a download-fallback batch.
 export const RASTER_IMG_EXT = new Set([
     "tiff", "tif", "psd", "heic", "heif",
-    "tga", "ico", "cur", "jp2", "jpx", "j2k", "j2c"
+    "tga", "ico", "cur", "jp2", "jpx", "j2k", "j2c", "jxl"
 ]);
+// CAD drawings (AutoCAD DXF) — fetched as text, parsed by dxf-parser to an entity AST,
+// drawn to a canvas at high resolution (a hand-rolled 2D pass over lines/arcs/circles/
+// polylines/ellipses/splines/text, blocks expanded for INSERTs), exported as a blob:
+// url and RETYPED to "image" so the whole image UX (fit/zoom/pan/lightbox) renders the
+// drawing. dxf-parser is small + text-only, so it ships INLINE (dynamic-imported off
+// startup). The binary .dwg twin is NOT here — it needs a different (server-class)
+// reader and stays an "unknown" gap rather than falsely routing.
+export const DXF_EXT = new Set(["dxf"]);
 // 3D models — fetched as text/bytes, parsed by the matching three.js loader, added
 // to a Scene and rendered to a WebGLRenderer canvas with OrbitControls. three.js +
 // its loaders are DYNAMIC-imported (off Vesktop startup) inside the viewer.
@@ -138,6 +149,10 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     // as a blob: url and retyped to "image" by the rasterimage loader. Checked right
     // after IMG_EXT so these never fall through to the code/unknown paths.
     if (ext && RASTER_IMG_EXT.has(ext)) return "rasterimage";
+    // .dxf -> dxf-parser parses the drawing to an entity AST; the dxf loader draws it
+    // to a high-res canvas and retypes to "image" (so the image viewer's pan/zoom/fit/
+    // fullscreen render the engineering drawing). Checked alongside the raster decoders.
+    if (ext && DXF_EXT.has(ext)) return "dxf";
     // .obj/.stl/.ply/.fbx/.dae/.3ds/.gltf/.glb -> the three.js loader parses the bytes
     // into a Scene rendered on a WebGLRenderer canvas with OrbitControls. Checked
     // before the media/code paths so a model never falls through to a raw dump.
