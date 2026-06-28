@@ -23,8 +23,13 @@
  *   DOCKVIEW_RELEASE_BASE   GitHub release download base for each file's url, e.g.
  *                           https://github.com/ksia2003/discord-dockview/releases/download/plugin-v0.1.1
  *                           (default: "" — file urls are then just the bare name)
- *   DOCKVIEW_NEEDS_RELAUNCH set to "1" when a patch changes main/preload so the
- *                           panel relaunches instead of reloading (default: false)
+ *   DOCKVIEW_NEEDS_RELAUNCH "1"/"0" to force whether the patch relaunches instead of
+ *                           reloading. If UNSET, it is auto-detected by diffing this
+ *                           build's main/preload sha256 against the previous plugin-v*
+ *                           release's manifest (so a tag-push release is correct on its
+ *                           own; uncertainty defaults to false).
+ *   DOCKVIEW_REPO           owner/repo used for the auto-detect API + asset fetch
+ *                           (default: ksia2003/discord-dockview)
  */
 
 import { createHash } from "crypto";
@@ -101,8 +106,70 @@ function sha256Hex(path) {
     return createHash("sha256").update(readFileSync(path)).digest("hex").toLowerCase();
 }
 
+// Numeric dotted-version compare (so 0.1.10 > 0.1.9). Returns -1/0/1; null on parse fail.
+function parseVer(s) {
+    if (typeof s !== "string") return null;
+    const parts = s.split(".").map(Number);
+    return parts.every(Number.isFinite) ? parts : null;
+}
+function cmpVer(a, b) {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+        const d = (a[i] ?? 0) - (b[i] ?? 0);
+        if (d) return d < 0 ? -1 : 1;
+    }
+    return 0;
+}
+
+// Whether this patch must RELAUNCH (vs reload) — true when main/preload changed, so
+// the renderer never loads against a stale main process (e.g. a new IPC the renderer
+// now calls). An explicit DOCKVIEW_NEEDS_RELAUNCH env wins (1/0). Otherwise auto-detect
+// by diffing this build's main/preload sha256 against the PREVIOUS plugin-v* release's
+// manifest — that makes a plain tag-push release correct on its own, since the workflow
+// only feeds the env on a manual dispatch. On any uncertainty (no prior release, network
+// or parse failure) it defaults to false (the safe match to the old behavior) and warns,
+// so a human can still force it via the env.
+async function detectNeedsRelaunch(version, builtFiles) {
+    const env = process.env.DOCKVIEW_NEEDS_RELAUNCH;
+    if (env === "1") return true;
+    if (env === "0") return false;
+
+    const cur = parseVer(version);
+    if (!cur) {
+        console.warn(`(needsRelaunch: can't parse version "${version}"; defaulting to false)`);
+        return false;
+    }
+    const repo = process.env.DOCKVIEW_REPO || "ksia2003/discord-dockview";
+    const headers = { Accept: "application/vnd.github+json", "User-Agent": "dockview-make-manifest" };
+    if (process.env.GH_TOKEN) headers.Authorization = `Bearer ${process.env.GH_TOKEN}`;
+
+    try {
+        const res = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=100`, { headers });
+        if (!res.ok) throw new Error(`releases API ${res.status}`);
+        const releases = await res.json();
+        const prev = releases
+            .map(r => r?.tag_name)
+            .filter(t => typeof t === "string" && t.startsWith("plugin-v"))
+            .map(t => ({ tag: t, v: parseVer(t.slice("plugin-v".length)) }))
+            .filter(x => x.v && cmpVer(x.v, cur) < 0)
+            .sort((a, b) => cmpVer(b.v, a.v))[0];
+        if (!prev) {
+            console.warn("(needsRelaunch: no prior plugin-v* release to diff; defaulting to false)");
+            return false;
+        }
+        const manRes = await fetch(`https://github.com/${repo}/releases/download/${prev.tag}/manifest.json`, { headers });
+        if (!manRes.ok) throw new Error(`prev manifest ${manRes.status}`);
+        const prevMan = await manRes.json();
+        const watch = ["vencordDesktopMain.js", "vencordDesktopPreload.js"];
+        const changed = watch.some(f => (prevMan.files?.[f]?.sha256 ?? null) !== (builtFiles[f]?.sha256 ?? null));
+        console.log(`  (needsRelaunch auto-detected vs ${prev.tag}: main/preload changed = ${changed})`);
+        return changed;
+    } catch (err) {
+        console.warn(`(needsRelaunch auto-detect failed: ${err?.message ?? err}; defaulting to false)`);
+        return false;
+    }
+}
+
 const baseDownloadUrl = process.env.DOCKVIEW_RELEASE_BASE || "";
-const needsRelaunch = process.env.DOCKVIEW_NEEDS_RELAUNCH === "1";
 
 // Fail loudly (non-zero exit) on a missing artifact — a partial manifest would
 // hand the updater a download it can never satisfy.
@@ -140,9 +207,12 @@ for (const name of FILES) {
     };
 }
 
+const pluginVersion = readPluginVersion();
+const needsRelaunch = await detectNeedsRelaunch(pluginVersion, files);
+
 const manifest = {
     schema: 1,
-    pluginVersion: readPluginVersion(),
+    pluginVersion,
     vencordRef: readVencordRef(),
     needsRelaunch,
     files
