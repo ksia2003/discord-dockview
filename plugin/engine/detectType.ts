@@ -57,9 +57,20 @@ export const GRAPHVIZ_EXT = new Set(["dot", "gv"]);
 // Jupyter notebooks (JSON cells -> one HTML doc -> markdown dark sandboxed iframe).
 export const IPYNB_EXT = new Set(["ipynb"]);
 // Email / MIME messages (postal-mime parse -> header block + body + attachment list
-// -> dark sandboxed iframe). .eml is RFC 822/MIME text; Outlook's binary .msg is a
-// different OLE container postal-mime can't read, so it stays a gap (Wave 2 native).
+// -> dark sandboxed iframe). .eml is RFC 822/MIME text, parsed in the renderer.
 export const EML_EXT = new Set(["eml"]);
+// Outlook binary .msg (OLE/CFB) — postal-mime can't read it and @kenjiuno/msgreader
+// needs Node Buffer (renderer-banned), so it's converted in the MAIN process: the msg
+// viewer calls the convertAttachment("msg", url) IPC, gets back a clean HTML doc, and
+// renders it through the SAME dark sandboxed iframe shell as .eml/docx. Routing type
+// "msg"; the viewer feeds the returned HTML into that shell (no renderer-side parse).
+export const MSG_EXT = new Set(["msg"]);
+// Camera RAW (cr2/nef/dng/arw/raf/orf/rw2) — libraw-wasm's web Worker can't run in the
+// electron main (Node) context, so the RAW viewer calls the convertAttachment("raw",
+// url) IPC: MAIN extracts the embedded JPEG preview (or utif-decodes the IFD to a PNG)
+// and returns the bytes; the viewer wraps them in a blob: url and RETYPES to "image"
+// (like tiff/heic). Routing type "raw"; the viewer never decodes in the renderer.
+export const RAW_EXT = new Set(["cr2", "nef", "dng", "arw", "raf", "orf", "rw2"]);
 // JSON / XML structured data: rendered as an interactive collapsible TREE by
 // default, with a Raw toggle back to the highlighted code view.
 export const STRUCTURED_EXT = new Set(["json", "json5", "xml"]);
@@ -149,6 +160,11 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     // as a blob: url and retyped to "image" by the rasterimage loader. Checked right
     // after IMG_EXT so these never fall through to the code/unknown paths.
     if (ext && RASTER_IMG_EXT.has(ext)) return "rasterimage";
+    // .cr2/.nef/.dng/.arw/.raf/.orf/.rw2 -> the main process (convertAttachment IPC)
+    // extracts the embedded JPEG preview (or utif-decodes to PNG); the raw viewer
+    // wraps the returned bytes in a blob: url and retypes to "image". Checked alongside
+    // the raster decoders so a RAW never falls through to the code/unknown path.
+    if (ext && RAW_EXT.has(ext)) return "raw";
     // .dxf -> dxf-parser parses the drawing to an entity AST; the dxf loader draws it
     // to a high-res canvas and retypes to "image" (so the image viewer's pan/zoom/fit/
     // fullscreen render the engineering drawing). Checked alongside the raster decoders.
@@ -165,6 +181,10 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     if (ext && AUDIO_EXT.has(ext)) return "audio";
     if (ext && VIDEO_EXT.has(ext)) return "video";
     if (ext && MD_EXT.has(ext)) return "markdown";
+    // .msg -> the main process (convertAttachment IPC) parses the binary Outlook
+    // message and returns a clean HTML doc; the msg viewer feeds it into the same dark
+    // sandboxed iframe shell as .eml. Checked before docx so it never falls through.
+    if (ext && MSG_EXT.has(ext)) return "msg";
     // .docx -> mammoth converts to HTML, rendered through the markdown iframe shell.
     if (ext && DOCX_EXT.has(ext)) return "docx";
     // .rtf -> the self-contained rtf->HTML transform, rendered through the same shell.

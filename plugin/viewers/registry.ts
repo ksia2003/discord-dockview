@@ -133,3 +133,18 @@ registerViewer(IpynbViewer);
 // and renders it through the same dark sandboxed-iframe shell as docx/rtf/odt.
 import { EmailViewer } from "./email/EmailViewer";
 registerViewer(EmailViewer);
+
+// msg/ — .msg (binary Outlook OLE message): the renderer can't parse it (msgreader
+// needs Node Buffer), so the loader calls the convertAttachment("msg", url) MAIN-process
+// IPC, which parses it with @kenjiuno/msgreader and returns the SAME dv-eml HTML fragment
+// the .eml viewer builds; the loader renders it through the same dark iframe shell.
+import { MsgViewer } from "./msg/MsgViewer";
+registerViewer(MsgViewer);
+
+// raw/ — camera RAW (cr2/nef/dng/arw/raf/orf/rw2): the renderer can't decode it
+// (libraw-wasm's web Worker can't run in main), so the loader calls the
+// convertAttachment("raw", url) MAIN-process IPC, which extracts the embedded JPEG
+// preview (or utif-decodes the IFD to PNG) and returns the image bytes; the loader
+// wraps them in a blob: url and RETYPES to "image" (like tiff/heic and dxf).
+import { RawViewer } from "./raw/RawViewer";
+registerViewer(RawViewer);

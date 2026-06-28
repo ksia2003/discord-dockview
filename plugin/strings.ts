@@ -90,6 +90,10 @@ export const STRINGS = {
             jxl: "Loading JPEG XL decoder…",
             dxf: "Loading DXF viewer…",
             email: "Loading email viewer…",
+            // .msg + camera RAW are converted in the MAIN process (the convertAttachment
+            // IPC): the label covers the fetch-in-main + decode round-trip, not a lib load.
+            msg: "Converting message…",
+            raw: "Decoding RAW image…",
             pdf: "Loading PDF viewer…",
             mermaid: "Loading diagram engine…",
             graphviz: "Loading Graphviz engine…",
