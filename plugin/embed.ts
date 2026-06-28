@@ -273,20 +273,71 @@ function onDocContextCapture(e: MouseEvent) {
         React.createElement(ArtifactContextMenu, { url, name: nameFromUrl(url) }));
 }
 
+// --- inline video → static thumbnail marking --------------------------------
+// Discord renders a video attachment as an inline PLAYER (imageWrapper > video +
+// play-button chrome). We mark each such wrapper so style.css can hide the play
+// chrome — the video then reads as a static thumbnail (like an image) and a click
+// opens it in the dock (onDocClickCapture intercepts it). Pure CSS can't target
+// "an imageWrapper that contains a <video>" without :has(), which the browser
+// re-evaluates on every DOM mutation and which stalled composer typing — so we mark
+// with a data-attribute instead, the same targeted technique as host/exclusivity.
+const VIDEO_THUMB_ATTR = "data-dockview-video-thumb";
+
+function markVideoThumbs(root: ParentNode = document): void {
+    root.querySelectorAll<HTMLVideoElement>("video").forEach(v => {
+        const wrap = v.closest<HTMLElement>('[class*="imageWrapper"]');
+        if (wrap && !wrap.hasAttribute(VIDEO_THUMB_ATTR)) wrap.setAttribute(VIDEO_THUMB_ATTR, "true");
+    });
+}
+
+let mediaObserver: MutationObserver | null = null;
+let mediaDebounce: any = null;
+
+/** Watch for added video attachments and mark their wrapper. Cheap: a mutation only
+ *  schedules a (debounced) sweep when an added node IS or CONTAINS a <video>, so the
+ *  chat's high churn (typing, scrolling) costs almost nothing. */
+function startVideoMarking(): void {
+    markVideoThumbs();
+    mediaObserver = new MutationObserver(records => {
+        let touched = false;
+        for (const r of records) {
+            for (const n of Array.from(r.addedNodes)) {
+                if (n.nodeType !== 1) continue;
+                const el = n as Element;
+                if (el.tagName === "VIDEO" || el.querySelector?.("video")) { touched = true; break; }
+            }
+            if (touched) break;
+        }
+        if (!touched) return;
+        clearTimeout(mediaDebounce);
+        mediaDebounce = setTimeout(() => markVideoThumbs(), 60);
+    });
+    mediaObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+function stopVideoMarking(): void {
+    mediaObserver?.disconnect();
+    mediaObserver = null;
+    clearTimeout(mediaDebounce);
+    document.querySelectorAll(`[${VIDEO_THUMB_ATTR}]`).forEach(el => el.removeAttribute(VIDEO_THUMB_ATTR));
+}
+
 let attached = false;
 
-/** Install the capture-phase delegation listeners. */
+/** Install the capture-phase delegation listeners + the video-thumbnail marking. */
 export function startEmbed() {
     if (attached) return;
     document.addEventListener("click", onDocClickCapture, true);
     document.addEventListener("contextmenu", onDocContextCapture, true);
+    startVideoMarking();
     attached = true;
 }
 
-/** Remove the delegation listeners. */
+/** Remove the delegation listeners + the marking observer. */
 export function stopEmbed() {
     if (!attached) return;
     document.removeEventListener("click", onDocClickCapture, true);
     document.removeEventListener("contextmenu", onDocContextCapture, true);
+    stopVideoMarking();
     attached = false;
 }

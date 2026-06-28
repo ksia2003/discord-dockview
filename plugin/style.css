@@ -1655,3 +1655,14 @@ html.dockview-open .dockview-page-inner {
     line-height: 1.4;
     word-break: keep-all;
 }
+
+/* Inline VIDEO attachments → a static thumbnail. Hide the play chrome (play-button
+ * overlay, play/pause pop, duration badge) so a video reads like an image thumbnail
+ * that opens in the dock on click. The wrapper carries data-dockview-video-thumb,
+ * marked by embed.ts — NOT a :has(video) selector, which the browser re-evaluates on
+ * every DOM mutation and which stalled composer typing. */
+[data-dockview-video-thumb] [role="button"],
+[data-dockview-video-thumb] [class*="playPausePop"],
+[data-dockview-video-thumb] [class*="duration"] {
+    display: none !important;
+}
