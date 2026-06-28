@@ -130,7 +130,11 @@ export const STRINGS = {
         exitFullscreen: "Exit fullscreen (Esc)",
         // prev/next step through the channel's images in order (Discord lightbox)
         prevImage: "Previous image (←)",
-        nextImage: "Next image (→)"
+        nextImage: "Next image (→)",
+        // Rotate the image 90° clockwise per click (cycles 0→90→180→270→0).
+        rotate: "Rotate",
+        // Tooltip on the natural-dimensions / size / format readout span.
+        metadata: "Image details"
     },
 
     // --- PDF header controls -------------------------------------------------

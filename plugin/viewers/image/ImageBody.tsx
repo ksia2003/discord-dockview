@@ -53,14 +53,14 @@ const IMG_MAX_SCALE = 8;
 export function imgState(win: DockWindow = getActiveWindow()): ImgViewState {
     let iv = win.viewStates[IMAGE_CONTROLLER] as ImgViewState | undefined;
     if (!iv) {
-        iv = { scale: 1, tx: 0, ty: 0, natW: 0, natH: 0, fullscreen: false };
+        iv = { scale: 1, tx: 0, ty: 0, natW: 0, natH: 0, rotation: 0, fullscreen: false };
         win.viewStates[IMAGE_CONTROLLER] = iv;
     }
     return iv;
 }
 
 /** Reset the image to fit (scale 1, centred). Keeps natW/natH (the loaded image
- *  dimensions) and the fullscreen flag — only the zoom/pan is reset. */
+ *  dimensions), the rotation and the fullscreen flag — only the zoom/pan is reset. */
 export function resetImgView(win: DockWindow = getActiveWindow()): void {
     const iv = imgState(win);
     iv.scale = 1;
@@ -74,6 +74,7 @@ export interface ImgController {
     zoomOut: () => void;
     reset: () => void;
     getScale: () => number;
+    rotate: () => void; // bump rotation 90° clockwise (0→90→180→270→0)
     toggleFullscreen: () => void;
 }
 
@@ -107,6 +108,13 @@ export function useImageInteraction(
     const { useRef, useEffect } = React;
     const iv = imgState(getActiveWindow());
 
+    // The image's display footprint AFTER rotation: at 90/270 the natural width and
+    // height swap, so the fit-to-contain math (and the pan limits) must measure the
+    // ROTATED bounding box, not the raw natW/natH. Returns [w, h] = the effective
+    // un-scaled dimensions for the current rotation.
+    const rotatedNat = (): [number, number] =>
+        iv.rotation % 180 === 0 ? [iv.natW, iv.natH] : [iv.natH, iv.natW];
+
     // Clamp pan so the (scaled) image can't be dragged entirely out of view.
     const clampPan = () => {
         const wrap = wrapRef.current;
@@ -114,10 +122,12 @@ export function useImageInteraction(
         const cw = wrap.clientWidth;
         const ch = wrap.clientHeight;
         if (!cw || !ch) return;
-        // fitted (scale 1) display size with object-fit: contain.
-        const fitScale = Math.min(cw / iv.natW, ch / iv.natH, 1);
-        const dispW = iv.natW * fitScale * iv.scale;
-        const dispH = iv.natH * fitScale * iv.scale;
+        // fitted (scale 1) display size with object-fit: contain — measured on the
+        // rotated bounding box so a 90/270 image fits + pans correctly.
+        const [rw, rh] = rotatedNat();
+        const fitScale = Math.min(cw / rw, ch / rh, 1);
+        const dispW = rw * fitScale * iv.scale;
+        const dispH = rh * fitScale * iv.scale;
         const maxX = Math.max(0, (dispW - cw) / 2);
         const maxY = Math.max(0, (dispH - ch) / 2);
         iv.tx = Math.max(-maxX, Math.min(maxX, iv.tx));
@@ -164,6 +174,16 @@ export function useImageInteraction(
             zoomOut: () => applyScale(iv.scale / 1.3),
             reset: () => { resetImgView(); rerender(); },
             getScale: () => iv.scale,
+            // Rotate 90° clockwise (IMG-3). Snap back to fit (scale 1, centred) so the
+            // rotated picture re-fits the panel cleanly — the rotated bounding box has
+            // a different aspect, so holding an old zoom/pan would strand it off-centre.
+            // requestRender repaints both the inline body and the lightbox (shared iv).
+            rotate: () => {
+                iv.rotation = (iv.rotation + 90) % 360;
+                resetImgView();
+                clampPan();
+                requestRender();
+            },
             toggleFullscreen: () => { iv.fullscreen = !iv.fullscreen; requestRender(); }
         };
         setLiveController(IMAGE_CONTROLLER, ctrls);
@@ -218,7 +238,8 @@ export function useImageInteraction(
             if (wrap && iv.natW && iv.natH) {
                 const cw = wrap.clientWidth;
                 const ch = wrap.clientHeight;
-                const fitScale = Math.min(cw / iv.natW, ch / iv.natH, 1);
+                const [rw, rh] = rotatedNat();
+                const fitScale = Math.min(cw / rw, ch / rh, 1);
                 const target = fitScale > 0 ? 1 / fitScale : 1;
                 const rect = wrap.getBoundingClientRect();
                 applyScale(target, e.clientX - rect.left, e.clientY - rect.top);
@@ -328,7 +349,9 @@ export function ImageBody() {
                 draggable: false,
                 onLoad: onImgLoad,
                 style: {
-                    transform: `translate(${iv.tx}px, ${iv.ty}px) scale(${iv.scale})`
+                    // rotation is INNERMOST so pan (screen-space translate) and zoom
+                    // compose on top of the rotated image, exactly like a browser viewer.
+                    transform: `translate(${iv.tx}px, ${iv.ty}px) scale(${iv.scale}) rotate(${iv.rotation}deg)`
                 }
             })
         ),

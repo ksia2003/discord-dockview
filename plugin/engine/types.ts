@@ -140,6 +140,7 @@ export interface ImgViewState {
     ty: number;
     natW: number;
     natH: number;
+    rotation: number; // 0 | 90 | 180 | 270 — clockwise image rotation (IMG-3)
     fullscreen: boolean;
 }
 
@@ -259,6 +260,7 @@ export interface CachedView {
     imgScale?: number;
     imgTx?: number;
     imgTy?: number;
+    imgRotation?: number; // 0|90|180|270, so a cache return reopens at the same rotation
     // the 3D camera pose (OrbitControls position + target) so a cache return
     // reopens the model at the same view.
     modelCamPos?: [number, number, number] | null;

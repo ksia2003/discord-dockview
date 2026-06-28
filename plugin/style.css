@@ -1577,6 +1577,17 @@ html.dockview-open .dockview-page-inner {
 /* In the row-2 strip the language label is capped so a long lang id can't crowd
    out the controls; it ellipsises within its cap. */
 .dockview-viewer-toolbar .dockview-tool-lang { max-width: 140px; }
+/* Image metadata readout (IMG-4): the SAME muted-label family as the language label,
+   but the content is already correctly cased ("1920×1080 · 2.3 MB · PNG"), so drop
+   the uppercase + heavy weight + tracking and widen the cap. Tabular digits keep the
+   numbers from jittering as they update on load. */
+.dockview-viewer-toolbar .dockview-tool-meta {
+    font-weight: 500;
+    letter-spacing: normal;
+    text-transform: none;
+    font-variant-numeric: tabular-nums;
+    max-width: 220px;
+}
 /* Copy is now an icon-only ghost button; it tints positive on the "copied" flash
    (the glyph itself swaps to a check). */
 .dockview-tool-copy.dockview-tool-copied,

@@ -45,7 +45,7 @@ function load(opts: LoadOpts, _token: LoadToken, entry: CacheEntry | null, ctx: 
 }
 
 function createState(): ImgViewState {
-    return { scale: 1, tx: 0, ty: 0, natW: 0, natH: 0, fullscreen: false };
+    return { scale: 1, tx: 0, ty: 0, natW: 0, natH: 0, rotation: 0, fullscreen: false };
 }
 
 function resetState(vs: ImgViewState): void {
@@ -55,24 +55,27 @@ function resetState(vs: ImgViewState): void {
     vs.ty = 0;
     vs.natW = 0;
     vs.natH = 0;
+    vs.rotation = 0;
     vs.fullscreen = false;
 }
 
-/** Park the zoom/pan on the entry so a cache return reopens it at the same zoom.
+/** Park the zoom/pan + rotation on the entry so a cache return reopens it exactly.
  *  The vs can be missing on the init-order edge window; treat that as fit. */
 function snapshot(vs: ImgViewState, entry: CacheEntry): void {
     entry.view.imgScale = vs?.scale ?? 1;
     entry.view.imgTx = vs?.tx ?? 0;
     entry.view.imgTy = vs?.ty ?? 0;
+    entry.view.imgRotation = vs?.rotation ?? 0;
 }
 
-/** Restore the zoom/pan from the entry on a cache return. natW/natH are re-derived
- *  on the <img> onLoad; fullscreen is NOT restored (always reopen inline). */
+/** Restore the zoom/pan + rotation from the entry on a cache return. natW/natH are
+ *  re-derived on the <img> onLoad; fullscreen is NOT restored (always reopen inline). */
 function restore(vs: ImgViewState, entry: CacheEntry): void {
     if (!vs) return; // missing slice (init-order edge) — back-filled on mount
     vs.scale = entry.view.imgScale ?? 1;
     vs.tx = entry.view.imgTx ?? 0;
     vs.ty = entry.view.imgTy ?? 0;
+    vs.rotation = entry.view.imgRotation ?? 0;
 }
 
 export const ImageViewer: Viewer<ImgViewState> = {

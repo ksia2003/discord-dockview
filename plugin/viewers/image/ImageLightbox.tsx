@@ -148,7 +148,9 @@ export function ImageLightbox() {
                 draggable: false,
                 onLoad: onImgLoad,
                 style: {
-                    transform: `translate(${iv.tx}px, ${iv.ty}px) scale(${iv.scale})`
+                    // rotation innermost (shares iv.rotation with the inline body, so the
+                    // picture keeps its angle across the inline ↔ fullscreen transition).
+                    transform: `translate(${iv.tx}px, ${iv.ty}px) scale(${iv.scale}) rotate(${iv.rotation}deg)`
                 }
             })
         )
