@@ -73,6 +73,19 @@ export const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg
 // raw camera (cr2/nef/dng/…), eps/ai, dicom and indd are NOT here — they need
 // server-side conversion and stay "unknown" gaps until a download-fallback batch.
 export const RASTER_IMG_EXT = new Set(["tiff", "tif", "psd", "heic", "heif"]);
+// 3D models — fetched as text/bytes, parsed by the matching three.js loader, added
+// to a Scene and rendered to a WebGLRenderer canvas with OrbitControls. three.js +
+// its loaders are DYNAMIC-imported (off Vesktop startup) inside the viewer.
+//   obj        -> OBJLoader   (text; .mtl sibling rarely present → default material)
+//   stl        -> STLLoader   (ascii or binary)
+//   ply        -> PLYLoader   (ascii or binary)
+//   fbx        -> FBXLoader   (binary or ascii)
+//   dae        -> ColladaLoader (XML)
+//   3ds        -> TDSLoader   (binary)
+//   gltf/glb   -> GLTFLoader  (common, high-value — three's best-supported format)
+// .box3d (proprietary Box format) is NOT here — it needs Box's own runtime and stays
+// a gap rather than falsely routing.
+export const MODEL3D_EXT = new Set(["obj", "stl", "ply", "fbx", "dae", "3ds", "gltf", "glb"]);
 // Audio — played by a native <audio controls> (the element streams the url directly).
 // HTML5-playable containers only; an unplayable one surfaces a download fallback.
 export const AUDIO_EXT = new Set(["mp3", "wav", "m4a", "aac", "ogg", "oga", "opus", "flac", "weba"]);
@@ -101,6 +114,10 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     // as a blob: url and retyped to "image" by the rasterimage loader. Checked right
     // after IMG_EXT so these never fall through to the code/unknown paths.
     if (ext && RASTER_IMG_EXT.has(ext)) return "rasterimage";
+    // .obj/.stl/.ply/.fbx/.dae/.3ds/.gltf/.glb -> the three.js loader parses the bytes
+    // into a Scene rendered on a WebGLRenderer canvas with OrbitControls. Checked
+    // before the media/code paths so a model never falls through to a raw dump.
+    if (ext && MODEL3D_EXT.has(ext)) return "model3d";
     // Media — a native <audio>/<video controls> streams the attachment url directly.
     if (ext && AUDIO_EXT.has(ext)) return "audio";
     if (ext && VIDEO_EXT.has(ext)) return "video";

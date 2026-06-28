@@ -90,7 +90,8 @@ export const STRINGS = {
             docx: "Loading document viewer…",
             xlsx: "Loading spreadsheet viewer…",
             code: "Loading code viewer…",
-            math: "Loading math typesetter…"
+            math: "Loading math typesetter…",
+            threed: "Loading 3D viewer…"
         }
     },
 

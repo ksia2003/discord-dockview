@@ -62,6 +62,13 @@ import { AudioViewer, VideoViewer } from "./media/MediaViewer";
 registerViewer(AudioViewer);
 registerViewer(VideoViewer);
 
+// model3d/ — obj/stl/ply/fbx/dae/3ds (+ gltf/glb): the loader fetches the bytes,
+// lazily loads three.js + the per-ext loader (off startup), parses into a Scene and
+// renders it on a WebGLRenderer canvas with OrbitControls. Like pdf, it owns its
+// parsed object on the cache entry and disposes the GPU buffers on eviction.
+import { Model3DViewer } from "./model3d/Model3DViewer";
+registerViewer(Model3DViewer);
+
 // csv/ — the spreadsheet grid (csv/tsv + xlsx-origin csv text), with a grid↔raw
 // toggle whose raw view reuses the text CodeBody.
 import { CsvViewer } from "./csv/CsvViewer";

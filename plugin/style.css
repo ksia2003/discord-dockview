@@ -1662,3 +1662,28 @@ html.dockview-open .dockview-page-inner {
     line-height: 1.4;
     word-break: keep-all;
 }
+
+/* --- 3D model (three.js WebGLRenderer canvas) ------------------------------
+ * The container fills the dock body (absolute inset:0) and is the sizing root the
+ * effect measures (clientWidth/Height) for the camera aspect + renderer size; the
+ * canvas is appended into it and stretched to fill. The clear colour is set on the
+ * three Scene from --background-base-lower (see Model3DBody), so the visible
+ * backdrop is theme-aware — this background is just a fallback before the first
+ * frame paints. grab cursor hints the rotate/pan interaction. */
+.dockview-model3d-container {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background: var(--background-gradient-chat, var(--background-base-lower, #1a1a1e));
+    cursor: grab;
+    outline: none;
+}
+.dockview-model3d-container:active {
+    cursor: grabbing;
+}
+.dockview-model3d-canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    touch-action: none; /* let OrbitControls own pointer gestures */
+}

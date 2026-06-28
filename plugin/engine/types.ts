@@ -37,7 +37,8 @@ export type ContentType =
     | "graphviz"
     | "ipynb"
     | "structured"
-    | "rasterimage";
+    | "rasterimage"
+    | "model3d";
 
 // ── panel content ───────────────────────────────────────────────────────────
 
@@ -45,6 +46,17 @@ export interface PdfState {
     doc: any | null; // pdf.js PDFDocumentProxy
     pages: number;
     renderToken: number; // bumped per pdf load so a stale render aborts
+}
+
+/** The parsed 3D model handed from the loader to the body. `object` is the three.js
+ *  root (THREE.Object3D) the loader produced; the body adds it to a Scene, frames a
+ *  camera around its bounding box, and runs the WebGLRenderer. Kept opaque (`any`)
+ *  so this contract file never imports three. `renderToken` bumps per load so a
+ *  superseded body drops the stale object. The object's geometries/materials are
+ *  released by the viewer's dispose() on cache eviction. */
+export interface Model3DState {
+    object: any | null; // THREE.Object3D root (or null before/after load)
+    renderToken: number;
 }
 
 /** What is currently loaded into a window. `seq` is bumped on every (re)load and
@@ -55,6 +67,7 @@ export interface PanelContent {
     html: string | null;
     frameHtml: string | null;
     pdf: PdfState;
+    model3d: Model3DState;
     code: string | null;
     codeLang: string;
     url: string | null;
@@ -117,6 +130,15 @@ export interface TreeViewState {
 
 export interface McpAppViewState {
     appId: string | null;
+}
+
+/** The 3D viewer's per-window view-state: the OrbitControls camera pose, so a cache
+ *  return reopens the model at the same angle/zoom the user left it. All optional —
+ *  a fresh open auto-frames the model and writes these from the framed camera. */
+export interface Model3DViewState {
+    // camera position + the orbit target, in world space (3 numbers each).
+    camPos: [number, number, number] | null;
+    target: [number, number, number] | null;
 }
 
 // ── cross-cutting capability state (NOT viewer-owned) ────────────────────────
@@ -184,6 +206,10 @@ export interface CachedView {
     imgScale?: number;
     imgTx?: number;
     imgTy?: number;
+    // the 3D camera pose (OrbitControls position + target) so a cache return
+    // reopens the model at the same view.
+    modelCamPos?: [number, number, number] | null;
+    modelTarget?: [number, number, number] | null;
     scrollTop?: number; // shared scroll of the active body scroller
     csvMode?: "grid" | "raw";
     treeMode?: "tree" | "raw";
@@ -207,6 +233,10 @@ export interface CacheEntry {
     codeLang?: string;
     pdfDoc?: any | null; // kept alive while cached; released by viewer.dispose()
     pdfPages?: number;
+    // the parsed three.js root (THREE.Object3D), kept alive while cached so a
+    // re-open is instant; released (geometries/materials disposed) by the model3d
+    // viewer.dispose() on eviction.
+    model3dObject?: any | null;
     binary?: boolean;
     error?: string | null;
     loading: boolean;

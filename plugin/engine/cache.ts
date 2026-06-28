@@ -151,6 +151,12 @@ export function mountFromCache(win: DockWindow, e: CacheEntry): boolean {
         pages: e.pdfPages ?? 0,
         renderToken: win.content.pdf.renderToken + 1
     };
+    // model3d: re-point the live object to the cached parsed root (no re-fetch,
+    // no re-parse). The body re-frames the camera from the saved view-state.
+    win.content.model3d = {
+        object: e.model3dObject ?? null,
+        renderToken: win.content.model3d.renderToken + 1
+    };
     // re-apply the saved view-state + any per-viewer re-derivation (csv delimiter,
     // tree kind) via the viewer dispatch in engine/viewState.
     viewRestore?.(win, e);

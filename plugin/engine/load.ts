@@ -134,6 +134,7 @@ export function clearArtifact(): void {
     win.content.code = null;
     win.content.codeLang = "plaintext";
     win.content.pdf = { doc: null, pages: 0, renderToken: win.content.pdf.renderToken + 1 };
+    win.content.model3d = { object: null, renderToken: win.content.model3d.renderToken + 1 };
     win.content.url = null;
     win.content.loading = false;
     win.content.error = null;
