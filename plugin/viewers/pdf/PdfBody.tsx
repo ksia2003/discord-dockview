@@ -76,7 +76,7 @@ export function pdfState(win: DockWindow = getActiveWindow()): PdfViewState {
     let pv = win.viewStates[PDF_CONTROLLER] as PdfViewState | undefined;
     if (!pv) {
         pv = {
-            page: 1, total: 0, fit: "width", zoom: 1, dragMode: "text",
+            page: 1, total: 0, fit: "width", zoom: 1, dragMode: "text", rotation: 0,
             findOpen: false, findQuery: "", findMatches: 0, findActive: 0, findCase: false
         };
         win.viewStates[PDF_CONTROLLER] = pv;
@@ -92,6 +92,7 @@ export function resetPdfView(win: DockWindow = getActiveWindow()): void {
     pv.fit = "width";
     pv.zoom = 1;
     pv.dragMode = "text";
+    pv.rotation = 0;
     pv.findOpen = false;
     pv.findQuery = "";
     pv.findMatches = 0;
@@ -110,6 +111,7 @@ export interface PdfController {
     setFit: (f: PdfFit) => void;
     fitWidth: () => void; // reset zoom to 1 (fit panel width) + ensure width mode
     toggleDragMode: () => void; // flip text-select <-> pan for mouse drags
+    rotate: () => void; // bump rotation 90° clockwise (0→90→180→270→0), re-raster
     toggleFind: () => void;
     toggleFindCase: () => void;
     setFindQuery: (q: string) => void;
@@ -330,7 +332,7 @@ export function PdfBody() {
                     try { p.page = await doc.getPage(p.n); } catch { return; }
                     if (docToken !== win.content.pdf.renderToken) return;
                 }
-                const viewport = p.page.getViewport({ scale: docScale });
+                const viewport = p.page.getViewport({ scale: docScale, rotation: pv.rotation });
                 // canvas raster (crisp at docScale × dpr). Quantize the backing
                 // store to a multiple of `num` so canvasW / boxW === dpr exactly
                 // (the box is rounded to a multiple of `den` in CSS) — otherwise a
@@ -498,7 +500,9 @@ export function PdfBody() {
                 if (myPass !== passRef.current || docToken !== win.content.pdf.renderToken) return;
                 let pg: any;
                 try { pg = await doc.getPage(n); } catch { return; }
-                const vp = pg.getViewport({ scale: 1 });
+                // rotation-aware: at 90/270 the page's width/height swap, so the
+                // fit-width column must size off the ROTATED dimensions.
+                const vp = pg.getViewport({ scale: 1, rotation: pv.rotation });
                 if (vp.width > refW) { refW = vp.width; refH = vp.height; }
             }
             if (!refW) return;
@@ -519,7 +523,9 @@ export function PdfBody() {
                 if (myPass !== passRef.current || docToken !== win.content.pdf.renderToken) return;
                 let page: any;
                 try { page = await doc.getPage(n); } catch { return; }
-                const base = page.getViewport({ scale: 1 });
+                // base geometry at the CURRENT rotation (width/height swap at 90/270),
+                // so the page box + cached baseW/baseH match the rotated raster.
+                const base = page.getViewport({ scale: 1, rotation: pv.rotation });
 
                 const wrap = document.createElement("div");
                 wrap.className = "dockview-pdf-page-wrap";
@@ -718,7 +724,7 @@ export function PdfBody() {
                 if (docToken !== win.content.pdf.renderToken) return;
             }
             try {
-                const viewport = p.page.getViewport({ scale: renderScaleRef.current });
+                const viewport = p.page.getViewport({ scale: renderScaleRef.current, rotation: pv.rotation });
                 // detached build (see buildTextLayer) — keeps a whole-document
                 // find from freezing the host one page at a time.
                 await buildTextLayer(p.textDiv, p.page, viewport);
@@ -949,6 +955,22 @@ export function PdfBody() {
             setFit: (f: PdfFit) => { if (pv.fit !== f) { pv.fit = f; pv.zoom = 1; scheduleRerender(); requestRender(); } },
             fitWidth: () => { if (pv.fit !== "width" || pv.zoom !== 1) { pv.fit = "width"; pv.zoom = 1; scheduleRerender(); requestRender(); } },
             toggleDragMode: () => { pv.dragMode = pv.dragMode === "pan" ? "text" : "pan"; endPan(); syncPanClass(); requestRender(); },
+            // Rotate 90° clockwise. A rotation swaps each page box's width/height (at
+            // 90/270), which the cached baseW/baseH in rescale() can't express — so we
+            // rebuild the column from scratch (buildLayout re-reads getViewport at the
+            // new rotation, re-sizing every box + invalidating every raster). The find
+            // highlights ride along: runFind re-collects after the rebuild if active.
+            rotate: () => {
+                pv.rotation = (pv.rotation + 90) % 360;
+                if (win.content.pdf.doc) {
+                    // rebuild, THEN re-light find (the rebuild empties matchesRef +
+                    // rebuilds text layers at the new rotation, so old Ranges are stale).
+                    buildLayout().then(() => {
+                        if (pv.findOpen && pv.findQuery) runFind(pv.findQuery, false);
+                    });
+                }
+                requestRender();
+            },
             toggleFind: () => { pv.findOpen = !pv.findOpen; if (!pv.findOpen) { clearHighlights(); pv.findMatches = 0; pv.findActive = 0; pv.findQuery = ""; } requestRender(); },
             toggleFindCase: () => { pv.findCase = !pv.findCase; runFind(pv.findQuery, false); requestRender(); },
             setFindQuery: (qq: string) => { pv.findQuery = qq; runFind(qq, true); },

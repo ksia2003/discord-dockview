@@ -114,7 +114,7 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
 
 function createState(): PdfViewState {
     return {
-        page: 1, total: 0, fit: "width", zoom: 1, dragMode: "text",
+        page: 1, total: 0, fit: "width", zoom: 1, dragMode: "text", rotation: 0,
         findOpen: false, findQuery: "", findMatches: 0, findActive: 0, findCase: false
     };
 }
@@ -126,6 +126,7 @@ function resetState(vs: PdfViewState): void {
     vs.fit = "width";
     vs.zoom = 1;
     vs.dragMode = "text";
+    vs.rotation = 0;
     vs.findOpen = false;
     vs.findQuery = "";
     vs.findMatches = 0;
@@ -141,6 +142,7 @@ function snapshot(vs: PdfViewState, entry: CacheEntry): void {
     entry.view.pdfZoom = vs?.zoom ?? 1;
     entry.view.pdfFit = vs?.fit ?? "width";
     entry.view.pdfDragMode = vs?.dragMode ?? "text";
+    entry.view.pdfRotation = vs?.rotation ?? 0;
 }
 
 /** Restore page/zoom/fit/dragMode on a cache return. total comes from the cached
@@ -153,6 +155,7 @@ function restore(vs: PdfViewState, entry: CacheEntry): void {
     vs.page = entry.view.pdfPage ?? 1;
     vs.total = entry.pdfPages ?? 0;
     vs.dragMode = entry.view.pdfDragMode ?? "text";
+    vs.rotation = entry.view.pdfRotation ?? 0;
     vs.findOpen = false;
     vs.findQuery = "";
     vs.findMatches = 0;

@@ -126,6 +126,7 @@ export interface PdfViewState {
     fit: PdfFit;
     zoom: number;
     dragMode: PdfDragMode;
+    rotation: number; // 0 | 90 | 180 | 270 — clockwise page rotation (PDF-4)
     findOpen: boolean;
     findQuery: string;
     findMatches: number;
@@ -254,6 +255,7 @@ export interface CachedView {
     pdfZoom?: number;
     pdfFit?: PdfFit;
     pdfDragMode?: PdfDragMode;
+    pdfRotation?: number; // 0|90|180|270, so a cache return reopens at the same rotation
     imgScale?: number;
     imgTx?: number;
     imgTy?: number;

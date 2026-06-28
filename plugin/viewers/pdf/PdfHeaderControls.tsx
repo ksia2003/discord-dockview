@@ -26,6 +26,8 @@ import { pdfController, pdfState } from "./PdfBody";
 
 // Magnifier glyph (find) — the only header toggle for PDF (fit-width is in ⋯).
 const FIND_PATH = "M10 4a6 6 0 1 0 3.71 10.71l4.29 4.3a1 1 0 0 0 1.42-1.42l-4.3-4.29A6 6 0 0 0 10 4Zm-4 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z";
+// Rotate-clockwise glyph (a circular arrow) — shared verbatim with the image header.
+const ROTATE_PATH = "M12 5V2L8 6l4 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7Z";
 // Prev/next page chevrons.
 const PDF_PREV_PATH = "M15.3 5.3a1 1 0 0 1 0 1.4L10 12l5.3 5.3a1 1 0 0 1-1.42 1.4l-6-6a1 1 0 0 1 0-1.4l6-6a1 1 0 0 1 1.42 0Z";
 const PDF_NEXT_PATH = "M8.7 5.3a1 1 0 0 0 0 1.4L14 12l-5.3 5.3a1 1 0 0 0 1.42 1.4l6-6a1 1 0 0 0 0-1.4l-6-6a1 1 0 0 0-1.42 0Z";
@@ -101,6 +103,15 @@ export function PdfHeaderControls() {
                 pv.dragMode === "pan" ? STRINGS.pdf.dragSelect : STRINGS.pdf.dragPan,
                 PAN_HAND_PATH,
                 () => pdfController()?.toggleDragMode(), pv.dragMode === "pan")
+        ),
+        // rotate (PDF-4): one click = 90° clockwise (0→90→180→270→0). A plain action
+        // button (not a state toggle) — each click advances the rotation, persisted in
+        // the PDF view-state so a cache return reopens at the same angle. Mid priority.
+        React.createElement(
+            "div",
+            { className: "dockview-tool-group dockview-collapse-mid" },
+            toolBtn("pdf-rotate", STRINGS.pdf.rotate, ROTATE_PATH,
+                () => pdfController()?.rotate())
         ),
         // find toggle (the only header toggle for PDF; fit-width is in ⋯).
         // Mid priority: collapses before the zoom group but after the arrows.

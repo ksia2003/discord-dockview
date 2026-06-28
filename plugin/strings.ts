@@ -149,7 +149,9 @@ export const STRINGS = {
         dragPan: "Pan the page",
         // shown while in pan mode → clicking switches back to selecting text
         dragSelect: "Select text",
-        find: "Find (Ctrl+F)"
+        find: "Find (Ctrl+F)",
+        // Rotate the pages 90° clockwise per click (cycles 0→90→180→270→0).
+        rotate: "Rotate"
     },
 
     // --- pptx (presentation) header controls --------------------------------
