@@ -25,6 +25,8 @@ import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
+import { chunkExternalPackages, chunkFileNames } from "./chunkList.mjs";
+
 // Node builtins (with and without the "node:" prefix). The plugin runs in the
 // renderer and shouldn't import these, but guard against future drift.
 const NODE_BUILTINS = new Set([...builtinModules, ...builtinModules.map(m => `node:${m}`)]);
@@ -127,12 +129,23 @@ function deriveDockviewDeps() {
 // plugin source at build time (no hand-maintained array to go stale).
 const DOCKVIEW_DEPS = deriveDockviewDeps();
 
+// The core desktop bundle files plus the out-of-bundle CHUNK files (chunk-<lib>.js)
+// the chunk build emits. The chunked code-dense libs (mermaid, pptx, three, pdfjs,
+// codemirror) are externalized from the renderer and shipped as these separate
+// files so they no longer cost V8 compile at every Vesktop startup.
+const CHUNK_OUTPUT_FILES = chunkFileNames();
 const FILES = [
     "vencordDesktopMain.js",
     "vencordDesktopPreload.js",
     "vencordDesktopRenderer.js",
-    "vencordDesktopRenderer.css"
+    "vencordDesktopRenderer.css",
+    ...CHUNK_OUTPUT_FILES
 ];
+
+// Packages the renderer build must treat as external (their bytes go into a chunk
+// file instead of inline) — passed to Vencord's esbuild via DOCKVIEW_CHUNK_EXTERNALS,
+// read by the dockview-chunk-external plugin the build patch injects.
+const CHUNK_EXTERNALS = chunkExternalPackages();
 
 const OUT_DIR = join(ROOT, "static", "vencordDist");
 
@@ -144,13 +157,13 @@ if (DOCKVIEW_DEPS.length === 0) {
     throw new Error("No external deps derived from plugin/ — scanner is broken or plugin/ is empty.");
 }
 
-function run(cmd, args, cwd) {
+function run(cmd, args, cwd, extraEnv) {
     console.log(`$ ${cmd} ${args.join(" ")}  (cwd: ${cwd})`);
     // shell: true so Windows can run pnpm, which is a `.cmd` shim: execFileSync
     // can't spawn `pnpm` (ENOENT) nor `pnpm.cmd` directly (EINVAL, since the Node
     // CVE-2024-27980 fix). The shell resolves it on both platforms. Harmless on
     // POSIX; the temp/clone paths used here have no spaces.
-    execFileSync(cmd, args, { cwd, stdio: "inherit", shell: true });
+    execFileSync(cmd, args, { cwd, stdio: "inherit", shell: true, env: { ...process.env, ...extraEnv } });
 }
 
 function verifyOutput() {
@@ -191,11 +204,24 @@ try {
     //    without it.
     run(PNPM, ["add", "-w", ...DOCKVIEW_DEPS], vencordDir);
 
-    // 4. Install + build Vencord.
-    run(PNPM, ["install"], vencordDir);
-    run(PNPM, ["build"], vencordDir);
+    // 3b. Patch Vencord's renderer build to EXTERNALIZE the chunked libs (their
+    //     bytes go into chunk-<lib>.js instead of inline) — mirrors the dev path.
+    run("node", [join(__dirname, "patch-vencord-build.mjs"), vencordDir], ROOT);
 
-    // 5. Copy the four desktop dist files into static/vencordDist.
+    // 4. Install + build Vencord. The chunk externals are passed via env so the
+    //    injected plugin marks them external in the renderer (IIFE) bundle.
+    run(PNPM, ["install"], vencordDir);
+    run(PNPM, ["build"], vencordDir, { DOCKVIEW_CHUNK_EXTERNALS: CHUNK_EXTERNALS.join(",") });
+
+    // 4b. Emit the standalone chunk-<lib>.js files (a separate esbuild pass that
+    //     bundles each externalized lib). Writes into <vencordDir>/dist alongside
+    //     the renderer; the registry is read from the injected plugin copy.
+    run("node", [join(__dirname, "build-chunks.mjs"), vencordDir], ROOT, {
+        DOCKVIEW_CHUNK_REGISTRY: join(vencordDir, "src", "userplugins", "dockView", "engine", "chunkRegistry.ts"),
+        DOCKVIEW_PLUGIN_DIR: join(vencordDir, "src", "userplugins", "dockView")
+    });
+
+    // 5. Copy the desktop dist files + the chunk files into static/vencordDist.
     mkdirSync(OUT_DIR, { recursive: true });
     for (const f of FILES) {
         cpSync(join(vencordDir, "dist", f), join(OUT_DIR, f));

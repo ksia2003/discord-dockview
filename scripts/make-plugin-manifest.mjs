@@ -28,7 +28,7 @@
  */
 
 import { createHash } from "crypto";
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
@@ -38,15 +38,28 @@ const ROOT = join(__dirname, "..");
 const DIST = join(ROOT, "static", "vencordDist");
 const PLUGIN_SRC = join(ROOT, "plugin");
 
-// The five artifacts that go into a plugin-only patch release: the four desktop
-// bundle files plus the version stamp. Every one is recorded in the manifest.
-const FILES = [
+// The core artifacts in a plugin-only patch release: the four desktop bundle files
+// plus the version stamp. Every one is recorded in the manifest. The out-of-bundle
+// CHUNK files (chunk-*.js) are ADDED below — they ship alongside the renderer (the
+// code-dense libs that were taken out of vencordDesktopRenderer.js to cut Vesktop
+// startup parse), and applyUpdate verifies + commits them atomically with the rest.
+const CORE_FILES = [
     "vencordDesktopMain.js",
     "vencordDesktopPreload.js",
     "vencordDesktopRenderer.js",
     "vencordDesktopRenderer.css",
     "version.txt"
 ];
+
+// Discover the chunk files present in DIST (chunk-<lib>.js). Reading them off disk
+// (rather than re-deriving from chunkRegistry.ts) keeps the manifest a faithful
+// record of exactly what prepare-vencord.mjs emitted — if a chunk failed to build
+// it simply won't be listed, and the build's own verify catches a missing one.
+const CHUNK_FILES = existsSync(DIST)
+    ? readdirSync(DIST).filter(f => /^chunk-[A-Za-z0-9._-]+\.js$/.test(f)).sort()
+    : [];
+
+const FILES = [...CORE_FILES, ...CHUNK_FILES];
 
 const VERSION_FILE = "version.txt";
 
@@ -98,6 +111,24 @@ if (missing.length) {
     console.error(`Missing artifacts in ${DIST}: ${missing.join(", ")}`);
     console.error("Run `node scripts/prepare-vencord.mjs` first to build static/vencordDist.");
     process.exit(1);
+}
+
+// Cross-check the chunk files in DIST against the registry: every chunk the plugin
+// declares MUST be present, or we'd ship a renderer whose externalized lib has no
+// chunk to load (a chunked viewer would fail at runtime). A registry read failure
+// is non-fatal here (older releases had no chunks) but a DECLARED-but-MISSING chunk
+// aborts the manifest.
+try {
+    const { chunkFileNames } = await import("./chunkList.mjs");
+    const expected = chunkFileNames();
+    const missingChunks = expected.filter(f => !CHUNK_FILES.includes(f));
+    if (missingChunks.length) {
+        console.error(`Registry declares chunks not built into ${DIST}: ${missingChunks.join(", ")}`);
+        console.error("Run the chunk build (scripts/build-chunks.mjs) before the manifest.");
+        process.exit(1);
+    }
+} catch (err) {
+    console.warn(`(chunk registry cross-check skipped: ${err?.message ?? err})`);
 }
 
 const files = {};
