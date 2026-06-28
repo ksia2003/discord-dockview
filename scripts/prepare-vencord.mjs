@@ -109,7 +109,14 @@ function deriveDockviewDeps() {
 
     const deps = new Set();
     for (const file of collectSources(PLUGIN_SRC)) {
-        const src = readFileSync(file, "utf-8");
+        const raw = readFileSync(file, "utf-8");
+        // Strip comments before scanning so illustrative specifiers written out
+        // in doc comments (a dynamic import shown in prose) are never mistaken
+        // for real dependencies. The `[^:]` guard keeps `://` inside a URL from
+        // eating the rest of the line as a line comment.
+        const src = raw
+            .replace(/\/\*[\s\S]*?\*\//g, "")
+            .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
         for (const re of [fromRe, bareImportRe, dynamicRe]) {
             re.lastIndex = 0;
             let m;
