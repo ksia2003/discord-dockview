@@ -78,6 +78,20 @@ registerViewer(Model3DViewer);
 import { DxfViewer } from "./dxf/DxfViewer";
 registerViewer(DxfViewer);
 
+// dicom/ — DICOM medical images (.dcm/.dicom): the loader fetches the bytes, parses the
+// data set with dicom-parser (out-of-bundle chunk — its source has a require("zlib")
+// ban-imports rejects), reads the pixel data + windowing metadata
+// (Window Center/Width, Rescale Slope/Intercept, BitsAllocated, PixelRepresentation,
+// PhotometricInterpretation), rescales + window/level-maps the (usually 16-bit) samples
+// to 8-bit grayscale RGBA, paints a canvas, exports a blob: PNG and RETYPES to "image"
+// so the image viewer's pan/zoom/fit/fullscreen render the slice. Uncompressed transfer
+// syntaxes (Implicit/Explicit VR LE/BE) + RLE decode client-side; compressed ones
+// (JPEG/JPEG2000/JPEG-LS) surface an honest "not supported" notice. Multi-frame DICOM
+// shows the FIRST frame in v1 (a frame selector like the multi-page TIFF nav is a
+// deferred enhancement). Owns the blob: url on the cache entry and revokes it on eviction.
+import { DicomViewer } from "./dicom/DicomViewer";
+registerViewer(DicomViewer);
+
 // pptx/ — PowerPoint (OOXML presentation): the loader fetches the ZIP, lazily loads
 // @aiden0z/pptx-renderer (off startup), runs its DOM-free parse and owns the parsed
 // PresentationData on the cache entry; the body mounts a renderer over it as a

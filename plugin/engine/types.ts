@@ -43,7 +43,8 @@ export type ContentType =
     | "pptx"
     | "email"
     | "msg"
-    | "raw";
+    | "raw"
+    | "dicom";
 
 // ── panel content ───────────────────────────────────────────────────────────
 

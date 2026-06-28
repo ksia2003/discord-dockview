@@ -76,6 +76,7 @@ export const CHUNKS: ChunkSpec[] = [
     { key: "ag-psd", pkg: "ag-psd", chunkId: "agpsd", exportMode: "star", entryFile: "engine/chunks/agpsd.entry.ts" },
     { key: "jxl", pkg: "@jsquash/jxl", chunkId: "jxl", exportMode: "star", entryFile: "engine/chunks/jxl.entry.ts" },
     { key: "pptx-renderer", pkg: "@aiden0z/pptx-renderer", chunkId: "pptx", exportMode: "star" },
+    { key: "dicom-parser", pkg: "dicom-parser", chunkId: "dicomparser", exportMode: "star" },
     { key: "three", pkg: "three", chunkId: "three", exportMode: "star", entryFile: "engine/chunks/three.entry.ts" },
     { key: "pdfjs", pkg: "pdfjs-dist", chunkId: "pdfjs", exportMode: "star", entryFile: "engine/chunks/pdfjs.entry.ts" },
     {

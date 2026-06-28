@@ -75,6 +75,15 @@ export const STRINGS = {
         sub: (name: string) => `${name} — download it to play in another app.`
     },
 
+    // --- dicom (medical image) honest gaps ----------------------------------
+    // The dicom viewer decodes UNCOMPRESSED transfer syntaxes (+ RLE) client-side. A
+    // COMPRESSED DICOM (JPEG / JPEG 2000 / JPEG-LS) would need a heavy codec we don't
+    // ship in the renderer, so it shows this honest message (the state card's download
+    // action lets the user open it in a real DICOM app) rather than a garbled image.
+    dicom: {
+        compressed: "This DICOM uses a compressed format we can't preview yet — download it to open in a DICOM viewer."
+    },
+
     // --- system messages: loading -------------------------------------------
     loading: {
         title: "Loading…",
@@ -89,6 +98,7 @@ export const STRINGS = {
             jp2: "Loading JPEG 2000 decoder…",
             jxl: "Loading JPEG XL decoder…",
             dxf: "Loading DXF viewer…",
+            dicom: "Loading DICOM viewer…",
             email: "Loading email viewer…",
             // .msg + camera RAW are converted in the MAIN process (the convertAttachment
             // IPC): the label covers the fetch-in-main + decode round-trip, not a lib load.

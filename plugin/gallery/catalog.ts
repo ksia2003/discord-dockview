@@ -67,6 +67,12 @@ export const SAMPLE_CATALOG: SampleCategory[] = [
         ]
     },
     {
+        title: "Medical",
+        entries: [
+            { label: "DICOM", ext: "dcm", file: "example.dcm", blurb: "DICOM medical image (dicom-parser) — pixel data window/level-mapped to grayscale, then pan/zoom like an image." }
+        ]
+    },
+    {
         title: "CAD",
         entries: [
             { label: "AutoCAD DXF", ext: "dxf", file: "example.dxf", blurb: "2D CAD drawing (dxf-parser) rendered to a canvas — pan, zoom and fit the drawing." }

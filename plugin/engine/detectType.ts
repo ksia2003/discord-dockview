@@ -107,6 +107,18 @@ export const RASTER_IMG_EXT = new Set([
 // startup). The binary .dwg twin is NOT here — it needs a different (server-class)
 // reader and stays an "unknown" gap rather than falsely routing.
 export const DXF_EXT = new Set(["dxf"]);
+// DICOM medical images (.dcm/.dicom) — fetched as bytes, parsed by dicom-parser (inline),
+// the pixel data + windowing metadata (Window Center/Width, Rescale Slope/Intercept,
+// BitsAllocated, PixelRepresentation, PhotometricInterpretation) read in the renderer,
+// rescaled + window/level-mapped to 8-bit grayscale RGBA, painted to a canvas, exported
+// as a blob: url and RETYPED to "image" (so the image viewer's pan/zoom/fit/fullscreen
+// render the slice). UNCOMPRESSED transfer syntaxes (Implicit/Explicit VR Little Endian,
+// Explicit VR Big Endian) + RLE are decoded client-side; COMPRESSED ones (JPEG/JPEG2000/
+// JPEG-LS) surface an honest "compressed DICOM not supported — download" notice rather
+// than a heavy codec bundle. dicom-parser is small (~32 KB) but its source has a bare
+// require("zlib") that Vencord's ban-imports rejects, so it ships as an out-of-bundle
+// chunk (engine/chunkRegistry.ts), loaded on first .dcm open.
+export const DICOM_EXT = new Set(["dcm", "dicom"]);
 // 3D models — fetched as text/bytes, parsed by the matching three.js loader, added
 // to a Scene and rendered to a WebGLRenderer canvas with OrbitControls. three.js +
 // its loaders are DYNAMIC-imported (off Vesktop startup) inside the viewer.
@@ -169,6 +181,11 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     // to a high-res canvas and retypes to "image" (so the image viewer's pan/zoom/fit/
     // fullscreen render the engineering drawing). Checked alongside the raster decoders.
     if (ext && DXF_EXT.has(ext)) return "dxf";
+    // .dcm/.dicom -> dicom-parser reads the pixel data + windowing metadata; the dicom
+    // loader rescales + window/level-maps to grayscale RGBA, paints a canvas and retypes
+    // to "image". Checked alongside the raster decoders so a DICOM never falls through to
+    // the code/unknown path.
+    if (ext && DICOM_EXT.has(ext)) return "dicom";
     // .obj/.stl/.ply/.fbx/.dae/.3ds/.gltf/.glb -> the three.js loader parses the bytes
     // into a Scene rendered on a WebGLRenderer canvas with OrbitControls. Checked
     // before the media/code paths so a model never falls through to a raw dump.
