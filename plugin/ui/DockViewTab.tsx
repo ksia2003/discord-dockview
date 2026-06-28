@@ -32,6 +32,7 @@
 import { Forms, React, Switch, TextInput } from "@webpack/common";
 
 import { settings } from "../settings";
+import { GallerySection } from "./GallerySection";
 import { UpdatePanel } from "./UpdatePanel";
 
 // NOTE: must stay a lazy wrapper, NOT `const h = React.createElement`. The latter
@@ -156,6 +157,11 @@ export function DockViewTab() {
             { style: { marginBottom: "8px", color: "var(--text-muted)" } },
             DESCRIPTION
         ),
+
+        h(Forms.FormDivider, { style: { margin: "16px 0" } }),
+
+        // --- Examples & supported formats gallery. -------------------------
+        h(GallerySection),
 
         h(Forms.FormDivider, { style: { margin: "16px 0" } }),
 
