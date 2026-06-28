@@ -118,6 +118,17 @@ export function onChannelSelect(newId: string | null): void {
     snapshotActiveView(getActiveWindow());
     saveCurrentChannelState();
 
+    // 1b. An EMPTY F9 shell — the dock explicitly shown (channelVisibility === true)
+    //     with NO real tab (no pinned, no preview) — is ephemeral: forget its
+    //     visibility on leave so it does NOT reappear when the user returns to this
+    //     channel. dockVisible() then falls back to hasRealTab() (false) and the dock
+    //     comes back closed. Content/pinned-backed visibility (hasRealTab === true) and
+    //     an explicit hide (=== false) are left untouched — only the bare empty-open
+    //     state is dropped.
+    if (currentChannelId != null && channelVisibility.get(currentChannelId) === true && !hasRealTab()) {
+        channelVisibility.delete(currentChannelId);
+    }
+
     // 2. drop the channel-bound transient window — it's recreated per channel.
     //    (Its content cache entry survives, so a return re-shows it instantly.)
     const leaving = transientWindow();
