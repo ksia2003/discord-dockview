@@ -150,6 +150,21 @@ export function removeWindow(w: DockWindow): number {
     return i;
 }
 
+/** Remove ORPHAN transients: non-pinned, content-less windows that aren't the active
+ *  one. They accumulate when ensureInit injects a placeholder while the collection is
+ *  transiently empty during a channel switch; left behind, transientWindow() (which
+ *  returns the FIRST non-pinned) can return an orphan instead of the real channel
+ *  transient — so the switch removes the wrong window and that channel's preview leaks
+ *  into the next channel. The only legitimate content-less transient is the active F9
+ *  empty shell, which is excluded. */
+export function pruneOrphanTransients(): void {
+    ensureInit();
+    for (let i = windows.length - 1; i >= 0; i--) {
+        const w = windows[i];
+        if (!w.pinned && !isRealTab(w) && w.id !== activeWindowId) windows.splice(i, 1);
+    }
+}
+
 /** Point `activeWindow`/`activeWindowId` at a window (by id or object). Pure
  *  binding swap — does NOT render or touch the DOM; callers re-render. */
 export function setActiveWindow(w: DockWindow | string): void {

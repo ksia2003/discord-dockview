@@ -20,7 +20,7 @@ import { showContent } from "./showContent";
 import { snapshotActiveView } from "./viewState";
 import {
     addWindow, getActiveWindow, getActiveWindowId, getWindows, hasRealTab, makeWindow,
-    reconcileActiveFromCache, removeWindow, setActiveWindow, transientWindow
+    pruneOrphanTransients, reconcileActiveFromCache, removeWindow, setActiveWindow, transientWindow
 } from "./window";
 import type { ChannelDescriptor, ChannelMemory } from "./types";
 
@@ -107,6 +107,11 @@ function restoreDescriptor(d: ChannelDescriptor): void {
  */
 export function onChannelSelect(newId: string | null): void {
     if (newId === currentChannelId) return;
+    // 0. Clean up any orphan content-less transients left by a prior switch BEFORE we
+    //    identify the leaving transient — otherwise transientWindow() (first non-pinned)
+    //    could return an orphan, we'd remove the wrong window, and this channel's preview
+    //    would leak into the next channel (a non-pinned preview must stay channel-bound).
+    pruneOrphanTransients();
     const host = hostActions();
     // 1. snapshot the active window's live view + save the leaving channel's
     //    transient descriptor.
