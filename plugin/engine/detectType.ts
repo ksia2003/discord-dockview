@@ -86,6 +86,18 @@ export const RASTER_IMG_EXT = new Set(["tiff", "tif", "psd", "heic", "heif"]);
 // .box3d (proprietary Box format) is NOT here — it needs Box's own runtime and stays
 // a gap rather than falsely routing.
 export const MODEL3D_EXT = new Set(["obj", "stl", "ply", "fbx", "dae", "3ds", "gltf", "glb"]);
+// PowerPoint (Office Open XML presentation) — the @aiden0z/pptx-renderer parses the
+// .pptx ZIP (slide XML + media) and renders each slide to positioned HTML/SVG in a
+// live container, with slide navigation. Dynamic-imported (off Vesktop startup) inside
+// the viewer. ONLY the modern OOXML .pptx is here:
+//   .ppt  (legacy binary OLE/CFB) needs a different, server-class parser → gap.
+//   .odp  (OpenDocument Presentation) is a different package the OOXML model can't
+//          read → gap (would falsely route + render empty).
+//   .key  (Apple Keynote) is proprietary iWork → gap.
+//   .gslides / Google Slides has no standalone file → gap.
+// Leaving those "unknown" surfaces the honest download fallback rather than a broken
+// render.
+export const PPTX_EXT = new Set(["pptx"]);
 // Audio — played by a native <audio controls> (the element streams the url directly).
 // HTML5-playable containers only; an unplayable one surfaces a download fallback.
 export const AUDIO_EXT = new Set(["mp3", "wav", "m4a", "aac", "ogg", "oga", "opus", "flac", "weba"]);
@@ -118,6 +130,10 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     // into a Scene rendered on a WebGLRenderer canvas with OrbitControls. Checked
     // before the media/code paths so a model never falls through to a raw dump.
     if (ext && MODEL3D_EXT.has(ext)) return "model3d";
+    // .pptx -> the @aiden0z/pptx-renderer parses the OOXML ZIP and renders each slide
+    // to positioned HTML/SVG in a live container, with prev/next slide nav. Checked
+    // before the media/code paths so a presentation never falls through to a raw dump.
+    if (ext && PPTX_EXT.has(ext)) return "pptx";
     // Media — a native <audio>/<video controls> streams the attachment url directly.
     if (ext && AUDIO_EXT.has(ext)) return "audio";
     if (ext && VIDEO_EXT.has(ext)) return "video";

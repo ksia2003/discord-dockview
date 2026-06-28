@@ -157,6 +157,12 @@ export function mountFromCache(win: DockWindow, e: CacheEntry): boolean {
         object: e.model3dObject ?? null,
         renderToken: win.content.model3d.renderToken + 1
     };
+    // pptx: re-point the live model to the cached parsed presentation (no re-fetch,
+    // no re-parse); the body re-renders the deck and jumps to the saved slide.
+    win.content.pptx = {
+        presentation: e.pptxPresentation ?? null,
+        renderToken: win.content.pptx.renderToken + 1
+    };
     // re-apply the saved view-state + any per-viewer re-derivation (csv delimiter,
     // tree kind) via the viewer dispatch in engine/viewState.
     viewRestore?.(win, e);

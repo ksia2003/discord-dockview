@@ -60,6 +60,11 @@ export const FILE_TYPE_ICON: Record<string, IconPath[]> = {
         [DOC_FRAME],
         ["M6.4 13h1.4l.9 3.8.95-3.8h1.3l.95 3.8.9-3.8H15l-1.55 6h-1.4l-.85-3.4-.85 3.4H8.95L6.4 13Z"]
     ],
+    // Presentation (PowerPoint): document frame + a "P" mark.
+    pptx: [
+        [DOC_FRAME],
+        ["M7.5 12.5h3.4c1.5 0 2.4.9 2.4 2.3s-.9 2.3-2.4 2.3H9v2.4H7.5v-7Zm1.5 1.3v2h1.7c.7 0 1.1-.4 1.1-1s-.4-1-1.1-1H9Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
     // Spreadsheet: document frame + a small grid mark.
     xlsx: [
         [DOC_FRAME],

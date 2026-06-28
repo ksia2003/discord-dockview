@@ -63,6 +63,7 @@ export function makeWindow(opts: { pinned: boolean; ownerChannelId: string | nul
             frameHtml: null,
             pdf: { doc: null, pages: 0, renderToken: 0 },
             model3d: { object: null, renderToken: 0 },
+            pptx: { presentation: null, renderToken: 0 },
             code: null,
             codeLang: "plaintext",
             url: null,

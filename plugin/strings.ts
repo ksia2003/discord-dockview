@@ -91,7 +91,8 @@ export const STRINGS = {
             xlsx: "Loading spreadsheet viewer…",
             code: "Loading code viewer…",
             math: "Loading math typesetter…",
-            threed: "Loading 3D viewer…"
+            threed: "Loading 3D viewer…",
+            pptx: "Loading presentation viewer…"
         }
     },
 
@@ -149,6 +150,17 @@ export const STRINGS = {
         // shown while in pan mode → clicking switches back to selecting text
         dragSelect: "Select text",
         find: "Find (Ctrl+F)"
+    },
+
+    // --- pptx (presentation) header controls --------------------------------
+    // Slide navigation mirrors the PDF page nav: prev/next chevrons + a jump input
+    // with a " / N" total. Copy speaks in "slides", not "pages".
+    pptx: {
+        prevSlide: "Previous slide (←)",
+        nextSlide: "Next slide (→)",
+        goToSlide: "Go to slide",
+        goToSlideHint: "Type a slide number, Enter to jump",
+        slideIndicator: "Current slide / total"
     },
 
     // --- csv/tsv header controls --------------------------------------------

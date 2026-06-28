@@ -69,6 +69,13 @@ registerViewer(VideoViewer);
 import { Model3DViewer } from "./model3d/Model3DViewer";
 registerViewer(Model3DViewer);
 
+// pptx/ — PowerPoint (OOXML presentation): the loader fetches the ZIP, lazily loads
+// @aiden0z/pptx-renderer (off startup), runs its DOM-free parse and owns the parsed
+// PresentationData on the cache entry; the body mounts a renderer over it as a
+// windowed slide list with prev/next slide nav.
+import { PptxViewer } from "./pptx/PptxViewer";
+registerViewer(PptxViewer);
+
 // csv/ — the spreadsheet grid (csv/tsv + xlsx-origin csv text), with a grid↔raw
 // toggle whose raw view reuses the text CodeBody.
 import { CsvViewer } from "./csv/CsvViewer";

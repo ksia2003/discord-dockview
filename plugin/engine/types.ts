@@ -38,7 +38,8 @@ export type ContentType =
     | "ipynb"
     | "structured"
     | "rasterimage"
-    | "model3d";
+    | "model3d"
+    | "pptx";
 
 // ── panel content ───────────────────────────────────────────────────────────
 
@@ -59,6 +60,21 @@ export interface Model3DState {
     renderToken: number;
 }
 
+/** The parsed presentation handed from the loader to the body. The loader runs the
+ *  renderer's DOM-free parse (parseZip → buildPresentation → PresentationData), so the
+ *  body only has to mount a viewer over the already-parsed model — mirroring how the
+ *  pdf/3D loaders persist the heavy parsed handle and the body just renders it. Kept
+ *  opaque (`any` = @aiden0z/pptx-renderer's PresentationData) so this contract file
+ *  never imports the renderer. The model is owned by the CACHE ENTRY
+ *  (entry.pptxPresentation), kept alive while cached so a re-open is instant; it holds
+ *  no GPU/worker handle (just decoded slide data + media bytes), so it needs no
+ *  dispose() — the live viewer instance + its blob: URLs are body-owned and torn down
+ *  on unmount. `renderToken` bumps per load so a superseded body drops the stale deck. */
+export interface PptxState {
+    presentation: any | null;
+    renderToken: number;
+}
+
 /** What is currently loaded into a window. `seq` is bumped on every (re)load and
  *  on a sub-view swap (grid↔raw, rendered↔edit) so React remounts the body. */
 export interface PanelContent {
@@ -68,6 +84,7 @@ export interface PanelContent {
     frameHtml: string | null;
     pdf: PdfState;
     model3d: Model3DState;
+    pptx: PptxState;
     code: string | null;
     codeLang: string;
     url: string | null;
@@ -141,6 +158,15 @@ export interface Model3DViewState {
     target: [number, number, number] | null;
 }
 
+/** The pptx viewer's per-window view-state: the current slide (1-based) + the total,
+ *  driving the header's slide counter + prev/next, and parked on the cache entry so a
+ *  return reopens the deck on the same slide. `total` is 0 until the deck's slide count
+ *  is known (the body fills it once the renderer parses the presentation). */
+export interface PptxViewState {
+    slide: number;
+    total: number;
+}
+
 // ── cross-cutting capability state (NOT viewer-owned) ────────────────────────
 // edit-mode rides over the text-family viewers; the gallery rides over the image
 // viewer. They live as named slots on the window, owned by edit/ and
@@ -210,6 +236,9 @@ export interface CachedView {
     // reopens the model at the same view.
     modelCamPos?: [number, number, number] | null;
     modelTarget?: [number, number, number] | null;
+    // the pptx slide (1-based) the user was on, so a cache return reopens the deck
+    // on the same slide.
+    pptxSlide?: number;
     scrollTop?: number; // shared scroll of the active body scroller
     csvMode?: "grid" | "raw";
     treeMode?: "tree" | "raw";
@@ -237,6 +266,11 @@ export interface CacheEntry {
     // re-open is instant; released (geometries/materials disposed) by the model3d
     // viewer.dispose() on eviction.
     model3dObject?: any | null;
+    // the parsed presentation model (@aiden0z/pptx-renderer PresentationData), kept
+    // alive while cached so a re-open re-renders without a re-fetch/re-parse. Plain
+    // decoded data — no GPU/worker handle — so no dispose() needed (the live viewer
+    // instance + its blob: URLs are owned + destroyed by the body on unmount).
+    pptxPresentation?: any | null;
     binary?: boolean;
     error?: string | null;
     loading: boolean;

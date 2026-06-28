@@ -1687,3 +1687,30 @@ html.dockview-open .dockview-page-inner {
     height: 100% !important;
     touch-action: none; /* let OrbitControls own pointer gestures */
 }
+
+/* PowerPoint renderer (content type "pptx"): the @aiden0z/pptx-renderer mounts its
+   own slide-list DOM into this container, which is a plain flowing block inside the
+   scrolling .dockview-body (passed to the renderer as its scrollContainer). The
+   renderer owns each slide's intrinsic size + centering; we only frame the column:
+   a little vertical breathing room, the slides centred as a column, and the dock's
+   chat background behind them so a letterboxed (contain-fit) slide reads on the dark
+   panel rather than a bare white gutter. Each slide carries its own background, so we
+   add no per-slide colour — only the gutter behind the column is themed. */
+.dockview-pptx-container {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 12px 32px;
+    min-height: 100%;
+    background: var(--background-gradient-chat, var(--background-base-lower, #1a1a1e));
+    outline: none;
+}
+/* The slide-label the renderer draws under each slide (showSlideLabels) — keep it a
+   quiet, muted caption in the dock's theme tone rather than the lib default. The lib
+   scopes it; this is a soft override that no-ops if the lib renames it. */
+.dockview-pptx-container [class*="slide-label"],
+.dockview-pptx-container [class*="label"] {
+    color: var(--text-muted, #949ba4);
+}
