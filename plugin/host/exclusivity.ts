@@ -1,14 +1,30 @@
 /*
  * Sidebar exclusivity — make the dock behave EXACTLY like a native thread in the
  * one exclusive "right slot" Discord gives to a thread / the server member list /
- * the DM user-profile sidebar.
+ * the DM user-profile sidebar. The dock is just ONE more competitor for that slot;
+ * at most one of {member list, profile sidebar, thread, DockView} shows at a time.
  *
- * Two directions:
+ * THE RULES (agreed model — "the dock acts like a native thread"):
+ *  1. Dock OPENS → it takes the slot: collapse the member list / profile sidebar
+ *     (remembering, PER CHANNEL, that WE collapsed it) and close any open thread.
+ *  2. Dock CLOSES (F9 / X) → restore what it displaced: the member list / profile
+ *     reappears (back to the pre-dock state). A thread does NOT reopen — closing a
+ *     thread is navigation, not a sidebar toggle (mirrors native).
+ *  3. The user opens the member list / a thread / the profile WHILE the dock is open
+ *     → the dock YIELDS (closes) so that thing shows; it does NOT come back on its
+ *     own when that thing later closes. The slot holds one thing; the switch was the
+ *     user's. Member list, thread, and profile are treated identically here.
+ *  4. All of this is tracked PER CHANNEL (owed-restore is a Set keyed by channelId),
+ *     so switching channels never strands a collapsed/visible member list.
+ *
+ * Implemented as two directions:
  *  FORWARD (we open) → collapse whatever holds the slot: close the native channel/
  *    thread sidebar, collapse the member list (server) / user-profile sidebar (DM),
- *    and JS-mark the competing nodes so style.css hides them while we're open.
+ *    and JS-mark the competing nodes so style.css hides them while we're open. A
+ *    member list can REAPPEAR async (closing a thread restores it a tick later), so
+ *    we also schedule a brief reconcile to re-collapse it (scheduleMemberListReconcile).
  *  REVERSE (the user opens one of those while we hold the slot) → vacate: close the
- *    whole dock and DON'T re-collapse what they just opened.
+ *    whole dock and DON'T re-collapse what they just opened (rule 3).
  *
  * VERBATIM HAZARDS (live-verified, expensive to rediscover — see plugin-rewrite.md
  * §6.4 + commits 6c160a5 / d8fc765):
@@ -42,6 +58,8 @@ const EXCLUSIVE_HIDDEN_ATTR = "data-dockview-exclusive-hidden";
 // with the dock hidden), keyed by the channel that was current when we collapsed it.
 const memberListOwed = new Set<string>();
 const profileSidebarOwed = new Set<string>();
+// At most one pending member-list reconcile poll (catches an async reappearance).
+let memberReconcileTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Set while WE are the ones firing CHANNEL_TOGGLE_MEMBERS_SECTION (our open-time
 // collapse / close-time restore). The action is a pure argument-less toggle Discord
@@ -150,12 +168,33 @@ export function closeNativeChannelSidebar(): boolean {
  *  open=true  → if shown, collapse it (button light off) and remember a restore.
  *  open=false → if WE collapsed it and it's still collapsed, restore it. A user
  *               re-show meanwhile is left intact. */
+/** After the dock takes the slot the member list can REAPPEAR asynchronously — most
+ *  notably, closing a thread (which dock-open does) makes Discord restore the channel's
+ *  member list a tick LATER, so the synchronous collapse in syncNativeMemberList misses
+ *  it and the list lingers beside the dock (the thread+F9 bug). Poll briefly and
+ *  re-collapse it the moment it appears while the dock still holds the slot. Self-
+ *  terminates when the list is collapsed, the dock closes, or the budget runs out. */
+function scheduleMemberListReconcile(): void {
+    if (memberReconcileTimer) return; // one poll in flight at a time
+    let tries = 0;
+    const tick = () => {
+        memberReconcileTimer = null;
+        if (!dockVisible()) return;                         // dock closed → stop
+        if (isMemberListShown()) { syncNativeMemberList(true); return; } // appeared → collapse
+        if (++tries < 6) memberReconcileTimer = setTimeout(tick, 30);
+    };
+    memberReconcileTimer = setTimeout(tick, 30);
+}
+
 export function syncNativeMemberList(open: boolean): void {
     const c = getCurrentChannelId();
     if (open) {
         // Only owe a restore if WE actually collapsed a SHOWN list (never restore one
         // the user had already hidden themselves).
         if (c && isMemberListShown() && dispatchMemberListToggle()) memberListOwed.add(c);
+        // The list may also reappear a tick later (e.g. a thread we just closed) — watch
+        // for that and collapse it so it never lingers beside the dock.
+        scheduleMemberListReconcile();
     } else if (c && memberListOwed.has(c)) {
         if (!isMemberListShown()) dispatchMemberListToggle();
         memberListOwed.delete(c);
@@ -225,6 +264,7 @@ export function nodeMayContainExclusiveRightSlot(node: Node): boolean {
  *  natively-collapsed member list / profile sidebar — so no DockView marks linger
  *  after the plugin stops. A normal close goes through applyOpenState + syncNative*. */
 export function restoreHiddenMembers(): void {
+    if (memberReconcileTimer) { clearTimeout(memberReconcileTimer); memberReconcileTimer = null; }
     document.documentElement.classList.remove("dockview-open");
     document.querySelectorAll(".dockview-page-inner").forEach(el => el.classList.remove("dockview-page-inner"));
     clearExclusiveRightSlotHidden();
