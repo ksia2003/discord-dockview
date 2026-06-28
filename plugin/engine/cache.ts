@@ -163,6 +163,13 @@ export function mountFromCache(win: DockWindow, e: CacheEntry): boolean {
         presentation: e.pptxPresentation ?? null,
         renderToken: win.content.pptx.renderToken + 1
     };
+    // xlsx: re-point the live workbook to the cached parsed sheets (no re-fetch, no
+    // re-parse); the body feeds the saved sheet's CSV into the grid.
+    win.content.xlsx = {
+        names: e.xlsxWorkbook?.names ?? [],
+        csv: e.xlsxWorkbook?.csv ?? [],
+        renderToken: win.content.xlsx.renderToken + 1
+    };
     // re-apply the saved view-state + any per-viewer re-derivation (csv delimiter,
     // tree kind) via the viewer dispatch in engine/viewState.
     viewRestore?.(win, e);

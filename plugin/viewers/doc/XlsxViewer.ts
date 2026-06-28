@@ -1,40 +1,43 @@
 /*
- * The XLSX viewer — type "xlsx".
+ * The spreadsheet viewer — type "xlsx" (xlsx/xls/xlsm/ods).
  *
- * A .xlsx/.xls is binary OOXML/BIFF, so the loader fetches it as an ArrayBuffer,
- * reads the workbook with SheetJS, serialises the FIRST sheet to CSV text, and then
- * RETYPES the file to "csv" so the existing spreadsheet GRID (the csv viewer, P6)
- * renders it — exactly the way the unknown viewer retypes a sniffed-text file to
- * "code". The KEY type stays "xlsx" (it's already keyed/fetched as xlsx|url) — only
- * the RENDER type changes; the registry tolerates key-type ≠ render-type.
+ * A .xlsx/.xls/.xlsm/.ods is a binary/zipped workbook of MANY sheets. The loader
+ * fetches it as an ArrayBuffer, reads the workbook with SheetJS ONCE, and serialises
+ * EVERY sheet to RFC-4180 CSV text — keeping the ordered sheet names + per-sheet CSV
+ * on the cache entry (entry.xlsxWorkbook) and the live content (content.xlsx), the
+ * same way pdf/3D/pptx persist their heavy parsed handle. The body (XlsxBody) then
+ * feeds the ACTIVE sheet's CSV into the existing csv GRID and renders an Excel-style
+ * bottom sheet-tab strip; switching sheets re-feeds that sheet's text — no re-fetch,
+ * no re-parse.
  *
- * ★ NOTE FOR P5 → P6 ★ the csv viewer is built in P6. Until then, after this loader
- * retypes content.type to "csv", the dispatcher finds no "csv" viewer registered and
- * lands on the unsupported card. That is EXPECTED this phase — the retype + the
- * key-type≠render-type handling are authored faithfully here and xlsx is confirmed
- * end-to-end once P6 registers the csv grid.
- *
- * VIEW-ONLY here (the csv grid owns its own controls in P6): no HeaderControls, no
- * editable capability. The csv delimiter is set on the csv view-state slice IF it
- * exists yet (it won't until P6 registers the viewer) — defensive, like showContent's
- * closeLightbox guard.
+ * This is a real surface (the render type STAYS "xlsx"), NOT the old retype-to-"csv"
+ * trick — a workbook has sheets, a plain .csv/.tsv does not, so the two diverge: the
+ * csv viewer keeps its single-sheet grid↔raw toggle; the xlsx viewer adds the sheet
+ * switcher around the SAME grid (it reuses CsvBody, it does not reinvent it).
  *
  * SheetJS (XLSX) is pulled in with a DYNAMIC import() routed through engine/lazyLib,
- * so its module top-level leaves Vencord startup and only runs on the first .xlsx
- * opened, behind a "Loading spreadsheet viewer…" dock state.
+ * so its module top-level leaves Vencord startup and only runs on the first workbook
+ * opened, behind a "Loading spreadsheet viewer…" dock state. NEVER add a static
+ * `import … from "xlsx"` here or in XlsxBody.
  */
 
+import { getCacheEntry } from "../../engine/cache";
 import { withLibLoading } from "../../engine/lazyLib";
 import { STRINGS } from "../../strings";
 import type {
-    CacheEntry, CsvViewState, LoadOpts, LoadToken, Viewer, ViewerContext
+    CacheEntry, LoadOpts, LoadToken, Viewer, ViewerContext, XlsxViewState
 } from "../../engine/types";
-import { HtmlBody } from "./iframe";
+import { XlsxBody, resetXlsxView, xlsxState } from "./XlsxBody";
+import { XlsxHeaderControls } from "./XlsxHeaderControls";
 
-/** XLSX loader: fetch as ArrayBuffer → SheetJS → first sheet as CSV → retype to
- *  "csv". The entry is retyped too, so a re-open restores it as a csv grid (its key
- *  stays "xlsx|url" from the original detectType — only the RENDER type changes). */
+/** Spreadsheet loader: fetch as ArrayBuffer → SheetJS reads the whole workbook →
+ *  serialise EVERY sheet to CSV → keep names + per-sheet CSV on the entry + live
+ *  content. The body renders the active sheet through the csv grid. */
 function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): void {
+    // Reset the live workbook BEFORE the fetch (mirrors pptx/3D): clear the previous
+    // sheets and BUMP renderToken so the body drops the stale workbook.
+    ctx.content.xlsx = { names: [], csv: [], renderToken: ctx.content.xlsx.renderToken + 1 };
+    resetXlsxView(ctx.window);
     if (!opts.url) {
         ctx.content.loading = false;
         ctx.content.error = STRINGS.error.noSource.title;
@@ -51,28 +54,39 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             const XLSX: any = await withLibLoading(ctx, STRINGS.loading.lib.xlsx, "xlsx",
                 async () => await import("xlsx"));
             const wb = XLSX.read(new Uint8Array(buf), { type: "array" });
-            const firstName = wb.SheetNames[0];
-            const sheet = firstName ? wb.Sheets[firstName] : null;
+            const names: string[] = Array.isArray(wb.SheetNames) ? wb.SheetNames : [];
             // sheet_to_csv emits RFC-4180 CSV (comma delimiter, quoted as needed),
-            // which the csv grid's parser reads back unchanged.
-            const text = sheet ? XLSX.utils.sheet_to_csv(sheet) : "";
-            if (entry) {
-                entry.type = "csv";
-                entry.code = text;
-                entry.codeLang = "plaintext";
-                entry.loading = false;
-                entry.error = null;
+            // which the csv grid's parser reads back unchanged. One pass over every
+            // sheet so the body can switch with no re-parse.
+            const csv: string[] = names.map(n => {
+                const sheet = wb.Sheets[n];
+                return sheet ? XLSX.utils.sheet_to_csv(sheet) : "";
+            });
+            // A workbook with no sheets at all is degenerate — show the empty grid
+            // rather than erroring (matches the old first-sheet "" fallback).
+            return { names: names.length ? names : [""], csv: csv.length ? csv : [""] };
+        })
+        .then((book: { names: string[]; csv: string[] }) => {
+            // Only keep the workbook on `entry` if it is STILL the cache's live entry
+            // for its key (a rapid re-click could have replaced it). Plain text, no
+            // teardown — no leak to guard against.
+            const live = entry != null && getCacheEntry(entry.key) === entry;
+            if (live) {
+                entry!.xlsxWorkbook = { names: book.names, csv: book.csv };
+                entry!.loading = false;
+                entry!.error = null;
             }
-            if (!token.isCurrent()) return;
-            ctx.content.type = "csv";
-            ctx.content.code = text;
-            ctx.content.codeLang = "plaintext";
-            // The serialised sheet is comma-delimited, and a fresh xlsx always opens
-            // as the grid (the old loadXlsx reset the csv view-state). Set both on the
-            // csv view-state slice if the csv viewer has registered (P6).
-            const csv = ctx.window.viewStates["csv"] as CsvViewState | undefined;
-            if (csv) { csv.delimiter = ","; csv.mode = "grid"; }
+            if (!token.isCurrent()) return; // superseded — don't touch content
+            ctx.content.xlsx.names = book.names;
+            ctx.content.xlsx.csv = book.csv;
+            ctx.content.xlsx.renderToken += 1; // a fresh workbook is ready
+            // Fill the sheet names on the view-state now (the tab strip can render),
+            // and clamp the (possibly cache-restored) selected sheet into range.
+            const vs = xlsxState(ctx.window);
+            vs.names = book.names;
+            vs.sheet = Math.min(Math.max(0, vs.sheet || 0), book.names.length - 1);
             ctx.content.loading = false;
+            ctx.content.loadingLabel = null;
             ctx.content.error = null;
             ctx.requestRender();
         })
@@ -80,34 +94,50 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
             if (!token.isCurrent()) return;
             ctx.content.loading = false;
+            ctx.content.loadingLabel = null;
             ctx.content.error = String(e?.message || e);
             ctx.requestRender();
         });
 }
 
-function createState(): unknown {
-    return {};
-}
-function resetState(): void {
-    /* no per-window xlsx view-state — it renders through the csv grid post-retype */
-}
-function snapshot(): void {
-    /* nothing format-specific to park (csv grid handles its own once P6 lands) */
-}
-function restore(): void {
-    /* nothing format-specific to restore */
+function createState(): XlsxViewState {
+    return { sheet: 0, names: [] };
 }
 
-export const XlsxViewer: Viewer = {
+function resetState(vs: XlsxViewState): void {
+    if (!vs) return;
+    vs.sheet = 0;
+    vs.names = [];
+}
+
+/** Park the selected sheet on the entry so a cache return reopens the workbook there. */
+function snapshot(vs: XlsxViewState, entry: CacheEntry): void {
+    entry.view.xlsxSheet = vs?.sheet ?? 0;
+}
+
+/** Restore the saved sheet on a cache return. The sheet names are re-derived from the
+ *  cached workbook so the tab strip is right before the body mounts; the sheet index
+ *  is clamped into range. */
+function restore(vs: XlsxViewState, entry: CacheEntry): void {
+    if (!vs) return;
+    const names = entry.xlsxWorkbook?.names ?? [];
+    vs.names = names;
+    vs.sheet = entry.view.xlsxSheet ?? 0;
+    if (names.length) vs.sheet = Math.min(Math.max(0, vs.sheet), names.length - 1);
+}
+
+export const XlsxViewer: Viewer<XlsxViewState> = {
     type: "xlsx",
     load,
     createState,
     resetState,
     snapshot,
     restore,
-    // Body is never actually mounted for xlsx: load() retypes content.type to "csv"
-    // before the body renders, so the dispatcher routes to the csv viewer's Body
-    // (P6). HtmlBody is a harmless placeholder to satisfy the contract (the iframe
-    // shell needs no xlsx-specific state). No HeaderControls / editable.
-    Body: HtmlBody,
+    Body: XlsxBody,
+    HeaderControls: XlsxHeaderControls,
+    // The grid owns its own vertical+horizontal scroll inside .dockview-csv-scroll,
+    // so scroll-restore must target that element (same as the csv viewer).
+    scrollerSelector: () => ".dockview-csv-scroll"
+    // No dispose: the parsed workbook on the entry is plain text (freed with the entry
+    // by GC); there is no live GPU/worker handle to release.
 };

@@ -75,6 +75,20 @@ export interface PptxState {
     renderToken: number;
 }
 
+/** A parsed workbook handed from the xlsx loader to the body. SheetJS reads the
+ *  whole workbook once; the loader serialises EVERY sheet to CSV text and keeps the
+ *  ordered sheet names + the per-sheet CSV here, so the body can switch sheets with
+ *  no re-fetch/re-parse. Owned by the CACHE ENTRY (entry.xlsxWorkbook), kept alive
+ *  while cached so a re-open is instant — plain decoded text, no GPU/worker handle,
+ *  so no dispose() is needed. The xlsx body feeds the active sheet's CSV into the
+ *  existing csv grid; `names`/`csv` stay parallel arrays (csv[i] is names[i]'s text).
+ *  renderToken bumps per load so a superseded body drops the stale workbook. */
+export interface XlsxState {
+    names: string[]; // ordered sheet names (workbook order)
+    csv: string[]; // csv[i] = sheet names[i] serialised to RFC-4180 CSV text
+    renderToken: number;
+}
+
 /** What is currently loaded into a window. `seq` is bumped on every (re)load and
  *  on a sub-view swap (grid↔raw, rendered↔edit) so React remounts the body. */
 export interface PanelContent {
@@ -85,6 +99,7 @@ export interface PanelContent {
     pdf: PdfState;
     model3d: Model3DState;
     pptx: PptxState;
+    xlsx: XlsxState;
     code: string | null;
     codeLang: string;
     url: string | null;
@@ -167,6 +182,16 @@ export interface PptxViewState {
     total: number;
 }
 
+/** The xlsx viewer's per-window view-state: which sheet is selected (0-based index
+ *  into the workbook's parallel names/csv arrays) plus a copy of the sheet names so
+ *  the bottom tab strip can render before the parsed workbook is on hand (and so a
+ *  cache restore knows the tab labels). Parked on the cache entry so a return reopens
+ *  the workbook on the same sheet. `sheet` is clamped into range by the loader. */
+export interface XlsxViewState {
+    sheet: number; // 0-based selected sheet index
+    names: string[]; // ordered sheet names (mirrors the workbook), for the tab strip
+}
+
 // ── cross-cutting capability state (NOT viewer-owned) ────────────────────────
 // edit-mode rides over the text-family viewers; the gallery rides over the image
 // viewer. They live as named slots on the window, owned by edit/ and
@@ -239,6 +264,9 @@ export interface CachedView {
     // the pptx slide (1-based) the user was on, so a cache return reopens the deck
     // on the same slide.
     pptxSlide?: number;
+    // the xlsx sheet (0-based index) the user was on, so a cache return reopens the
+    // workbook on the same sheet.
+    xlsxSheet?: number;
     scrollTop?: number; // shared scroll of the active body scroller
     csvMode?: "grid" | "raw";
     treeMode?: "tree" | "raw";
@@ -271,6 +299,10 @@ export interface CacheEntry {
     // decoded data — no GPU/worker handle — so no dispose() needed (the live viewer
     // instance + its blob: URLs are owned + destroyed by the body on unmount).
     pptxPresentation?: any | null;
+    // the parsed workbook (ordered sheet names + per-sheet CSV text), kept alive
+    // while cached so a re-open re-renders without a re-fetch/re-parse. Plain decoded
+    // text — no GPU/worker handle — so no dispose() needed.
+    xlsxWorkbook?: { names: string[]; csv: string[] } | null;
     binary?: boolean;
     error?: string | null;
     loading: boolean;

@@ -1321,6 +1321,82 @@ html.dockview-open .dockview-page-inner {
     background: var(--background-modifier-hover, rgba(255, 255, 255, 0.04));
 }
 
+/* SPREADSHEET (xlsx/xls/xlsm/ods) — the SAME csv grid (above), wrapped with an
+   Excel-style SHEET-TAB strip along the bottom for multi-sheet workbooks. The shell
+   is a flex column: the grid takes the remaining height, the tab strip pins to the
+   bottom. A single-sheet workbook renders just the grid (no shell-tabbed wrapper),
+   so there is no redundant switcher. All colours are semantic theme tokens. */
+.dockview-xlsx-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    min-height: 0;
+}
+/* The grid region: a sized flex child so the inner .dockview-csv-scroll (height:100%)
+   resolves against it and scrolls within the area ABOVE the tab strip. */
+.dockview-xlsx-shell-tabbed .dockview-xlsx-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+}
+/* The bottom sheet-tab strip: a horizontally-scrollable row of tabs, like Excel's
+   sheet bar. A solid header-tone background + a top border read it as a frozen strip
+   under the grid. Tabs never wrap — the strip scrolls sideways for many sheets. */
+.dockview-xlsx-tabs {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    padding: 4px 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    background: var(--background-secondary, #2b2d31);
+    border-top: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+    scrollbar-width: thin;
+}
+.dockview-xlsx-tabs::-webkit-scrollbar { height: 6px; }
+.dockview-xlsx-tabs::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thin-thumb, rgba(255, 255, 255, 0.12));
+    border-radius: 3px;
+}
+.dockview-xlsx-tabs::-webkit-scrollbar-track { background: transparent; }
+/* A sheet tab: a compact pill button. Inactive = muted text on transparent; hover
+   lifts the background; active = brighter text on the body tone with a top accent
+   bar (Excel's "selected sheet" affordance), matching the dock's state-colour grammar. */
+.dockview-xlsx-tab {
+    flex: 0 0 auto;
+    max-width: 200px;
+    padding: 4px 12px;
+    border: none;
+    border-radius: 4px 4px 0 0;
+    background: transparent;
+    color: var(--interactive-normal, #b5bac1);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 18px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.1s ease, color 0.1s ease;
+}
+.dockview-xlsx-tab:hover {
+    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.06));
+    color: var(--interactive-hover, #dbdee1);
+}
+.dockview-xlsx-tab-active {
+    background: var(--background-base-lower, #1a1a1e);
+    color: var(--text-strong, #f2f3f5);
+    box-shadow: inset 0 2px 0 0 var(--brand-500, #5865f2);
+}
+.dockview-xlsx-tab-active:hover {
+    background: var(--background-base-lower, #1a1a1e);
+    color: var(--text-strong, #f2f3f5);
+}
+
 /* STRUCTURED (JSON / XML) COLLAPSIBLE TREE — the default view for .json/.json5/.xml,
    with a header Tree/Raw toggle back to the highlighted code view. The tree is built
    imperatively into .dockview-tree-mount; rows are monospace, keys/values are

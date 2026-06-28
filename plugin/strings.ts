@@ -173,6 +173,14 @@ export const STRINGS = {
         copyHint: "Copy table data"
     },
 
+    // --- xlsx/ods (workbook) header controls --------------------------------
+    // The sheet switcher is the Excel-style bottom tab strip (in the body, not the
+    // header); the header keeps just a copy action for the active sheet's data.
+    xlsx: {
+        copyHint: "Copy sheet data",
+        sheetTab: "Sheet"
+    },
+
     // --- structured (JSON/XML) tree header controls -------------------------
     // The Raw control is a single STATE-COLOUR toggle (Discord member-list style):
     // off = tree, on (highlighted) = raw text. Icon-only — `rawHint` is its tooltip.
