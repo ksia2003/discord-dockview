@@ -22,6 +22,7 @@
 import { ContextMenuApi, Menu, React } from "@webpack/common";
 
 import { detectType, IMG_EXT } from "./engine/detectType";
+import type { ContentType } from "./engine/types";
 import { load } from "./engine/load";
 import { openExternalLink } from "./external/openExternal";
 import { STRINGS } from "./strings";
@@ -202,10 +203,13 @@ function isImageUrl(url: string): boolean {
 }
 
 /**
- * Resolve a click on an INLINE image (Discord media, not an attachment chip) to
- * its full-resolution url, or null if this isn't an image we should intercept.
+ * Resolve a click on an INLINE visual-media item to its url + dock content type, or
+ * null if it isn't media we should intercept. Discord renders images AND videos in the
+ * SAME imageWrapper/mosaic grid, so this also catches an inline video — which must
+ * route to the VIDEO viewer, not the image one (and keep its RAW url: the full-res
+ * image transform would mangle a media url). Images get the full-resolution url.
  */
-function resolveInlineImageClick(target: EventTarget | null): { url: string; name: string; } | null {
+function resolveInlineMediaClick(target: EventTarget | null): { url: string; name: string; type: ContentType; } | null {
     let el = target as HTMLElement | null;
     let wrapper: HTMLElement | null = null;
     let img: HTMLImageElement | null = null;
@@ -220,26 +224,31 @@ function resolveInlineImageClick(target: EventTarget | null): { url: string; nam
     }
     if (!wrapper) return null;
     if (!img) img = wrapper.querySelector("img");
-    // Prefer the fiber's original-resolution url; fall back to the <img> src.
-    let url = fiberImageUrl(wrapper) || (img ? img.src : null);
+    // Prefer the fiber's original-resolution url; fall back to the <img>/<video> src.
+    let url = fiberImageUrl(wrapper) || (img ? img.src : null) || (wrapper.querySelector("video") || {} as any).src || null;
     if (!url) return null;
-    // Only intercept actual image assets (skip stickers/emoji/avatars without ext).
+    // A video (or audio) sitting in the visual-media grid → the media viewer, with the
+    // RAW url (the full-res image transform must never touch a media url).
+    const t = detectType({ url });
+    if (t === "video" || t === "audio") return { url, name: nameFromUrl(url), type: t };
+    // Image path: only intercept actual image assets (skip stickers/emoji/avatars
+    // without an ext) and load the full-resolution url.
     if (!isImageUrl(url) && !/\/attachments\//.test(url)) return null;
     url = fullResImageUrl(url);
-    return { url, name: nameFromUrl(url) };
+    return { url, name: nameFromUrl(url), type: "image" };
 }
 
 function onDocClickCapture(e: MouseEvent) {
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.altKey) return;
     if (isExplicitDownloadButton(e.target)) return;
-    // Inline image -> dock panel (suppress Discord's native lightbox modal).
-    const imgHit = resolveInlineImageClick(e.target);
-    if (imgHit) {
+    // Inline image / video -> dock panel (suppress Discord's native lightbox / player).
+    const mediaHit = resolveInlineMediaClick(e.target);
+    if (mediaHit) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
         try {
-            load({ name: imgHit.name, url: imgHit.url, type: "image" });
+            load({ name: mediaHit.name, url: mediaHit.url, type: mediaHit.type });
         } catch {
             /* panel mount failed; fall back to native by not blocking next time */
         }
