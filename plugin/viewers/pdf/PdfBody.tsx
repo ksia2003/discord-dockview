@@ -43,6 +43,7 @@
 
 import { React } from "@webpack/common";
 
+import { dockHasFocus, isTextEntryFocused } from "../../engine/dockKeyboard";
 import { clearLiveController, getLiveController, requestRender, setLiveController } from "../../engine/forceRender";
 import { consumePendingScroll, getPendingScrollTop } from "../../engine/viewState";
 import { getActiveWindow } from "../../engine/window";
@@ -1060,6 +1061,48 @@ export function PdfBody() {
         };
         sc?.addEventListener("scroll", onScroll, { passive: true });
 
+        // --- keyboard shortcuts (the ones the header tooltips advertise) -------
+        // Wired to the SAME controller verbs the header buttons drive, behind the
+        // shared dock-focus gate (so they never fire while typing in the Discord
+        // chat box or another panel). The find input + a panning text-selection in
+        // the PDF are NOT text-entry surfaces that swallow these, except the find
+        // input (an <input>): single-key zoom/page keys skip it (isTextEntryFocused),
+        // so typing "0"/"-" into a page/find field types normally. Ctrl/Cmd+F (find)
+        // and Esc (close find) are not literal characters, so they apply on dock
+        // focus regardless. Matches the image viewer's window-keydown pattern.
+        const onKey = (e: KeyboardEvent) => {
+            if (!dockHasFocus()) return;
+            const ctrl = pdfController();
+            if (!ctrl) return;
+            // Ctrl/Cmd+F → open the SAME find bar the magnifier button opens.
+            if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+                if (!pv.findOpen) { e.preventDefault(); ctrl.toggleFind(); }
+                return;
+            }
+            // Esc → close find if it's open (the find INPUT handles its own Esc; this
+            // covers Esc while focus is elsewhere in the dock).
+            if (e.key === "Escape") {
+                if (pv.findOpen) { e.preventDefault(); ctrl.toggleFind(); }
+                return;
+            }
+            // The remaining single-key shortcuts must never hijack a real keystroke
+            // in a text field (the find input / page-jump input) or a modifier chord.
+            if (e.ctrlKey || e.altKey || e.metaKey) return;
+            if (isTextEntryFocused()) return;
+            if (e.key === "+" || e.key === "=") {
+                e.preventDefault(); ctrl.zoomIn();
+            } else if (e.key === "-" || e.key === "_") {
+                e.preventDefault(); ctrl.zoomOut();
+            } else if (e.key === "0") {
+                e.preventDefault(); ctrl.fitWidth(); // reset/fit zoom (the "0" tooltip)
+            } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
+                e.preventDefault(); ctrl.prevPage();
+            } else if (e.key === "ArrowRight" || e.key === "PageDown") {
+                e.preventDefault(); ctrl.nextPage();
+            }
+        };
+        window.addEventListener("keydown", onKey);
+
         let roDebounce: any = null;
         const ro = new ResizeObserver(() => {
             clearTimeout(roDebounce);
@@ -1083,6 +1126,7 @@ export function PdfBody() {
             clearTimeout(zoomDebounce);
             if (scrollRaf) cancelAnimationFrame(scrollRaf);
             sc?.removeEventListener("scroll", onScroll);
+            window.removeEventListener("keydown", onKey);
             host.removeEventListener("mousedown", onPanDown);
             endPan(); // drop any window-level pan listeners + grabbing class
             ro.disconnect();

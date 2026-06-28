@@ -2,8 +2,7 @@
  * The four idle / system body states: loading, error, unsupported, empty.
  *
  * These are the bodies the dock shows when there is no live viewer content to
- * render — and in Phase 2, with ZERO viewers registered, they are the ONLY bodies
- * the dock ever shows. DockPanel's body dispatcher falls here whenever the active
+ * render. DockPanel's body dispatcher falls here whenever the active
  * window has no viewer for its content type: a loading file → <LoadingBody/>, a
  * resolved-but-unviewable file → renderUnsupportedBody (download / open-in-window),
  * an errored file → renderErrorBody (humanized + retry), and an empty dock →
@@ -103,8 +102,7 @@ export function renderErrorBody(raw: string) {
 
 /** Unsupported-format fallback: a clean centered card for a file we can't preview,
  *  with Download + Open-in-browser actions (no raw-byte iframe dump). Reached for a
- *  binary "unknown" file — and, in Phase 2, for ANY content type with no registered
- *  viewer yet. */
+ *  binary "unknown" file, or any content type with no registered viewer. */
 export function renderUnsupportedBody() {
     const win = getActiveWindow();
     const url = win.content.url;

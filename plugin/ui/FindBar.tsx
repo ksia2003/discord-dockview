@@ -8,9 +8,10 @@
  * case + the setQuery/next/prev/toggleCase/close verbs). PDF and every CodeMirror
  * surface share this one component.
  *
- * Phase 2 reality: NO viewer supplies a model yet, so DockPanel renders nothing in
- * the find slot. The component + the model contract are here, ready for the viewers
- * (P3 wires the first one).
+ * A find-capable viewer supplies the model via its findModel() ONLY while its find
+ * bar is open (PDF + every CodeMirror surface do); DockPanel renders nothing in the
+ * find slot otherwise. The bar is opened by the magnifier button OR Ctrl+F (each
+ * viewer's body wires that keyboard shortcut to the same toggle).
  */
 
 import { React } from "@webpack/common";

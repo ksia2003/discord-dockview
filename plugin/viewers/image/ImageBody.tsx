@@ -26,6 +26,7 @@
 
 import { React } from "@webpack/common";
 
+import { dockHasFocus } from "../../engine/dockKeyboard";
 import { clearLiveController, getLiveController, requestRender, setLiveController } from "../../engine/forceRender";
 import { getActiveWindow } from "../../engine/window";
 import type { DockWindow, ImgViewState } from "../../engine/types";
@@ -284,10 +285,8 @@ export function ImageBody() {
         const onKey = (e: KeyboardEvent) => {
             if (e.ctrlKey || e.altKey || e.metaKey) return;
             // Only act when the dock panel actually has focus — never while a chat
-            // input / message box is focused.
-            const host = document.querySelector("#dockview-root");
-            const ae = document.activeElement;
-            if (!host || !ae || !host.contains(ae)) return;
+            // input / message box is focused. (Shared gate, reused by every viewer.)
+            if (!dockHasFocus()) return;
             const ctrl = imgController();
             if (e.key === "+" || e.key === "=") {
                 e.preventDefault(); ctrl?.zoomIn();

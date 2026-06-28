@@ -26,6 +26,7 @@
 
 import { React } from "@webpack/common";
 
+import { dockHasFocus, isTextEntryFocused } from "../../engine/dockKeyboard";
 import { clearLiveController, getLiveController, requestRender, setLiveController } from "../../engine/forceRender";
 import { loadLib } from "../../engine/lazyLib";
 import { getActiveWindow } from "../../engine/window";
@@ -162,8 +163,28 @@ export function PptxBody() {
             requestRender();
         })().catch(() => { /* a lib/render failure is already an errored content path */ });
 
+        // --- keyboard shortcuts (the header tooltips advertise ←/→ slide nav) ---
+        // ←/→ (and PageUp/PageDown) step slides through the SAME controller verbs the
+        // prev/next chevrons drive, behind the shared dock-focus gate. Skipped while a
+        // text field is focused (the slide-jump input in the header) so typing a slide
+        // number isn't hijacked, and only single, unmodified keys act. Mirrors the
+        // image/pdf window-keydown pattern.
+        const onKey = (e: KeyboardEvent) => {
+            if (e.ctrlKey || e.altKey || e.metaKey) return;
+            if (!dockHasFocus() || isTextEntryFocused()) return;
+            const ctrl = pptxController();
+            if (!ctrl) return;
+            if (e.key === "ArrowLeft" || e.key === "PageUp") {
+                e.preventDefault(); ctrl.prevSlide();
+            } else if (e.key === "ArrowRight" || e.key === "PageDown") {
+                e.preventDefault(); ctrl.nextSlide();
+            }
+        };
+        window.addEventListener("keydown", onKey);
+
         return () => {
             disposed = true;
+            window.removeEventListener("keydown", onKey);
             if (viewer) {
                 try { viewer.destroy(); } catch { /* ignore */ }
                 viewer = null;

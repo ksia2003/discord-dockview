@@ -8,10 +8,10 @@
  * per-type if-ladder; here each viewer owns its own HeaderControls component and we
  * just look it up by content type and render it.
  *
- * Phase 2 reality: NO viewer is registered, so getViewer(type) is undefined for
- * every type and this renders nothing. hasViewerControls() reports false too, so
- * DockPanel doesn't even open the second row. The whole second-row machinery is
- * inert until the viewers arrive (P3+) — exactly the empty-shell behaviour we want.
+ * A content type with no HeaderControls component (e.g. a plain image, or an idle
+ * loading/empty/errored body) renders nothing here, and hasViewerControls() reports
+ * false so DockPanel keeps the header single-row. Every viewer that needs a control
+ * strip (pdf / code / csv / structured / pptx / the edit toggle) supplies one.
  */
 
 import { getActiveWindow } from "../engine/window";

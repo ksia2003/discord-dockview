@@ -297,8 +297,10 @@ export default definePlugin({
 
         // 3. F9 toggles the dock. A single function key — text inputs don't capture
         //    it, so no focus guard is needed; we still preventDefault to stop any
-        //    default. The viewer single-key shortcuts (image zoom, PDF page-nav/find)
-        //    ride the viewers and arrive in P3+; P2 owns only the dock toggle.
+        //    default. The viewer single-key/Ctrl+F shortcuts (image zoom, PDF page-nav/
+        //    zoom/find, code find, pptx slide-nav) are bound by each viewer's body
+        //    behind the shared dock-focus gate (engine/dockKeyboard); this entry owns
+        //    only the global dock toggle.
         onKeyDown = (e: KeyboardEvent) => {
             if (e.key === "F9" || e.code === "F9") {
                 e.preventDefault();

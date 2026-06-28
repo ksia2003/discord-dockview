@@ -19,8 +19,8 @@
  *    then the old panel's cleanup runs — without the guard it would null the LIVE
  *    renderer the new panel just published).
  *  - The body dispatches on getActiveWindow().content.type → getViewer(type)?.Body.
- *    With NO viewer registered (the Phase-2 reality for EVERY type) it falls to the
- *    StateCards: loading (content.loading), empty (no file), else unsupported.
+ *    With no viewer for the type (or an idle body) it falls to the StateCards:
+ *    loading (content.loading), empty (no file), else unsupported.
  *  - The resize drag is a PURE DOM operation decoupled from React (a rAF coalesces
  *    pointermoves into one host-width write per frame; React state is touched ONCE on
  *    drag end, which persists the width). No re-render during the drag.

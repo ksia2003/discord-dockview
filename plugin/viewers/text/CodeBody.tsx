@@ -35,6 +35,7 @@
 
 import { React } from "@webpack/common";
 
+import { dockHasFocus } from "../../engine/dockKeyboard";
 import { clearLiveController, getLiveController, requestRender, setLiveController } from "../../engine/forceRender";
 import { consumePendingScroll } from "../../engine/viewState";
 import { getActiveWindow } from "../../engine/window";
@@ -42,6 +43,12 @@ import type { CodeViewState, CsvViewState, DockWindow, TreeViewState } from "../
 import { editBufferText, editOriginalText, setEditBuffer } from "../../edit/editMode";
 import { loadCM } from "./cm";
 import type { CMModules } from "./cm";
+// CodeBody ⟷ CodeHeaderControls form an import cycle (CodeHeaderControls reads
+// codeController/codeState from here; here we read toggleCodeFind from there). It's
+// harmless: both modules only DECLARE functions at module top — nothing runs during
+// the import (same shape as the ImageBody ⟷ ImageLightbox cycle). toggleCodeFind is
+// the SAME open/close the magnifier button drives, so Ctrl+F opens the SAME find bar.
+import { toggleCodeFind } from "./CodeHeaderControls";
 
 // The live-controller slot name (the old `codeCtrl` module singleton).
 export const CODE_CONTROLLER = "code";
@@ -320,8 +327,30 @@ export function CodeBody() {
             if (cv.findOpen && cv.findQuery) ctrl.rebuildFind(cv.findQuery);
             else consumePendingScroll(getActiveWindow());
         });
+
+        // --- keyboard shortcuts (the find tooltip advertises Ctrl+F) -----------
+        // Ctrl/Cmd+F opens the SAME shared find bar the magnifier button opens
+        // (toggleCodeFind), behind the dock-focus gate so it never steals the
+        // browser/Discord Ctrl+F while the dock isn't focused. CM is mounted WITHOUT
+        // @codemirror/search's keymap, so this is the ONLY Ctrl+F → find path. Esc
+        // closes it (the find INPUT handles its own Esc; this covers Esc while the CM
+        // editor itself holds focus). Both are modifier/non-character keys, so they
+        // apply even while the CM editor is the (contenteditable) focus in edit mode —
+        // they never swallow a literal keystroke.
+        const onKey = (e: KeyboardEvent) => {
+            if (!dockHasFocus()) return;
+            const cv = codeState(getActiveWindow());
+            if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+                if (!cv.findOpen) { e.preventDefault(); toggleCodeFind(); }
+            } else if (e.key === "Escape" && cv.findOpen) {
+                e.preventDefault(); toggleCodeFind();
+            }
+        };
+        window.addEventListener("keydown", onKey);
+
         return () => {
             cancelled = true;
+            window.removeEventListener("keydown", onKey);
             ctrl?.teardown();
             // UNMOUNT GUARD: only clear the slot if it's still ours (a remount may
             // have already published a new controller — don't null the live one).
