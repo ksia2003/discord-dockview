@@ -54,6 +54,17 @@ export const STRUCTURED_EXT = new Set(["json", "json5", "xml"]);
 // Extensions rendered as an <img> (fit-width) in the panel instead of opening
 // Discord's native lightbox.
 export const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "apng", "avif"]);
+// Raster formats the browser can't put in <img src> directly: they are fetched as
+// bytes, decoded per-format to RGBA, painted to a canvas and exported as a blob:
+// url, then RETYPED to "image" so the whole image UX (fit/zoom/lightbox) is reused
+// — the same decode→retype trick the xlsx loader uses to reach the csv grid.
+//   tiff/tif  -> utif (first page; multi-page is a future depth item)
+//   psd       -> @webtoon/psd (the composited/flattened image)
+//   heic/heif -> heic2any (libheif wasm, dynamic-imported so the wasm only
+//                downloads when a HEIC is actually opened)
+// raw camera (cr2/nef/dng/…), eps/ai, dicom and indd are NOT here — they need
+// server-side conversion and stay "unknown" gaps until a download-fallback batch.
+export const RASTER_IMG_EXT = new Set(["tiff", "tif", "psd", "heic", "heif"]);
 // Audio — played by a native <audio controls> (the element streams the url directly).
 // HTML5-playable containers only; an unplayable one surfaces a download fallback.
 export const AUDIO_EXT = new Set(["mp3", "wav", "m4a", "aac", "ogg", "oga", "opus", "flac", "weba"]);
@@ -78,6 +89,10 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     const ext = probe(opts.url) || probe(opts.name);
     if (ext === "pdf") return "pdf";
     if (ext && IMG_EXT.has(ext)) return "image";
+    // .tiff/.tif/.psd/.heic/.heif -> decoded to RGBA, painted to a canvas, exported
+    // as a blob: url and retyped to "image" by the rasterimage loader. Checked right
+    // after IMG_EXT so these never fall through to the code/unknown paths.
+    if (ext && RASTER_IMG_EXT.has(ext)) return "rasterimage";
     // Media — a native <audio>/<video controls> streams the attachment url directly.
     if (ext && AUDIO_EXT.has(ext)) return "audio";
     if (ext && VIDEO_EXT.has(ext)) return "video";

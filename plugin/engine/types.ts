@@ -34,7 +34,8 @@ export type ContentType =
     | "mermaid"
     | "graphviz"
     | "ipynb"
-    | "structured";
+    | "structured"
+    | "rasterimage";
 
 // ── panel content ───────────────────────────────────────────────────────────
 

@@ -50,6 +50,12 @@ registerViewer(PdfViewer);
 import { ImageViewer } from "./image/ImageViewer";
 registerViewer(ImageViewer);
 
+// raster/ — TIFF / PSD / HEIC: the loader fetches the bytes, decodes per-format to
+// RGBA (utif / @webtoon/psd / heic2any, each dynamic-imported), paints to a canvas,
+// exports a blob: url and RETYPES to "image" so the image viewer surface renders it.
+import { RasterImageViewer } from "./raster/RasterImageViewer";
+registerViewer(RasterImageViewer);
+
 // media/ — native <audio>/<video controls> that stream the attachment url directly
 // (nothing to fetch/decode, like the image viewer); audio + video share one body.
 import { AudioViewer, VideoViewer } from "./media/MediaViewer";
