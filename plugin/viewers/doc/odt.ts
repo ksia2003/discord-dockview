@@ -23,6 +23,12 @@
  *
  * NO module-top executable work — only imports + function decls; everything runs
  * inside odtToHtml(). fflate's unzipSync is synchronous (fine for chat-sized docs).
+ *
+ * SHARED ODF CORE: .odp (OpenDocument Presentation) is the SAME ODF family — its slides
+ * are <draw:page> holding <draw:text-box> whose children are the very <text:p>/<text:list>/
+ * <table:table> blocks this file already maps. So the style collection + the inline/block
+ * renderers + the embedded-picture resolver are EXPORTED for viewers/doc/odp.ts to reuse,
+ * rather than duplicating the ODF→HTML logic. Anything exported here is used by odp.ts.
  */
 
 import { unzipSync } from "fflate";
@@ -31,7 +37,7 @@ import { escapeAttr, escapeHtml } from "../../engine/html";
 
 /** The ODF style attributes we care about, distilled from a <style:style>'s
  *  text-properties + paragraph-properties. */
-interface OdfStyle {
+export interface OdfStyle {
     bold?: boolean;
     italic?: boolean;
     underline?: boolean;
@@ -51,7 +57,7 @@ const NS_RASTER: Record<string, string> = {
 
 /** A small base64 encoder over raw bytes (the renderer has btoa, but it chokes on
  *  byte values via String.fromCharCode for large inputs, so chunk it). */
-function bytesToBase64(bytes: Uint8Array): string {
+export function bytesToBase64(bytes: Uint8Array): string {
     let bin = "";
     const CHUNK = 0x8000;
     for (let i = 0; i < bytes.length; i += CHUNK) {
@@ -63,8 +69,24 @@ function bytesToBase64(bytes: Uint8Array): string {
 /** Local element name without a namespace prefix (DOMParser keeps "text:p" as the
  *  tagName when parsed as application/xml without namespace awareness; localName is
  *  the part after the colon). We match on localName so we're prefix-agnostic. */
-function ln(el: Element): string {
+export function ln(el: Element): string {
     return el.localName || el.tagName.replace(/^.*:/, "");
+}
+
+/** Build data: URLs for the embedded pictures in an unzipped ODF package, keyed by their
+ *  zip path AND by the bare "Pictures/…" name, so renderImage resolves either form of
+ *  xlink:href. Shared by odt + odp (both store pictures under Pictures/). */
+export function buildOdfImageMap(files: Record<string, Uint8Array>): Record<string, string> {
+    const images: Record<string, string> = {};
+    for (const path of Object.keys(files)) {
+        if (!/^Pictures\//i.test(path)) continue;
+        const ext = (path.split(".").pop() || "").toLowerCase();
+        const mime = NS_RASTER[ext];
+        if (!mime) continue;
+        const b64 = bytesToBase64(files[path]);
+        images[path] = `data:${mime};base64,${b64}`;
+    }
+    return images;
 }
 
 /** Read an attribute by its local name regardless of prefix (text:style-name,
@@ -83,7 +105,7 @@ function attrLocal(el: Element, local: string): string | null {
 /** Parse the <style:style> definitions in a document into a name→OdfStyle map. Both
  *  content.xml's <office:automatic-styles> and styles.xml's <office:styles> use the
  *  same <style:style> shape, so one walker handles both. */
-function collectStyles(doc: Document, into: Record<string, OdfStyle>): void {
+export function collectStyles(doc: Document, into: Record<string, OdfStyle>): void {
     const styles = doc.getElementsByTagName("*");
     for (let i = 0; i < styles.length; i++) {
         const el = styles[i];
@@ -253,7 +275,7 @@ function renderTable(el: Element, styles: Record<string, OdfStyle>, images: Reco
 
 /** Render the BLOCK-level children of a container (the body, a list item, a cell)
  *  into HTML: headings, paragraphs, nested lists, tables. */
-function renderBlocks(node: Node, styles: Record<string, OdfStyle>, images: Record<string, string>): string {
+export function renderBlocks(node: Node, styles: Record<string, OdfStyle>, images: Record<string, string>): string {
     let html = "";
     for (let i = 0; i < node.childNodes.length; i++) {
         const c = node.childNodes[i];
@@ -299,16 +321,7 @@ export function odtToHtml(bytes: Uint8Array): string {
 
     // Build data: URLs for the embedded pictures keyed by their zip path AND by the
     // bare "Pictures/…" name, so renderImage resolves either form of xlink:href.
-    const images: Record<string, string> = {};
-    for (const path of Object.keys(files)) {
-        if (!/^Pictures\//i.test(path)) continue;
-        const ext = (path.split(".").pop() || "").toLowerCase();
-        const mime = NS_RASTER[ext];
-        if (!mime) continue;
-        const b64 = bytesToBase64(files[path]);
-        const url = `data:${mime};base64,${b64}`;
-        images[path] = url;
-    }
+    const images = buildOdfImageMap(files);
 
     const parser = new DOMParser();
     const styles: Record<string, OdfStyle> = {};

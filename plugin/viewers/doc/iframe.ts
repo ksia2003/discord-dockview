@@ -133,6 +133,19 @@ table:hover::-webkit-scrollbar-thumb, table:hover::-webkit-scrollbar-track { vis
    converters emit keep their vertical rhythm. */
 .rtf-doc p:empty, .odt-doc p:empty { min-height: 1em; }
 .odt-img { max-width: 100%; height: auto; background: #fff; border-radius: 4px; }
+/* .odp slide cards: each <draw:page> renders as a numbered card so a deck reads as a
+   stack of legible slides (a flowed-outline preview, not a pixel-faithful layout). The
+   first text-box on a slide is usually the title, so its first heading/paragraph reads
+   larger. Cards use the same panel-surface + hairline border the docx/table chrome uses. */
+.odp-doc { display: flex; flex-direction: column; gap: 16px; }
+.odp-slide { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 16px 18px; }
+.odp-slide-num { color: #949ba4; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin: 0 0 10px; }
+.odp-box { margin: 0 0 10px; }
+.odp-box:last-child { margin-bottom: 0; }
+.odp-box > :first-child { margin-top: 0; }
+.odp-box > :last-child { margin-bottom: 0; }
+.odp-empty { color: #80848e; font-style: italic; margin: 0; }
+.odp-img { max-width: 100%; height: auto; background: #fff; border-radius: 4px; }
 /* mermaid: the rendered SVG sits centred on the dark page and may be wider/taller
    than the panel, so the body scrolls to it. The SVG keeps its own intrinsic size
    (no forced width) so a large diagram stays legible and pannable via scroll. */
