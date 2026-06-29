@@ -130,6 +130,13 @@ registerViewer(RtfViewer);
 import { OdtViewer } from "./doc/OdtViewer";
 registerViewer(OdtViewer);
 
+// odp — OpenDocument Presentation: fflate unzips the package and each draw:page slide's
+// text-boxes are mapped to HTML cards through the SAME ODF→HTML core as odt (odp.ts reuses
+// odt.ts), rendered through the same dark doc-iframe shell. A legible flowed-outline
+// preview, not a pixel-faithful slide layout.
+import { OdpViewer } from "./doc/OdpViewer";
+registerViewer(OdpViewer);
+
 import { XlsxViewer } from "./doc/XlsxViewer";
 registerViewer(XlsxViewer);
 
@@ -162,3 +169,11 @@ registerViewer(MsgViewer);
 // wraps them in a blob: url and RETYPES to "image" (like tiff/heic and dxf).
 import { RawViewer } from "./raw/RawViewer";
 registerViewer(RawViewer);
+
+// ps/ — PostScript (.eps) + Adobe Illustrator (.ai): the loader fetches the bytes and
+// either routes a PDF-compatible .ai straight to the pdf viewer (%PDF sniff, no lib) or
+// converts pure PostScript → PDF with Ghostscript-WASM (chunk-ghostscript.js, in the
+// renderer — CSP-safe instantiateWasm, no native IPC), then RETYPES the file to "pdf" and
+// delegates to the pdf viewer's load() so the full pdf surface renders it.
+import { PsViewer } from "./ps/PsViewer";
+registerViewer(PsViewer);

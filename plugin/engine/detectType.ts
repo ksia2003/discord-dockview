@@ -45,6 +45,11 @@ export const RTF_EXT = new Set(["rtf"]);
 // .fodt (flat single-XML ODF) is NOT here — it's a different container the unzip
 // path can't read, so it stays a gap rather than falsely routing. View-only.
 export const ODT_EXT = new Set(["odt"]);
+// OpenDocument Presentation (fflate unzip + ODF presentation XML -> per-slide HTML cards
+// -> dark sandboxed iframe). Same ODF family as .odt: each <draw:page> slide's text-boxes
+// are mapped through the SAME ODF→HTML core (viewers/doc/odp.ts reuses odt.ts). This is a
+// legible flowed-outline preview, not a pixel-faithful slide layout. View-only.
+export const ODP_EXT = new Set(["odp"]);
 // Spreadsheets (SheetJS -> first sheet -> CSV text -> retyped to the csv grid).
 // SheetJS reads xlsm (macro-enabled OOXML) and ods (OpenDocument) natively too,
 // so they ride the same xlsx pipeline. (.numbers is NOT here — Apple iWork is not
@@ -93,8 +98,9 @@ export const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg
 //   jxl       -> @jsquash/jxl (libjxl wasm → RGBA; the codec + its 849 KB wasm ship
 //                as an out-of-bundle chunk loaded on first .jxl open, and the wasm is
 //                handed to the codec directly so it never fetches — CSP-safe)
-// raw camera (cr2/nef/dng/…), eps/ai, dicom and indd are NOT here — they need
-// server-side conversion and stay "unknown" gaps until a download-fallback batch.
+// raw camera (cr2/nef/dng/…) → the raw viewer (main-process decode); eps/ai → the
+// PostScript viewer (Ghostscript-WASM in the renderer, see PS_EXT below); dicom → its own
+// viewer. indd is NOT here — it needs a server-class reader and stays an "unknown" gap.
 export const RASTER_IMG_EXT = new Set([
     "tiff", "tif", "psd", "heic", "heif",
     "tga", "ico", "cur", "jp2", "jpx", "j2k", "j2c", "jxl"
@@ -119,6 +125,17 @@ export const DXF_EXT = new Set(["dxf"]);
 // require("zlib") that Vencord's ban-imports rejects, so it ships as an out-of-bundle
 // chunk (engine/chunkRegistry.ts), loaded on first .dcm open.
 export const DICOM_EXT = new Set(["dcm", "dicom"]);
+// PostScript / Illustrator (.eps, .ai) — converted to PDF and rendered by the EXISTING
+// pdf.js viewer. The PostScript viewer (viewers/ps/) fetches the bytes and:
+//   .ai  → MANY Illustrator files are PDF-compatible (they embed a full PDF stream), so
+//          a `%PDF`-headed .ai routes STRAIGHT to the pdf viewer with no conversion
+//          (zero new lib for the common case). A non-PDF .ai falls through to ↓.
+//   .eps + non-PDF .ai → pure PostScript → Ghostscript-WASM (chunk-ghostscript.js, an
+//          out-of-bundle chunk) converts PS → PDF IN THE RENDERER (CSP-safe instantiateWasm
+//          hook, no Worker/native IPC — so the OTA reloads without a relaunch), then the
+//          file retypes to "pdf" and the pdf surface (page nav/zoom/fit/find) renders it.
+// Routing type "postscript"; the viewer retypes to "pdf" before any body mounts.
+export const PS_EXT = new Set(["eps", "ai"]);
 // 3D models — fetched as text/bytes, parsed by the matching three.js loader, added
 // to a Scene and rendered to a WebGLRenderer canvas with OrbitControls. three.js +
 // its loaders are DYNAMIC-imported (off Vesktop startup) inside the viewer.
@@ -137,8 +154,8 @@ export const MODEL3D_EXT = new Set(["obj", "stl", "ply", "fbx", "dae", "3ds", "g
 // live container, with slide navigation. Dynamic-imported (off Vesktop startup) inside
 // the viewer. ONLY the modern OOXML .pptx is here:
 //   .ppt  (legacy binary OLE/CFB) needs a different, server-class parser → gap.
-//   .odp  (OpenDocument Presentation) is a different package the OOXML model can't
-//          read → gap (would falsely route + render empty).
+//   .odp  (OpenDocument Presentation) is NOT here — it's a different package the OOXML
+//          model can't read, so it has its OWN viewer (ODP_EXT → the ODF→HTML transform).
 //   .key  (Apple Keynote) is proprietary iWork → gap.
 //   .gslides / Google Slides has no standalone file → gap.
 // Leaving those "unknown" surfaces the honest download fallback rather than a broken
@@ -186,6 +203,11 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     // to "image". Checked alongside the raster decoders so a DICOM never falls through to
     // the code/unknown path.
     if (ext && DICOM_EXT.has(ext)) return "dicom";
+    // .eps/.ai -> the PostScript viewer fetches the bytes and either routes a PDF-compatible
+    // .ai straight to pdf.js (%PDF sniff) or converts PS -> PDF with Ghostscript-WASM, then
+    // retypes to "pdf" so the pdf surface renders it. Checked alongside the other
+    // convert-then-retype decoders so a .eps/.ai never falls through to the code/unknown path.
+    if (ext && PS_EXT.has(ext)) return "postscript";
     // .obj/.stl/.ply/.fbx/.dae/.3ds/.gltf/.glb -> the three.js loader parses the bytes
     // into a Scene rendered on a WebGLRenderer canvas with OrbitControls. Checked
     // before the media/code paths so a model never falls through to a raw dump.
@@ -208,6 +230,8 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     if (ext && RTF_EXT.has(ext)) return "rtf";
     // .odt -> fflate unzip + ODF XML -> HTML, rendered through the same shell.
     if (ext && ODT_EXT.has(ext)) return "odt";
+    // .odp -> fflate unzip + ODF presentation XML -> per-slide HTML cards, same shell.
+    if (ext && ODP_EXT.has(ext)) return "odp";
     // .xlsx/.xls/.xlsm/.ods -> SheetJS reads it; the loader retypes to "csv" and feeds the grid.
     if (ext && XLSX_EXT.has(ext)) return "xlsx";
     // .mmd/.mermaid -> mermaid renders the diagram to SVG in a dark sandboxed iframe.

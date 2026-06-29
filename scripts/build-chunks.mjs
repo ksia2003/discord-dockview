@@ -36,11 +36,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Node builtins that a chunk lib references ONLY in dead/debug paths but that esbuild
 // must still resolve to bundle for the browser. ag-psd reaches for `util.inspect` in
-// debug console.logs; alias it to a no-op browser stub so the chunk builds clean
-// (the inspect() calls never run). Kept narrow — only the builtins we have proven a
-// chunk lib references in unreachable code, never a blanket node polyfill.
+// debug console.logs; @jspawn/ghostscript-wasm's dual-target Emscripten glue reaches for
+// `fs`/`path`/`module`/`crypto` (+ `__dirname`) on its Node-only code path. Alias each to
+// a no-op browser stub so the chunk builds clean (those calls never run on the browser
+// path — proven by a live EPS→PDF conversion in the renderer). Kept narrow — only the
+// builtins we have proven a chunk lib references in unreachable code, never a blanket
+// node polyfill.
+const NODE_EMPTY_STUB = join(__dirname, "utils", "node-empty-stub.mjs");
 const BUILTIN_BROWSER_STUBS = {
-    util: join(__dirname, "utils", "util-browser-stub.mjs")
+    util: join(__dirname, "utils", "util-browser-stub.mjs"),
+    fs: NODE_EMPTY_STUB,
+    path: NODE_EMPTY_STUB,
+    module: NODE_EMPTY_STUB,
+    crypto: NODE_EMPTY_STUB
 };
 
 const vencordDir = process.argv[2];

@@ -32,6 +32,7 @@ export type ContentType =
     | "docx"
     | "rtf"
     | "odt"
+    | "odp"
     | "xlsx"
     | "mermaid"
     | "graphviz"
@@ -44,7 +45,8 @@ export type ContentType =
     | "email"
     | "msg"
     | "raw"
-    | "dicom";
+    | "dicom"
+    | "postscript";
 
 // ── panel content ───────────────────────────────────────────────────────────
 

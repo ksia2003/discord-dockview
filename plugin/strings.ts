@@ -104,6 +104,10 @@ export const STRINGS = {
             // IPC): the label covers the fetch-in-main + decode round-trip, not a lib load.
             msg: "Converting message…",
             raw: "Decoding RAW image…",
+            // .eps + non-PDF .ai are converted to PDF by Ghostscript-WASM (the
+            // chunk-ghostscript.js out-of-bundle chunk): the label covers the chunk
+            // load + the PS→PDF conversion before the pdf surface renders.
+            postscript: "Converting PostScript…",
             pdf: "Loading PDF viewer…",
             mermaid: "Loading diagram engine…",
             graphviz: "Loading Graphviz engine…",

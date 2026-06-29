@@ -112,7 +112,15 @@ export const SAMPLE_CATALOG: SampleCategory[] = [
     {
         title: "Presentation",
         entries: [
-            { label: "PowerPoint", ext: "pptx", file: "example.pptx", blurb: "3-slide deck — step through slides (pptx renderer, lazy chunk)." }
+            { label: "PowerPoint", ext: "pptx", file: "example.pptx", blurb: "3-slide deck — step through slides (pptx renderer, lazy chunk)." },
+            { label: "OpenDocument Presentation", ext: "odp", file: "example.odp", blurb: "ODP deck rendered as per-slide cards (ODF→HTML, reuses the .odt transform)." }
+        ]
+    },
+    {
+        title: "Vector / PostScript",
+        entries: [
+            { label: "Illustrator", ext: "ai", file: "example.ai", blurb: "PDF-compatible .ai routed straight to the PDF viewer (%PDF sniff, no conversion)." },
+            { label: "PostScript", ext: "eps", file: "example.eps", blurb: "EPS converted to PDF by Ghostscript-WASM (lazy chunk), then shown on the PDF surface." }
         ]
     },
     {
