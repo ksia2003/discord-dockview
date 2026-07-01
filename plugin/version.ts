@@ -11,4 +11,4 @@
  */
 
 /** The compiled/running plugin patch version. Bump this per patch release. */
-export const DOCKVIEW_PLUGIN_VERSION = "0.1.22";
+export const DOCKVIEW_PLUGIN_VERSION = "0.1.23";
