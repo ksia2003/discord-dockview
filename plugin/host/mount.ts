@@ -54,19 +54,24 @@ export function ensureHost(): boolean {
     const inPlace = host && host.parentElement === inner && host === inner.lastElementChild;
 
     if (!inPlace) {
-        let freshHost = false;
         if (!host) {
             host = document.createElement("div");
             host.id = HOST_ID;
-            freshHost = true;
         }
         inner.appendChild(host);
+    }
 
-        if (!root || freshHost || rootHost !== host) {
-            root = createRoot(host);
-            rootHost = host;
-            root.render(React.createElement(DockPanel));
-        }
+    // Bind — or REBIND — the React root whenever it isn't attached to THIS host, even
+    // when the host was already in place. Discord can leave an in-place host whose bound
+    // root got stranded on a since-detached (or cloned-away) node; the old code only
+    // rebound inside the `!inPlace` branch, so such a host stayed open + sized (applyOpenState
+    // runs unconditionally) but rendered nothing — the permanent black-void slot. Keying on
+    // the root↔host binding, not on child presence, leaves React's normal async first-commit
+    // gap alone (rootHost still === host then, so we don't churn a fresh createRoot).
+    if (host && (!root || rootHost !== host)) {
+        root = createRoot(host);
+        rootHost = host;
+        root.render(React.createElement(DockPanel));
     }
     applyOpenState();
     return true;
