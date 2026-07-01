@@ -42,28 +42,28 @@ jobs:
               run: pnpm build
 
             - name: Run Electron Builder
-              run: pnpm electron-builder --${{ matrix.platform }} --publish always
-              env:
-                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: pnpm electron-builder --${{ matrix.platform }} --publish never
 
-            # The GitHub release is named after the DockView product (e.g.
-            # "dockview 0.1.0"), NOT the internal Vesktop app version (v1.6.5).
-            # The tag stays v<vesktop> for electron-updater; only the display
-            # title is the DockView version. Runs once (windows leg) and waits
-            # for electron-builder to have created the release.
-            - name: Title the release "dockview <version>"
-              if: matrix.platform == 'windows'
+            # electron-builder names a release after the app (Vesktop) version, but our
+            # releases are versioned by the DockView plugin — so we don't let it publish.
+            # We build the installers + electron-updater metadata (latest*.yml, which
+            # carry the Vesktop version so Vesktop's own auto-update keeps working) and
+            # upload them to a release TAGGED + TITLED by the DockView plugin version.
+            # Both OS legs run this; the first to arrive creates the release, the rest
+            # just add their platform's files.
+            - name: Publish the DockView release
               shell: bash
               run: |
                   VER=$(grep -oE 'DOCKVIEW_PLUGIN_VERSION *= *"[^"]+"' plugin/version.ts | sed -E 's/.*"([^"]+)".*/\1/')
-                  for i in 1 2 3 4 5 6 7 8; do
-                    if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
-                      gh release edit "${{ github.ref_name }}" --title "dockview ${VER}"
-                      echo "Titled release as: dockview ${VER}"
-                      exit 0
-                    fi
-                    echo "release not ready yet, retry $i..."; sleep 8
-                  done
-                  echo "WARNING: release not found; title not set"
+                  BASE=$(node -p "require('./package.json').version")
+                  TAG="v$VER"
+                  gh release create "$TAG" --title "dockview $VER" \
+                      --notes "DockView $VER — a Discord attachment dock, on Vesktop $BASE." 2>/dev/null \
+                      || gh release view "$TAG" >/dev/null
+                  shopt -s nullglob
+                  files=(dist/*.exe dist/*.exe.blockmap dist/*-win.zip \
+                         dist/*.AppImage dist/*.deb dist/*.rpm dist/*.tar.gz \
+                         dist/latest*.yml)
+                  gh release upload "$TAG" "${files[@]}" --clobber
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
