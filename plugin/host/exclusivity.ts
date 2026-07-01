@@ -35,9 +35,13 @@
  *    typing even with the dock closed. We hide via a targeted JS data attribute
  *    (`data-dockview-exclusive-hidden`) that style.css keys off, set only on the
  *    actual competing nodes, only while open.
- *  - isMemberListShown() must require REAL visibility: a collapsed `membersWrap`
- *    aside can stay MOUNTED, so DOM presence alone is not "shown" (we'd skip the
- *    owed restore). We walk computed style + the bounding rect.
+ *  - isMemberListShown() reads Discord's OWN ChannelSectionStore, NOT the DOM. The
+ *    collapse/restore we drive is a SYNCHRONOUS Flux dispatch, but the DOM (computed
+ *    style / rect) only reflects it a tick LATER; gating the owed-restore on that
+ *    lagging DOM stranded the list hidden — an open→close inside the lag window read
+ *    "still shown", skipped the restore, yet still cleared the owed flag, so the
+ *    collapse landed with nothing left to undo it. The store flips in lockstep with
+ *    the dispatch, so the guard always matches the true state.
  *  - the self-dispatch flags (selfMemberToggle / selfProfileToggle) distinguish OUR
  *    Flux toggle from a user click. Flux dispatch is SYNCHRONOUS — the subscriber
  *    runs INSIDE dispatch*Toggle — so the flag is reliably true for our own toggles
@@ -88,29 +92,52 @@ export function registerVacateDock(fn: () => void): void { vacateDock = fn; }
 
 // --- visibility predicates --------------------------------------------------
 
-function elementIsActuallyVisible(el: HTMLElement): boolean {
-    if (el.hidden || el.getAttribute("aria-hidden") === "true") return false;
-    for (let cur: HTMLElement | null = el; cur; cur = cur.parentElement) {
-        const style = getComputedStyle(cur);
-        if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") {
-            return false;
-        }
-    }
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 1 || rect.height < 1) return false;
-    return rect.right > 0 && rect.bottom > 0 && rect.left < window.innerWidth && rect.top < window.innerHeight;
+/** The current channel's right-slot section from Discord's ChannelSectionStore
+ *  ("MEMBERS" for the member list, "PROFILE" for the DM user-profile sidebar).
+ *  Resolved fresh each call so a late webpack chunk can't stale it; null before the
+ *  store (or a channel) resolves. `withProfile` passes getSection's second argument,
+ *  which the store requires as truthy before it will report the PROFILE section. */
+function currentSection(withProfile = false): string | null {
+    const channelId = getCurrentChannelId();
+    if (!channelId) return null;
+    try {
+        const store = (findByProps as any)?.("getSection", "getGuildSidebarState");
+        if (store && typeof store.getSection === "function") return store.getSection(channelId, withProfile);
+    } catch { /* store not resolved yet — treat as no section */ }
+    return null;
 }
 
-/** Is the server member list currently shown? Keyed off the `membersWrap` aside
- *  PLUS real visibility — a collapsed member list may remain mounted in the DOM, and
- *  treating mere presence as "shown" makes DockView skip the owed restore (d8fc765). */
+/** True in a guild channel (member list applies), false in a DM / group DM (where the
+ *  user-profile sidebar applies instead). `getSection`'s members/profile answers come
+ *  from GLOBAL "is members open" / "is profile open" preferences, so without this gate
+ *  a DM would report a member list (and a guild channel a profile sidebar) that isn't
+ *  there — and collapsing it would flip the wrong global preference. */
+function currentChannelIsGuild(): boolean {
+    const channelId = getCurrentChannelId();
+    if (!channelId) return false;
+    try {
+        const store = (findByProps as any)?.("getChannel", "hasChannel");
+        const channel = store?.getChannel?.(channelId);
+        return !!(channel && channel.guild_id);
+    } catch { return false; }
+}
+
+/** Is the server member list currently shown? Answered from Discord's own
+ *  ChannelSectionStore, NOT the DOM — the collapse/restore we drive dispatches
+ *  SYNCHRONOUSLY while the DOM lags a tick, and gating the owed-restore on that lag
+ *  stranded the list hidden (see the hazards note above). Guild-only: a DM's global
+ *  "members open" preference also reads as "MEMBERS" but shows no list. */
 export function isMemberListShown(): boolean {
-    return Array.from(document.querySelectorAll<HTMLElement>('aside[class*="membersWrap"]'))
-        .some(elementIsActuallyVisible);
+    return currentChannelIsGuild() && currentSection() === "MEMBERS";
 }
 
+/** Is the DM user-profile sidebar currently shown? The private-channel analog of the
+ *  member list — the exact same exclusive-slot toggle, read from the same synchronous
+ *  ChannelSectionStore so it can't strand hidden the way the lagging DOM did.
+ *  getSection reports "PROFILE" only when passed a truthy second argument, and only in
+ *  a DM / group DM (in a guild channel the profile preference shows nothing). */
 export function isUserProfileSidebarShown(): boolean {
-    return !!document.querySelector('aside[aria-labelledby^="user-profile-sidebar-heading"]');
+    return !currentChannelIsGuild() && currentSection(true) === "PROFILE";
 }
 
 function isThreadCard(el: Element | null): boolean {
