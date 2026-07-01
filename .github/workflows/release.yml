@@ -67,3 +67,28 @@ jobs:
                   gh release upload "$TAG" "${files[@]}" --clobber
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            # Attach the DockView plugin bundle (the four vencordDesktop* files +
+            # chunk-*.js + version.txt + a generated manifest.json) as EXTRA assets on
+            # the same v* release. This is what the in-app updater (settings page ->
+            # update plugin) fetches to update DockView WITHOUT reinstalling the app —
+            # a SEPARATE channel from electron-updater (which tracks the Vesktop
+            # version). The bundle is platform-independent, so only the LINUX leg
+            # uploads it (avoids a needless second write from the Windows leg). Runs
+            # AFTER "Publish the DockView release" so the release already exists.
+            - name: Attach the DockView plugin bundle (for in-app updates)
+              if: matrix.platform == 'linux'
+              shell: bash
+              run: |
+                  VER=$(grep -oE 'DOCKVIEW_PLUGIN_VERSION *= *"[^"]+"' plugin/version.ts | sed -E 's/.*"([^"]+)".*/\1/')
+                  TAG="v$VER"
+                  export DOCKVIEW_RELEASE_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
+                  node scripts/make-plugin-manifest.mjs
+                  shopt -s nullglob
+                  files=(static/vencordDist/vencordDesktopMain.js static/vencordDist/vencordDesktopPreload.js \
+                         static/vencordDist/vencordDesktopRenderer.js static/vencordDist/vencordDesktopRenderer.css \
+                         static/vencordDist/version.txt static/vencordDist/manifest.json \
+                         static/vencordDist/chunk-*.js)
+                  gh release upload "$TAG" "${files[@]}" --clobber
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
