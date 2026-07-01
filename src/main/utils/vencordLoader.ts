@@ -8,11 +8,10 @@
  *   the app (static/vencordDist) instead of downloading from GitHub.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "fs";
 import { access, constants as FsConstants, writeFile } from "fs/promises";
 import { VENCORD_FILES_DIR } from "main/vencordFilesDir";
 import { join } from "path";
-import { compareDockviewVersions, parseVersionTxt } from "shared/dockviewVersion";
 import { STATIC_DIR } from "shared/paths";
 
 // Directory holding the Vencord (+ DockView plugin) dist bundled with the app.
@@ -58,6 +57,16 @@ function copyBundledVencordFiles() {
         copyFileSync(join(BUNDLED_VENCORD_DIR, file), join(VENCORD_FILES_DIR, file));
     }
 
+    // The heavy viewer libraries (mermaid, pdfjs, ghostscript, three, …) ship as
+    // chunk-*.js beside the four core files and are pulled in at runtime over the
+    // readChunk IPC from VENCORD_FILES_DIR. They must be copied too — otherwise every
+    // chunked viewer (PDF, mermaid, pptx, 3D, code) fails to load on a fresh install.
+    for (const file of readdirSync(BUNDLED_VENCORD_DIR)) {
+        if (file.startsWith("chunk-") && file.endsWith(".js")) {
+            copyFileSync(join(BUNDLED_VENCORD_DIR, file), join(VENCORD_FILES_DIR, file));
+        }
+    }
+
     // Minimal package.json marker so isValidVencordInstall() passes.
     writeFile(join(VENCORD_FILES_DIR, "package.json"), "{}");
 
@@ -87,58 +96,19 @@ export async function ensureVencordFiles() {
         );
     }
 
-    // Version-guarded (re)install of the bundled Vencord+DockView dist on startup.
-    // The copy overwrites the live data-dir files, so doing it unconditionally
-    // would clobber a hot-deployed / OTA-updated plugin (newer than the bundled
-    // build) on every restart. Compare the bundled vs installed version.txt and
-    // only copy when the bundled build is the same-or-newer canonical version;
-    // skip when the install is already newer so an OTA patch survives a restart.
-    // (Enabled-plugin state lives in Vencord's settings store, not here, so this
-    // never touches user settings either way.)
+    // The app's bundled dist (static/vencordDist) is the single source of truth: the
+    // installer is the only way the plugin updates now. Copy it whenever the live
+    // data-dir build doesn't match the bundled one — version.txt carries both the
+    // DockView version and the build hash, so a plain string mismatch catches every
+    // real change (new release, reinstall, corrupt/missing install). On an unchanged
+    // restart the strings match and we skip the copy, sparing the ~30 MB chunk re-copy.
     const bundled = readVersion(BUNDLED_VERSION_FILE); // string | null
     const installed = readVersion(INSTALLED_VERSION_FILE); // string | null
-
-    let shouldCopy: boolean;
-    let reason: string;
-    if (installed === null) {
-        // First install, or an unreadable/corrupt install: fail safe to the
-        // known-good bundled build.
-        shouldCopy = true;
-        reason = "no readable installed version";
-    } else if (bundled === null) {
-        // Can't reason about bundled provenance: fail safe to the shipped build.
-        shouldCopy = true;
-        reason = "no readable bundled version";
-    } else if (compareDockviewVersions(installed, bundled) < 0) {
-        // Bundled is NEWER (e.g. a full-app upgrade ships a newer plugin): refresh.
-        shouldCopy = true;
-        reason = "bundled is newer";
-    } else if (
-        compareDockviewVersions(installed, bundled) === 0 &&
-        parseVersionTxt(bundled).gitHash !== parseVersionTxt(installed).gitHash
-    ) {
-        // SAME DockView version but a DIFFERENT build — e.g. an app reinstall or a
-        // version-bump release that ships the same plugin version compiled from a
-        // different commit. compareDockviewVersions only looks at the plugin version,
-        // so it can't see this; fall back to the build hash. A differing gitHash means
-        // a different bundle (its preload/main may differ from the live ones), so
-        // install it — otherwise a stale preload/main from the previous build persists
-        // out of sync with the new renderer (this is exactly what broke Vencord
-        // Settings: old preload lacked supportsWindowsMaterial). A genuine OTA bumps
-        // the plugin version so it sorts NEWER and is preserved by the branch above;
-        // this fires only on a version tie with differing builds.
-        shouldCopy = true;
-        reason = "same version, different build (gitHash differs)";
-    } else {
-        // Installed is same-or-newer AND the same build (plain restart, or a genuine
-        // higher-versioned OTA patch): preserve it.
-        shouldCopy = false;
-        reason = "installed is same-or-newer (same build)";
-    }
+    const shouldCopy = bundled === null || installed === null || installed !== bundled;
 
     console.log(
         `[VencordLoader] ${shouldCopy ? "copying bundled" : "keeping installed"} Vencord dist ` +
-            `(${reason}; installed=${JSON.stringify(installed)}, bundled=${JSON.stringify(bundled)})`
+            `(installed=${JSON.stringify(installed)}, bundled=${JSON.stringify(bundled)})`
     );
 
     if (shouldCopy) {
