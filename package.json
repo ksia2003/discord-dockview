@@ -18,8 +18,6 @@
         "prepareVencord": "node scripts/prepare-vencord.mjs",
         "package": "pnpm build && electron-builder",
         "package:dir": "pnpm build && electron-builder --dir",
-        "package:bundle": "node scripts/package-bundle.mjs",
-        "package:all": "pnpm prepareVencord && pnpm package && pnpm package:bundle",
         "lint": "eslint",
         "lint:fix": "pnpm lint --fix",
         "start": "pnpm build && electron .",

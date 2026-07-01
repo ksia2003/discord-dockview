@@ -4,12 +4,10 @@
  * The whole DockView surface as a NATIVE settings page, registered as its own
  * left-sidebar entry (index.tsx pushes it onto the Settings plugin's
  * `customEntries`). This replaces the old Plugins→DockView modal: DockView is
- * still a plugin (it just runs `hidden`), but its title/description, the MCP
- * bridge controls, and the self-update panel now live here instead of inside the
- * plugin card.
+ * still a plugin (it just runs `hidden`), but its title/description and the MCP
+ * bridge controls now live here instead of inside the plugin card.
  *
- * GRAMMAR — this mirrors how Vencord's own settings tabs are built and how
- * UpdatePanel.tsx (the section we embed below) builds its form: plain
+ * GRAMMAR — this mirrors how Vencord's own settings tabs are built: plain
  * `React.createElement` over `@webpack/common`'s settings primitives
  * (Forms.FormSection / FormTitle / FormText / FormDivider, Switch, TextInput,
  * Text). No JSX, matching the rest of plugin/ui.
@@ -25,15 +23,14 @@
  * The MCP section is flagged WIP — the bridge itself is PARKED behind the toggle
  * (plugin/mcp), so the controls are present but labelled "in development".
  *
- * NO import cycle: this imports ../settings (store-only, no COMPONENT entry) and
- * ./UpdatePanel (self-contained). Neither imports back here.
+ * NO import cycle: this imports ../settings (store-only, no COMPONENT entry).
+ * settings does not import back here.
  */
 
 import { Forms, React, Switch, TextInput } from "@webpack/common";
 
 import { settings } from "../settings";
 import { GallerySection } from "./GallerySection";
-import { UpdatePanel } from "./UpdatePanel";
 
 // NOTE: must stay a lazy wrapper, NOT `const h = React.createElement`. The latter
 // resolves the webpack React proxy at module-top (import time), before Vencord is
@@ -166,15 +163,6 @@ export function DockViewTab() {
         h(Forms.FormDivider, { style: { margin: "16px 0" } }),
 
         // --- MCP bridge (WIP). ---------------------------------------------
-        h(McpSection),
-
-        h(Forms.FormDivider, { style: { margin: "16px 0" } }),
-
-        // --- DockView updates: reuse the self-contained UpdatePanel as-is. --
-        h(
-            Forms.FormSection,
-            null,
-            h(UpdatePanel)
-        )
+        h(McpSection)
     );
 }

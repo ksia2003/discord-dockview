@@ -344,9 +344,9 @@ export default definePlugin({
         startMcp();
 
         // 9. Register the standalone "DockView" settings tab (its own left-sidebar
-        //    entry). Done from the plugin so the tab can reuse UpdatePanel + version
-        //    in this same Vencord bundle; the Vesktop src/renderer bundle can't import
-        //    plugin/. Idempotent — removes any stale entry first.
+        //    entry). Done from the plugin so the tab lives in this same Vencord
+        //    bundle; the Vesktop src/renderer bundle can't import plugin/.
+        //    Idempotent — removes any stale entry first.
         registerSettingsTab();
     },
 

@@ -7,7 +7,7 @@
  * xlsx sheets, page a PDF, click inside an HTML artifact, …). It doubles as a
  * user-facing showcase of what DockView can render.
  *
- * GRAMMAR — mirrors DockViewTab.tsx / UpdatePanel.tsx: plain `React.createElement`
+ * GRAMMAR — mirrors DockViewTab.tsx: plain `React.createElement`
  * over @webpack/common primitives (no JSX), semantic CSS variables only (no hard-
  * coded colours), so it matches the native settings look in every theme.
  *
