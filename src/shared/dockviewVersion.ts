@@ -1,28 +1,22 @@
 /*
- * DockView — plugin version + version.txt parsing/comparison.
- * ---------------------------------------------------------------------------
- * This is the CANONICAL HOME of the running plugin version. DOCKVIEW_PLUGIN_VERSION
- * is the compiled/running patch version, bumped per patch release. The build
- * (scripts/prepare-vencord.mjs) reads this literal at build time and is the SOLE
- * writer of static/vencordDist/version.txt.
- *
- * version.txt has three tolerated shapes (see parseVersionTxt):
- *   (a) new     "dockview:0.1.1 v1.14.13 abc1234"
- *   (b) legacy  "v1.14.13+dockview-abc1234"   (old prepare-vencord writer)
- *   (c) bare    "1.14.13"                     (oldest legacy)
- *
- * compareDockviewVersions semver-compares the `plugin` field; any legacy/null
- * plugin sorts as the OLDEST (any dockview:* beats any legacy). This lets the
- * always-copy guard treat a freshly built bundle as newer than any legacy disk
- * copy, and an on-disk OTA patch as newer than a stale bundled one.
- *
- * Pure module: no side effects, no heavy/webpack imports. It is imported by the
- * renderer plugin AND (later) by plugin/native.ts in the main process, so it
- * must stay dependency-free TypeScript.
+ * Vesktop, a desktop app aiming to give you a snappier Discord Experience
+ * Copyright (c) 2023 Vendicated and Vencord contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-/** The compiled/running plugin patch version. Bump this per patch release. */
-export const DOCKVIEW_PLUGIN_VERSION = "0.1.24";
+/*
+ * DockView — app/build-domain copy of version.txt parsing/comparison.
+ * ---------------------------------------------------------------------------
+ * This is an INTENTIONAL second copy of the parse/compare/format logic that
+ * lives in plugin/version.ts. The plugin/ tree is compiled inside the Vencord
+ * clone (a separate compilation domain) and CANNOT import from src/shared, so
+ * the app domain (main process, build scripts via TS) gets its own copy here.
+ * Keep the two comparator copies byte-identical in BEHAVIOUR.
+ *
+ * DOCKVIEW_PLUGIN_VERSION is intentionally NOT redeclared here: plugin/version.ts
+ * is its single home (the build reads that literal). This file only carries the
+ * parse/compare/format helpers.
+ */
 
 export interface ParsedVersionTxt {
     plugin: string | null;
