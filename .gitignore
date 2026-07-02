@@ -6,3 +6,4 @@ node_modules
 .idea/
 .pnpm-store/
 shots/
+static/vencordDist/chunk-*.js
