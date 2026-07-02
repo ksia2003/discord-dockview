@@ -69,26 +69,65 @@ jobs:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
             # Attach the DockView plugin bundle (the four vencordDesktop* files +
-            # chunk-*.js + version.txt + a generated manifest.json) as EXTRA assets on
-            # the same v* release. This is what the in-app updater (settings page ->
-            # update plugin) fetches to update DockView WITHOUT reinstalling the app —
-            # a SEPARATE channel from electron-updater (which tracks the Vesktop
-            # version). The bundle is platform-independent, so only the LINUX leg
-            # uploads it (avoids a needless second write from the Windows leg). Runs
-            # AFTER "Publish the DockView release" so the release already exists.
+            # chunk-*.js + version.txt) as EXTRA assets on the same v* release. This is
+            # what the in-app updater (settings page -> update plugin) fetches to update
+            # DockView WITHOUT reinstalling the app — a SEPARATE channel from
+            # electron-updater (which tracks the Vesktop version). The bundle is
+            # platform-independent, so only the LINUX leg uploads it (avoids a needless
+            # second write from the Windows leg). The manifest.json is NOT generated here
+            # — it's built in the final "manifest" job below, once BOTH legs have uploaded
+            # their installers, so the shell block can hash every platform's installer.
             - name: Attach the DockView plugin bundle (for in-app updates)
               if: matrix.platform == 'linux'
               shell: bash
               run: |
                   VER=$(grep -oE 'DOCKVIEW_PLUGIN_VERSION *= *"[^"]+"' plugin/version.ts | sed -E 's/.*"([^"]+)".*/\1/')
                   TAG="v$VER"
-                  export DOCKVIEW_RELEASE_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
-                  node scripts/make-plugin-manifest.mjs
                   shopt -s nullglob
                   files=(static/vencordDist/vencordDesktopMain.js static/vencordDist/vencordDesktopPreload.js \
                          static/vencordDist/vencordDesktopRenderer.js static/vencordDist/vencordDesktopRenderer.css \
-                         static/vencordDist/version.txt static/vencordDist/manifest.json \
+                         static/vencordDist/version.txt \
                          static/vencordDist/chunk-*.js)
                   gh release upload "$TAG" "${files[@]}" --clobber
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # A final, single-run job that generates manifest.json AFTER both OS legs have
+    # uploaded their installers to the release. It DOWNLOADS the assets already on the
+    # release — the plugin bundle files the linux leg uploaded and the installers from
+    # both legs — and hashes exactly those, so the manifest's sha256s are guaranteed to
+    # match the bytes the in-app updater will fetch (no dependency on a reproducible
+    # rebuild). Running it once, after everything else, is what lets the manifest carry
+    # BOTH the Linux and the Windows installers in its shell block.
+    manifest:
+        needs: release
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Use Node.js 20
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 20
+
+            - name: Generate + upload the update manifest
+              shell: bash
+              run: |
+                  VER=$(grep -oE 'DOCKVIEW_PLUGIN_VERSION *= *"[^"]+"' plugin/version.ts | sed -E 's/.*"([^"]+)".*/\1/')
+                  TAG="v$VER"
+                  # Pull the plugin bundle assets (the manifest generator hashes files out
+                  # of static/vencordDist) so their sha256s match the uploaded bytes exactly.
+                  mkdir -p static/vencordDist installers
+                  gh release download "$TAG" --dir static/vencordDist \
+                      --pattern "vencordDesktop*.js" --pattern "vencordDesktopRenderer.css" \
+                      --pattern "version.txt" --pattern "chunk-*.js"
+                  # Pull the installer assets (both legs) so the shell block records each
+                  # platform's installer sha256 + size.
+                  gh release download "$TAG" --dir installers \
+                      --pattern "*.exe" --pattern "*.AppImage" --pattern "*.deb" --pattern "*.rpm" || true
+                  export DOCKVIEW_RELEASE_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
+                  export DOCKVIEW_INSTALLERS_DIR="$PWD/installers"
+                  node scripts/make-plugin-manifest.mjs
+                  gh release upload "$TAG" static/vencordDist/manifest.json --clobber
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
