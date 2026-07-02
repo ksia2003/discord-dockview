@@ -8,6 +8,7 @@ import { app, BrowserWindow, Menu, Tray } from "electron";
 
 import { createAboutWindow } from "./about";
 import { AppEvents } from "./events";
+import { getActiveProfileName } from "./profiles";
 import { Settings } from "./settings";
 import { resolveAssetPath } from "./userAssets";
 import { clearData } from "./utils/clearData";
@@ -85,8 +86,11 @@ export async function initTray(win: BrowserWindow, setIsQuitting: (val: boolean)
         }
     ]);
 
+    // Append the profile name when running a non-default profile so several
+    // instances (each its own account) are distinguishable in the tray.
+    const profile = getActiveProfileName();
     tray = new Tray(await resolveAssetPath(trayVariant));
-    tray.setToolTip("Vesktop");
+    tray.setToolTip(profile ? `Vesktop — ${profile}` : "Vesktop");
     tray.setContextMenu(trayMenu);
     tray.on("click", onTrayClick);
 }
