@@ -1,13 +1,14 @@
 /*
  * DockView — the "Examples / supported formats" gallery (settings tab section).
  * ---------------------------------------------------------------------------
- * A polished, theme-aware section embedded in DockViewTab: every supported viewer,
+ * The "Examples" page under the DockView settings section: every supported viewer,
  * grouped by category, each with an "Open" button that loads a representative sample
  * into the REAL dock so it can be seen, touched and tested (orbit a 3D model, switch
  * xlsx sheets, page a PDF, click inside an HTML artifact, …). It doubles as a
- * user-facing showcase of what DockView can render.
+ * user-facing showcase of what DockView can render. Mounted as its page Component
+ * (settingsSection.ts builds an "Examples" row over it).
  *
- * GRAMMAR — mirrors DockViewTab.tsx: plain `React.createElement`
+ * GRAMMAR — plain `React.createElement`
  * over @webpack/common primitives (no JSX), semantic CSS variables only (no hard-
  * coded colours), so it matches the native settings look in every theme.
  *
@@ -28,8 +29,8 @@ import { Button, Forms, React, Text } from "@webpack/common";
 import { SAMPLE_CATALOG, type SampleEntry } from "../gallery/catalog";
 import { isSampleChunkLoaded, sampleBlobUrl } from "../gallery/samples";
 
-// Lazy createElement wrapper — see DockViewTab.tsx: resolving the webpack React proxy
-// at module-top would throw before Vencord is ready and drop the plugin. Defer it.
+// Lazy createElement wrapper — resolving the webpack React proxy at module-top would
+// throw before Vencord is ready and drop the plugin. Defer it to call time.
 const h = (...args: any[]) => (React.createElement as any)(...args);
 
 // A small MIME hint per extension so the blob: URL carries a sensible type. detectType
@@ -174,7 +175,7 @@ function CategoryBlock({ title, entries }: { title: string; entries: SampleEntry
     );
 }
 
-/** The gallery section: intro + every category. Embedded by DockViewTab. */
+/** The gallery section: intro + every category. The "Examples" page Component. */
 export function GallerySection() {
     const total = SAMPLE_CATALOG.reduce((n, c) => n + c.entries.length, 0);
     return h(

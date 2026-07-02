@@ -8,17 +8,17 @@
  * Discord. Vencord persists these through its own storage, which is available
  * in the isolated renderer context.
  *
- * This module is imported by BOTH index.tsx (which wires `settings` into the
- * plugin def) and the DockView settings tab (ui/DockViewTab.tsx, which binds its
- * MCP controls to `settings.store`). It must therefore NOT import either of them
- * at module top level, or we'd create an import cycle. The onChange handlers reach
- * the bridge LAZILY via a dynamic import so the cycle never forms and the call is a
- * safe no-op while the panel isn't running.
+ * This module is imported by index.tsx (which wires `settings` into the plugin
+ * def). It must therefore NOT import index.tsx at module top level, or we'd create
+ * an import cycle. The onChange handlers reach the bridge LAZILY via a dynamic
+ * import so the cycle never forms and the call is a safe no-op while the panel
+ * isn't running.
  *
  * The settings here are STORE-ONLY: there is no OptionType.COMPONENT entry, so the
  * keys never render in Vencord's plugin-settings page (the plugin is `hidden`
- * anyway). The store backs the MCP controls + the update panel that now live in the
- * standalone "DockView" settings tab (ui/DockViewTab.tsx).
+ * anyway). The MCP keys are PARKED — the bridge is registered only behind these
+ * toggles; there is no MCP UI in the DockView settings section (it was dropped in
+ * the settings-panel rework; the mcp/ code stays for a separate cleanup pass).
  */
 
 import { definePluginSettings } from "@api/Settings";

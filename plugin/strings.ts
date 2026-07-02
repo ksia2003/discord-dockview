@@ -353,6 +353,31 @@ export const STRINGS = {
         hint: "Attach to message"
     },
 
+    // --- settings sidebar (the DockView section + its rows) -----------------
+    // The DockView section is its own top-level header in Discord's user-settings
+    // sidebar (same rank as "Vencord Settings"), with a row per page. Rows read
+    // like native ones — short single words, not sentences.
+    settings: {
+        section: "DockView",
+        updates: "Updates",
+        examples: "Examples",
+        about: "About"
+    },
+
+    // --- about page ---------------------------------------------------------
+    // A small page: the running versions, a GitHub link, and a one-line credit.
+    // The page header ("About") comes from the sidebar row's panel title, so it's
+    // not repeated here.
+    about: {
+        blurb:
+            "A right-docked panel that previews attachment chips inline — PDF, images, " +
+            "code, markdown, spreadsheets, 3D models, and more, without leaving Discord.",
+        dockviewVersion: "DockView version",
+        vesktopVersion: "Vesktop base",
+        github: "GitHub",
+        credits: "Built on Vesktop and Vencord. Licensed under GPL-3.0."
+    },
+
     // --- self-update panel (settings section) -------------------------------
     // The DockView update section in Vencord's plugin settings: three version
     // lines (running / on-disk / latest), a one-line status verdict, and the

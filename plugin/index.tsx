@@ -60,80 +60,7 @@ import { startLatex, stopLatex } from "./latex";
 import { maybeRegisterMcpViewer, startMcp, stopMcp } from "./mcp";
 import { settings } from "./settings";
 import { STRINGS } from "./strings";
-import { DockViewIcon } from "./ui/DockViewIcon";
-import { DockViewTab } from "./ui/DockViewTab";
-
-// The key under the Settings plugin's customEntries[]/customSections[] arrays that
-// owns the standalone "DockView" left-sidebar tab. Held module-level so start()
-// pushes it and stop() filters exactly this entry back out (no duplicate on a
-// disable/enable cycle).
-const SETTINGS_TAB_KEY = "dockview";
-
-/** Remove every element matching `predicate` from `arr` IN PLACE. The Settings
- *  plugin's buildLayout reads `this.customEntries`/`this.customSections`, so we must
- *  mutate the existing arrays (splice), never reassign — mirroring Vencord's own
- *  startupTimings plugin, which adds/removes a customEntries item the same way. */
-function removeFromArray<T>(arr: T[], predicate: (e: T) => boolean): void {
-    for (let i = arr.length - 1; i >= 0; i--) {
-        if (predicate(arr[i])) arr.splice(i, 1);
-    }
-}
-
-/** Resolve the live Settings plugin object, or null if it isn't ready yet. The
- *  standalone tab is registered through it (customEntries — modern — or the
- *  deprecated customSections fallback). `Vencord` is the renderer global (ambient
- *  in @vencord/types; the Vesktop fork's own src/renderer/index.ts reaches the
- *  Settings plugin the same way). start() runs after plugin init so this is normally
- *  present; we still guard defensively. */
-function getSettingsPlugin(): any | null {
-    try {
-        return (Vencord as any)?.Plugins?.plugins?.Settings ?? null;
-    } catch {
-        return null;
-    }
-}
-
-/** Register the DockView entry on the settings sidebar. Prefers customEntries
- *  (modern — supports a custom Icon); falls back to the deprecated customSections
- *  push if customEntries isn't present in this Vencord build. Idempotent — removes
- *  any prior entry under our key first so a re-start never duplicates. */
-function registerSettingsTab(): void {
-    const plugin = getSettingsPlugin();
-    if (!plugin) return;
-
-    if (Array.isArray(plugin.customEntries)) {
-        // Drop a stale copy (defensive against a missed stop()), then push fresh.
-        removeFromArray(plugin.customEntries, (e: any) => e?.key === SETTINGS_TAB_KEY);
-        plugin.customEntries.push({
-            key: SETTINGS_TAB_KEY,
-            title: "DockView",
-            Component: DockViewTab,
-            Icon: DockViewIcon
-        });
-        return;
-    }
-
-    // Fallback: older Vencord without customEntries. The deprecated customSections
-    // entry has no per-entry key, so tag the closure so stop() can find it.
-    if (Array.isArray(plugin.customSections)) {
-        removeFromArray(plugin.customSections, (f: any) => f?.__dockViewKey === SETTINGS_TAB_KEY);
-        const section = () => ({ section: "DockView", label: "DockView", element: DockViewTab });
-        (section as any).__dockViewKey = SETTINGS_TAB_KEY;
-        plugin.customSections.push(section);
-    }
-}
-
-/** Remove the DockView entry from whichever array it was pushed onto. */
-function unregisterSettingsTab(): void {
-    const plugin = getSettingsPlugin();
-    if (!plugin) return;
-    if (Array.isArray(plugin.customEntries)) {
-        removeFromArray(plugin.customEntries, (e: any) => e?.key === SETTINGS_TAB_KEY);
-    }
-    if (Array.isArray(plugin.customSections)) {
-        removeFromArray(plugin.customSections, (f: any) => f?.__dockViewKey === SETTINGS_TAB_KEY);
-    }
-}
+import { installDockViewSection, uninstallDockViewSection } from "./ui/settingsSection";
 
 // --- window key handlers (lifecycle-scoped, removed on stop) ----------------
 let onKeyDown: ((e: KeyboardEvent) => void) | null = null;
@@ -368,11 +295,12 @@ export default definePlugin({
         //    A NO-OP unless mcpBridgeEnabled — no socket, no listener when off.
         startMcp();
 
-        // 9. Register the standalone "DockView" settings tab (its own left-sidebar
-        //    entry). Done from the plugin so the tab lives in this same Vencord
-        //    bundle; the Vesktop src/renderer bundle can't import plugin/.
-        //    Idempotent — removes any stale entry first.
-        registerSettingsTab();
+        // 9. Add DockView's own top-level SECTION to the settings sidebar (a
+        //    dedicated "DockView" header, same rank as "Vencord Settings", with
+        //    the Updates / Examples / About rows). Wraps the Settings plugin's
+        //    buildLayout from this same Vencord bundle (the Vesktop src/renderer
+        //    bundle can't import plugin/). Idempotent + fully guarded.
+        installDockViewSection();
     },
 
     stop() {
@@ -400,8 +328,8 @@ export default definePlugin({
         // 4. chat-side KaTeX teardown + remove the debug handle.
         stopLatex();
         unexposeDebug();
-        // 5. drop the standalone settings tab so a disable/enable cycle doesn't leave
-        //    a stale (or duplicate) DockView entry on the sidebar.
-        unregisterSettingsTab();
+        // 5. restore the Settings plugin's buildLayout so a disable/enable cycle
+        //    leaves the sidebar exactly as we found it (no stale/duplicate section).
+        uninstallDockViewSection();
     }
 });
