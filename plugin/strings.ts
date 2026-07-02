@@ -350,6 +350,34 @@ export const STRINGS = {
         untitled: "DockView"
     },
 
+    // --- file browser panel -------------------------------------------------
+    // The dock's home screen: a grid/list of every openable attachment in the
+    // current channel, filterable by type. Shown in the empty shell (F9 / last tab
+    // closed) and reached from a viewer via the "back to files" toolbar button.
+    browser: {
+        // The leading title in the browser's toolbar row.
+        title: "Files in this channel",
+        // The grid/list layout toggle (segmented control option labels + tooltips).
+        layoutGrid: "Grid",
+        layoutList: "List",
+        layoutGridHint: "Grid view",
+        layoutListHint: "List view",
+        // The type-filter chips. `all` is the always-present first chip; the rest
+        // reuse the Viewers page category labels (STRINGS.viewers.cat).
+        filterAll: "All",
+        // The toolbar button that returns from an open viewer to the file list.
+        back: "Back to files",
+        backHint: "Back to the channel's files",
+        // The spinner row appended while older attachments page in.
+        loadingMore: "Loading older files…",
+        // The empty state — a channel with no openable attachments yet.
+        emptyTitle: "No files here yet",
+        emptySub: "Attachments shared in this channel will show up here.",
+        // {n} -> the number of files; {size} -> a human file size (already formatted).
+        // The row's secondary line in list view when a size is known.
+        sizeLine: (size: string) => size
+    },
+
     // --- attach (after edit) filename input ---------------------------------
     // Staging an edited file as a new upload offers a native filename field (the
     // Discord "new thread name" pattern, grammar rule 6): the file's own name is

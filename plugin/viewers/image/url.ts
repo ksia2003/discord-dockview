@@ -36,3 +36,34 @@ export function fullResImageUrl(raw: string): string {
         return raw;
     }
 }
+
+/** The INVERSE of fullResImageUrl: build a downscaled THUMBNAIL url by re-attaching
+ *  Discord's resize hints (width/height/format=webp) so the CDN serves a small image
+ *  instead of the full asset — for the file browser's grid cards. We first clear any
+ *  resize params already on the url (so we don't stack conflicting hints), then set
+ *  ours. The ex/is/hm signing params are LEFT UNTOUCHED — they MUST stay or the CDN
+ *  403s (same rule as fullResImageUrl). Because those params expire, a thumb url is
+ *  built on demand from the entry's raw url and never stored long-term. `w`/`h` are
+ *  the requested CSS pixels (Discord clamps to its own sizes); we round up to a
+ *  device-pixel-ish 2x so the small card stays crisp on hidpi. Only meaningful for
+ *  media.discordapp.net / cdn.discordapp.com hosts; for anything else it returns the
+ *  raw url unchanged (a non-CDN image just loads at full size). */
+export function thumbUrl(raw: string, w: number, h: number): string {
+    try {
+        const u = new URL(raw, location.href);
+        const host = u.hostname;
+        // The resize proxy only understands these on Discord's own CDN/proxy hosts.
+        if (!/(^|\.)discordapp\.(net|com)$/.test(host)) return raw;
+        // Drop any existing resize hints so ours are the only ones (keep ex/is/hm).
+        ["width", "height", "format", "quality", "size", "passthrough", "animated"]
+            .forEach(p => u.searchParams.delete(p));
+        const rw = Math.max(1, Math.round(w * 2));
+        const rh = Math.max(1, Math.round(h * 2));
+        u.searchParams.set("width", String(rw));
+        u.searchParams.set("height", String(rh));
+        u.searchParams.set("format", "webp");
+        return u.toString();
+    } catch {
+        return raw;
+    }
+}

@@ -63,6 +63,7 @@ import { onNewFile } from "./edit/newFile";
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
 import { maybeRegisterMcpViewer, startMcp, stopMcp } from "./mcp";
+import { requestBrowserRefresh } from "./ui/FileBrowser";
 import { settings } from "./settings";
 import { STRINGS } from "./strings";
 import { scheduleAutoCheck } from "./ui/autoCheck";
@@ -200,6 +201,23 @@ export default definePlugin({
         },
         USER_PROFILE_SIDEBAR_TOGGLE_SECTION() {
             onUserProfileSidebarToggle();
+        },
+        // A message landing in / leaving the CURRENT channel changes the file browser's
+        // list. Invalidate that channel's cached index + repaint the browser home, but
+        // ONLY when the dock is showing it (visible, no file open) — otherwise it's a
+        // no-op we don't want to pay on every message in a busy channel. requestBrowser-
+        // Refresh drops the index unconditionally (cheap) and nudges a mounted browser.
+        MESSAGE_CREATE({ channelId }: { channelId?: string | null; }) {
+            if (channelId && channelId === getCurrentChannelId() && dockVisible()
+                && getActiveWindow().content.name == null) {
+                requestBrowserRefresh(channelId);
+            }
+        },
+        MESSAGE_DELETE({ channelId }: { channelId?: string | null; }) {
+            if (channelId && channelId === getCurrentChannelId() && dockVisible()
+                && getActiveWindow().content.name == null) {
+                requestBrowserRefresh(channelId);
+            }
         }
     },
 

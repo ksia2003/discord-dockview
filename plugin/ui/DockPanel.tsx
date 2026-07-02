@@ -42,8 +42,11 @@ import { applyOpenState } from "../host/mount";
 import { toggle } from "../host/open";
 import { getViewer } from "../viewers/registry";
 import type { ViewerContext } from "../engine/types";
+import { getCurrentChannelId } from "../host/channel";
+import { clearArtifact } from "../engine/load";
 import { attachToolbar, isAttachBarOpen } from "../edit/attach";
 import { DockTabs } from "./DockTabs";
+import { FileBrowser } from "./FileBrowser";
 import { FindBar } from "./FindBar";
 import { HeaderControls, hasViewerControls } from "./HeaderControls";
 import { LoadingBody, renderEmptyBody, renderErrorBody, renderUnsupportedBody } from "./StateCards";
@@ -104,7 +107,14 @@ const CLS = {
  *  error, then loading, then viewer/unsupported — matches the old renderBody. */
 function renderBody() {
     const win = getActiveWindow();
-    if (win.content.name == null) return renderEmptyBody();
+    if (win.content.name == null) {
+        // The dock's HOME: an open-but-empty shell (F9, or the last tab closed) shows
+        // the CURRENT channel's file browser instead of a bare "open a file" card. The
+        // browser reads the live channel itself, so a channel switch (which rebuilds
+        // this shell) shows the new channel's files. Off a real channel — the dock
+        // never mounts there, but guard anyway — fall back to the plain empty card.
+        return getCurrentChannelId() ? React.createElement(FileBrowser, null) : renderEmptyBody();
+    }
     if (win.content.error != null) return renderErrorBody(win.content.error);
     if (win.content.loading) return React.createElement(LoadingBody, null);
     const viewer = getViewer(win.content.type);
@@ -232,8 +242,41 @@ export function DockPanel() {
         toggle();
     }, []);
 
+    const backToFiles = useCallback(() => {
+        // Return from an open viewer to the channel's file browser: clearArtifact()
+        // detaches the body (content.name → null), which makes renderBody() show the
+        // FileBrowser home. The file stays cached, so reopening it from the browser is
+        // instant. Only meaningful while a file is shown (the button hides otherwise).
+        clearArtifact();
+    }, []);
+
     const win = getActiveWindow();
     const hasContent = win.content.name != null;
+
+    // "Back to files" — return from an open viewer to the channel's file browser. A
+    // native icon button (left-arrow), shown only while a file is open (the browser is
+    // already the empty-shell body). Sits left of the dock-close X in the actions area.
+    const backBtn = hasContent
+        ? React.createElement(
+            "div",
+            {
+                className: `${CLS.iconWrapper} ${CLS.clickable} dockview-back-to-files`,
+                role: "button",
+                tabIndex: 0,
+                "aria-label": STRINGS.browser.back,
+                title: STRINGS.browser.backHint,
+                onClick: backToFiles
+            },
+            React.createElement(
+                "svg",
+                { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+                React.createElement("path", {
+                    fill: "currentColor",
+                    d: "M20 11H7.83l4.88-4.88a1 1 0 1 0-1.42-1.41l-6.58 6.58a1 1 0 0 0 0 1.42l6.58 6.58a1 1 0 0 0 1.42-1.41L7.83 13H20a1 1 0 0 0 0-2Z"
+                })
+            )
+        )
+        : null;
 
     // The dock-level close (the far-right X). A plain icon button in Discord's
     // native iconWrapper/clickable grammar, parked at the header's right edge.
@@ -296,10 +339,12 @@ export function DockPanel() {
                         // carries its own icon/name/⋯/✕ in place.
                         React.createElement(DockTabs, null)
                     ),
-                    // The far-right DOCK X (closes the whole dock, not a tab).
+                    // The right-edge actions: "back to files" (while a file is open) +
+                    // the far-right DOCK X (closes the whole dock, not a tab).
                     React.createElement(
                         "div",
                         { className: `${CLS.toolbar} dockview-header-actions` },
+                        backBtn,
                         closeBtn
                     )
                 ),

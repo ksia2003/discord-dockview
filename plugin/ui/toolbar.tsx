@@ -88,6 +88,63 @@ export const FILE_TYPE_ICON: Record<string, IconPath[]> = {
         [DOC_FRAME],
         ["M9.2 12.5c-1 0-1.5.5-1.5 1.4v1.1c0 .5-.2.7-.7.7v1.1c.5 0 .7.2.7.7v1.1c0 .9.5 1.4 1.5 1.4v-1.2c-.3 0-.4-.1-.4-.5v-.9c0-.5-.2-.8-.6-1 .4-.2.6-.5.6-1v-.9c0-.4.1-.5.4-.5v-1.1Zm5.6 0v1.1c.3 0 .4.1.4.5v.9c0 .5.2.8.6 1-.4.2-.6.5-.6 1v.9c0 .4-.1.5-.4.5v1.2c1 0 1.5-.5 1.5-1.4v-1.1c0-.5.2-.7.7-.7v-1.1c-.5 0-.7-.2-.7-.7v-1.1c0-.9-.5-1.4-1.5-1.4Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
     ],
+    // Rich-text documents (RTF / ODT): document frame + short justified text rules.
+    rtf: [
+        [DOC_FRAME],
+        ["M7 12.5h10V14H7v-1.5Zm0 3h10V17H7v-1.5Zm0 3h7V20H7v-1.5Z"]
+    ],
+    odt: [
+        [DOC_FRAME],
+        ["M7 12.5h10V14H7v-1.5Zm0 3h10V17H7v-1.5Zm0 3h7V20H7v-1.5Z"]
+    ],
+    // CSV / TSV: a plain grid mark on the document frame (same family as xlsx).
+    csv: [
+        [DOC_FRAME],
+        ["M6.5 12.5h11v6.5h-11v-6.5Zm1.25 1.25v1.25H11v-1.25H7.75Zm4.5 0v1.25h3.75v-1.25h-3.75Zm-4.5 2.5v1.25H11v-1.25H7.75Zm4.5 0v1.25h3.75v-1.25h-3.75Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    // ODP presentation: reuse the pptx "P" mark on the frame.
+    odp: [
+        [DOC_FRAME],
+        ["M7.5 12.5h3.4c1.5 0 2.4.9 2.4 2.3s-.9 2.3-2.4 2.3H9v2.4H7.5v-7Zm1.5 1.3v2h1.7c.7 0 1.1-.4 1.1-1s-.4-1-1.1-1H9Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    // Email (.eml) / Outlook (.msg): an envelope glyph.
+    email: [
+        ["M3 6.5A2.5 2.5 0 0 1 5.5 4h13A2.5 2.5 0 0 1 21 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-11Zm2.2-.4 6.8 5.1 6.8-5.1a1 1 0 0 0-.3-.1h-13a1 1 0 0 0-.3.1Zm13.3 1.7-6 4.5a1 1 0 0 1-1.2 0l-6-4.5v9.7a.5.5 0 0 0 .5.5h13a.5.5 0 0 0 .5-.5V7.8Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    msg: [
+        ["M3 6.5A2.5 2.5 0 0 1 5.5 4h13A2.5 2.5 0 0 1 21 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-11Zm2.2-.4 6.8 5.1 6.8-5.1a1 1 0 0 0-.3-.1h-13a1 1 0 0 0-.3.1Zm13.3 1.7-6 4.5a1 1 0 0 1-1.2 0l-6-4.5v9.7a.5.5 0 0 0 .5.5h13a.5.5 0 0 0 .5-.5V7.8Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    // Exotic images (TIFF/HEIC/PSD/RAW/…) — the framed-picture image glyph, so they
+    // read as pictures alongside plain images.
+    rasterimage: [
+        ["M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V5Zm3-1a1 1 0 0 0-1 1v9.59l2.3-2.3a1 1 0 0 1 1.4 0l2.3 2.3 3.3-3.3a1 1 0 0 1 1.4 0L18 14.6V5a1 1 0 0 0-1-1H7Zm2.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    // DICOM (medical) / DXF (CAD) / RAW / PostScript (EPS/AI): the picture glyph too
+    // (they all decode to an image surface).
+    dicom: [
+        ["M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V5Zm3-1a1 1 0 0 0-1 1v9.59l2.3-2.3a1 1 0 0 1 1.4 0l2.3 2.3 3.3-3.3a1 1 0 0 1 1.4 0L18 14.6V5a1 1 0 0 0-1-1H7Zm2.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    dxf: [
+        ["M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V5Zm3-1a1 1 0 0 0-1 1v9.59l2.3-2.3a1 1 0 0 1 1.4 0l2.3 2.3 3.3-3.3a1 1 0 0 1 1.4 0L18 14.6V5a1 1 0 0 0-1-1H7Zm2.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    raw: [
+        ["M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V5Zm3-1a1 1 0 0 0-1 1v9.59l2.3-2.3a1 1 0 0 1 1.4 0l2.3 2.3 3.3-3.3a1 1 0 0 1 1.4 0L18 14.6V5a1 1 0 0 0-1-1H7Zm2.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    postscript: [
+        ["M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V5Zm3-1a1 1 0 0 0-1 1v9.59l2.3-2.3a1 1 0 0 1 1.4 0l2.3 2.3 3.3-3.3a1 1 0 0 1 1.4 0L18 14.6V5a1 1 0 0 0-1-1H7Zm2.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    // 3D models: a cube (isometric box).
+    model3d: [
+        ["M12 2.2a1 1 0 0 0-.5.13l-7 4A1 1 0 0 0 4 7.2v9.6a1 1 0 0 0 .5.87l7 4a1 1 0 0 0 1 0l7-4a1 1 0 0 0 .5-.87V7.2a1 1 0 0 0-.5-.87l-7-4A1 1 0 0 0 12 2.2Zm0 2.15 5 2.85-5 2.86-5-2.86 5-2.85ZM6 8.92l5 2.86v5.7l-5-2.86V8.92Zm7 8.56v-5.7l5-2.86v5.7l-5 2.86Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
+    // Audio: a music note.
+    audio: [
+        ["M18 3.5a1 1 0 0 0-1.24-.97l-8 2A1 1 0 0 0 8 5.5v9.3A3.5 3.5 0 1 0 10 18V9.28l6-1.5v4.52A3.5 3.5 0 1 0 18 15V3.5Z"]
+    ],
+    // Video: a film / play-in-rect glyph.
+    video: [
+        ["M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Zm6.4 2.6a1 1 0 0 0-1.4.9v4a1 1 0 0 0 1.5.87l3.5-2a1 1 0 0 0 0-1.74l-3.6-2.03Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
     // Fallback (unknown / binary): a plain document frame.
     unknown: [[DOC_FRAME]]
 };

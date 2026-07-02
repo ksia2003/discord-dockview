@@ -2037,3 +2037,269 @@ html.dockview-open .dockview-page-inner {
     width: 100% !important;
     height: 100% !important;
 }
+
+/* ==========================================================================
+   FILE BROWSER — the dock's home screen (grid/list of the channel's files).
+   Semantic Discord vars only (with hex fallbacks), so it themes automatically.
+   ========================================================================== */
+.dockview-fb {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    box-sizing: border-box;
+}
+
+/* Toolbar row: title + grid/list segmented toggle. */
+.dockview-fb-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px 8px;
+    flex: 0 0 auto;
+}
+.dockview-fb-title {
+    color: var(--header-primary, #f2f3f5);
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dockview-fb-seg-group {
+    display: inline-flex;
+    flex: 0 0 auto;
+}
+.dockview-fb-seg {
+    appearance: none;
+    border: 1px solid var(--background-modifier-accent, #4f545c66);
+    border-right: none;
+    background: var(--background-secondary, #2b2d31);
+    color: var(--text-muted, #949ba4);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+.dockview-fb-seg--first { border-radius: 4px 0 0 4px; }
+.dockview-fb-seg--last { border-radius: 0 4px 4px 0; border-right: 1px solid var(--background-modifier-accent, #4f545c66); }
+.dockview-fb-seg:hover { color: var(--text-default, #dbdee1); }
+.dockview-fb-seg--active {
+    background: var(--brand-500, var(--brand-experiment, #5865f2));
+    color: var(--white-500, #fff);
+    font-weight: 600;
+    border-color: var(--brand-500, var(--brand-experiment, #5865f2));
+}
+
+/* Type-filter chips. */
+.dockview-fb-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 14px 10px;
+    flex: 0 0 auto;
+}
+.dockview-fb-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    appearance: none;
+    border: none;
+    border-radius: 14px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--text-default, #dbdee1);
+    background: var(--background-modifier-hover, #3f424966);
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+.dockview-fb-chip:hover { background: var(--background-modifier-active, #4e505899); }
+.dockview-fb-chip--active {
+    background: var(--brand-500, var(--brand-experiment, #5865f2));
+    color: var(--white-500, #fff);
+}
+.dockview-fb-chip-icon { flex: 0 0 auto; opacity: 0.9; }
+
+/* Scroller: the file list area. */
+.dockview-fb-scroller {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0 14px 14px;
+}
+
+/* Grid layout. */
+.dockview-fb-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 10px;
+}
+.dockview-fb-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    cursor: pointer;
+    border-radius: 6px;
+    padding: 6px;
+    background: transparent;
+    transition: background-color 0.12s ease;
+}
+.dockview-fb-tile:hover { background: var(--background-modifier-hover, #3f424966); }
+.dockview-fb-tile:focus-visible { outline: 2px solid var(--brand-500, var(--brand-experiment, #5865f2)); outline-offset: -2px; }
+.dockview-fb-tile-media {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 5px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--background-secondary, #2b2d31);
+    color: var(--text-muted, #949ba4);
+}
+.dockview-fb-tile-badge {
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: var(--background-floating, #111214cc);
+    color: var(--text-default, #dbdee1);
+    pointer-events: none;
+}
+.dockview-fb-tile-name {
+    font-size: 11px;
+    line-height: 1.25;
+    color: var(--text-default, #dbdee1);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    word-break: break-word;
+}
+
+/* List layout. */
+.dockview-fb-listwrap {
+    display: flex;
+    flex-direction: column;
+}
+.dockview-fb-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 6px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.12s ease;
+}
+.dockview-fb-row:hover { background: var(--background-modifier-hover, #3f424966); }
+.dockview-fb-row:focus-visible { outline: 2px solid var(--brand-500, var(--brand-experiment, #5865f2)); outline-offset: -2px; }
+.dockview-fb-row-media {
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--background-secondary, #2b2d31);
+    color: var(--text-muted, #949ba4);
+}
+.dockview-fb-row-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.dockview-fb-row-name {
+    font-size: 13px;
+    color: var(--text-default, #dbdee1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dockview-fb-row-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted, #949ba4);
+}
+.dockview-fb-badge {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: var(--background-modifier-active, #4e505899);
+    color: var(--text-default, #dbdee1);
+}
+
+/* The thumbnail image + the type glyph fill their media box. */
+.dockview-fb-thumb {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.dockview-fb-glyph { opacity: 0.85; }
+
+/* OFF-category entries are dimmed (still clickable → stock download). */
+.dockview-fb-card--off,
+.dockview-fb-tile.dockview-fb-card--off,
+.dockview-fb-row.dockview-fb-card--off { opacity: 0.45; }
+
+/* The "loading older files" row + its spinner (dim, never disappearing). */
+.dockview-fb-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 14px 0 6px;
+    color: var(--text-muted, #949ba4);
+    font-size: 12px;
+}
+.dockview-fb-more-spinner {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--background-modifier-accent, #4f545c66);
+    border-top-color: var(--text-muted, #949ba4);
+    animation: dockview-spin 0.7s linear infinite;
+}
+.dockview-fb-sentinel { height: 1px; }
+
+/* Empty state — a channel with no openable attachments. */
+.dockview-fb-empty {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 24px 20px;
+    text-align: center;
+}
+.dockview-fb-empty-icon { color: var(--text-muted, #949ba4); opacity: 0.5; }
+.dockview-fb-empty-title {
+    color: var(--header-primary, #f2f3f5);
+    font-size: 15px;
+    font-weight: 600;
+}
+.dockview-fb-empty-sub {
+    color: var(--text-muted, #949ba4);
+    font-size: 13px;
+    max-width: 260px;
+    line-height: 1.4;
+}
