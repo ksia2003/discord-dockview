@@ -38,6 +38,7 @@ import { DockViewIcon } from "./DockViewIcon";
 import { GallerySection } from "./GallerySection";
 import { GeneralPanel } from "./GeneralPanel";
 import { PerformancePanel } from "./PerformancePanel";
+import { PrivacyPanel } from "./PrivacyPanel";
 import { STRINGS } from "../strings";
 import { UpdatePanel } from "./UpdatePanel";
 import { ViewersPanel } from "./ViewersPanel";
@@ -84,6 +85,12 @@ function buildDockViewEntries(plugin: any): any[] {
             key: "dockview_performance",
             title: S.performance,
             Component: PerformancePanel,
+            Icon: DockViewIcon
+        }),
+        buildEntry({
+            key: "dockview_privacy",
+            title: S.privacy,
+            Component: PrivacyPanel,
             Icon: DockViewIcon
         }),
         buildEntry({

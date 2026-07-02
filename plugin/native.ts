@@ -217,7 +217,7 @@ interface ConvertResult { ok: boolean; mime?: string; b64?: string; error?: stri
  * { ok:false, error } rather than thrown — the renderer shows the message on the
  * dock's error card.
  */
-export async function convertAttachment(_: IpcMainInvokeEvent, kind: string, url: string): Promise<ConvertResult> {
+export async function convertAttachment(_: IpcMainInvokeEvent, kind: string, url: string, allowRemote?: boolean): Promise<ConvertResult> {
     if (typeof kind !== "string" || (kind !== "msg" && kind !== "raw")) {
         return { ok: false, error: "Unsupported conversion" };
     }
@@ -255,8 +255,10 @@ export async function convertAttachment(_: IpcMainInvokeEvent, kind: string, url
     }
 
     // Decode (synchronous, pure-JS — no Worker). A throw becomes a structured error.
+    // allowRemote (the renderer's Privacy switch) is passed through to the converter so
+    // main stays stateless — it holds no setting, it's told per-call. Only msg reads it.
     try {
-        const out = runConverter(kind, input);
+        const out = runConverter(kind, input, { allowRemote: allowRemote === true });
         return { ok: true, mime: out.mime, b64: Buffer.from(out.bytes).toString("base64") };
     } catch (err) {
         return { ok: false, error: (err as Error)?.message ?? String(err) };

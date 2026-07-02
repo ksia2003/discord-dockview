@@ -57,7 +57,7 @@ function base64ToBytes(b64: string): Uint8Array {
  * eviction (the msg viewer's frame is GC'd with its DOM; the raw viewer's dispose()
  * revokes it, like the dxf/raster retype path).
  */
-export async function convertAttachment(kind: "msg" | "raw", url: string): Promise<ConvertedAttachment> {
+export async function convertAttachment(kind: "msg" | "raw", url: string, allowRemote = false): Promise<ConvertedAttachment> {
     const native = (window as any).VencordNative?.pluginHelpers?.DockView;
     if (!native || typeof native.convertAttachment !== "function") {
         throw new Error(
@@ -65,7 +65,7 @@ export async function convertAttachment(kind: "msg" | "raw", url: string): Promi
         );
     }
 
-    const reply: ConvertReply = await native.convertAttachment(kind, url);
+    const reply: ConvertReply = await native.convertAttachment(kind, url, allowRemote);
     if (!reply || !reply.ok) {
         throw new Error(reply?.error || "Couldn't convert this file");
     }
@@ -83,9 +83,11 @@ export async function convertAttachment(kind: "msg" | "raw", url: string): Promi
  * instead of a blob: URL — for the msg viewer, which feeds the returned HTML fragment
  * into the dark sandboxed-iframe shell builder (wrapMarkdownDoc + setArtifactHtml),
  * exactly as the .eml viewer does with its own parsed fragment. Throws on the same
- * conditions as convertAttachment (missing bridge / conversion failure).
+ * conditions as convertAttachment (missing bridge / conversion failure). `allowRemote`
+ * (the Privacy switch, read by the caller) is forwarded to main's sanitiser so a .msg's
+ * remote images load or block to match the .eml path.
  */
-export async function convertAttachmentText(kind: "msg" | "raw", url: string): Promise<ConvertedText> {
+export async function convertAttachmentText(kind: "msg" | "raw", url: string, allowRemote = false): Promise<ConvertedText> {
     const native = (window as any).VencordNative?.pluginHelpers?.DockView;
     if (!native || typeof native.convertAttachment !== "function") {
         throw new Error(
@@ -93,7 +95,7 @@ export async function convertAttachmentText(kind: "msg" | "raw", url: string): P
         );
     }
 
-    const reply: ConvertReply = await native.convertAttachment(kind, url);
+    const reply: ConvertReply = await native.convertAttachment(kind, url, allowRemote);
     if (!reply || !reply.ok) {
         throw new Error(reply?.error || "Couldn't convert this file");
     }

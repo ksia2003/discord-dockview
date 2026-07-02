@@ -25,6 +25,7 @@
 
 import { convertAttachmentText } from "../../engine/convertAttachment";
 import { injectNonce, pageNonce, setArtifactHtml } from "../../engine/nonce";
+import { settings } from "../../settings";
 import { STRINGS } from "../../strings";
 import type {
     CacheEntry, LoadOpts, LoadToken, Viewer, ViewerContext
@@ -44,8 +45,13 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
     ctx.content.loadingLabel = STRINGS.loading.lib.msg;
     ctx.requestRender();
 
+    // The Privacy switch decides whether the message's remote images load; read it live
+    // here so a flip applies to the next .msg opened, and forward it to main's sanitiser.
+    let allowRemote = false;
+    try { allowRemote = settings.store.emailRemoteImages === true; } catch { /* default block */ }
+
     const reqUrl = opts.url;
-    convertAttachmentText("msg", reqUrl)
+    convertAttachmentText("msg", reqUrl, allowRemote)
         .then(({ text }) => {
             // `text` is the dv-eml body fragment built (+ sanitised) in main; wrap it in
             // the dark doc shell (no math) so it themes + sandboxes like the .eml viewer.

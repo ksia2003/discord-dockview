@@ -372,6 +372,7 @@ export const STRINGS = {
         general: "General",
         viewers: "Viewers",
         performance: "Performance",
+        privacy: "Privacy",
         updates: "Updates",
         examples: "Examples",
         about: "About"
@@ -469,6 +470,18 @@ export const STRINGS = {
             "dock. Large frames (over ~8 megapixels) default to JPEG to keep memory down. Turn this " +
             "on to keep them lossless PNG instead — sharper, but a bigger picture uses more memory.",
         largeImageGroup: "Image quality"
+    },
+
+    // --- Privacy settings page ----------------------------------------------
+    // Currently one control — remote images in email files — grouped under a heading so
+    // a future tracker-firewall section can slot in beside it.
+    privacy: {
+        emailGroup: "Email",
+        remoteImagesTitle: "Load remote images in email attachments",
+        remoteImagesNote:
+            "Email files (.eml, .msg) can reference images hosted on a remote server. Those are blocked " +
+            "by default, because loading one tells the sender you opened the message (a tracking pixel). " +
+            "Turn this on to load remote images in email previews."
     },
 
     // --- about page ---------------------------------------------------------

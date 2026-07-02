@@ -132,5 +132,13 @@ export const settings = definePluginSettings({
     // doesn't balloon into a multi-hundred-MB PNG copy in memory. ON = always PNG
     // (lossless), at the cost of that larger in-memory blob. Read live by
     // RasterImageViewer.rgbaToBlobUrl at export time.
-    largeImageLossless: { type: OptionType.BOOLEAN, description: "Always convert large images losslessly (PNG)", default: false }
+    largeImageLossless: { type: OptionType.BOOLEAN, description: "Always convert large images losslessly (PNG)", default: false },
+
+    // --- Privacy page: remote images in email files -------------------------
+    // Whether an .eml / .msg body may load its REMOTE <img> (http/https). OFF (default) =
+    // remote images are blocked (replaced with a "blocked" pill) so no tracking-pixel
+    // request is ever made. ON = remote images load. The .eml path reads this live in the
+    // renderer (email.ts); the .msg path plumbs it as an argument through the
+    // convertAttachment IPC into main's sanitiser (main stays stateless).
+    emailRemoteImages: { type: OptionType.BOOLEAN, description: "Load remote images in email attachments", default: false }
 });

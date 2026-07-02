@@ -158,8 +158,13 @@ function buildCidMap(attachments: ParsedAttachment[] | undefined): Map<string, s
  * elements, neutralise remote images (replace with a "blocked" pill), keep cid:/data:
  * images (cid: rewritten to the inline data URL). Walks a DETACHED DOMParser document
  * so nothing executes or fetches; returns the cleaned innerHTML.
+ *
+ * `allowRemote` (the Privacy page's "load remote images" switch, threaded down by the
+ * loader) leaves remote <img>/CSS background-image intact instead of blocking them, so a
+ * user who opts in sees the sender's remote images — at the cost of the sender learning
+ * the message was opened. Scripts/iframes/handlers are ALWAYS stripped regardless.
  */
-function sanitizeHtmlBody(html: string, cidMap: Map<string, string>): string {
+function sanitizeHtmlBody(html: string, cidMap: Map<string, string>, allowRemote: boolean): string {
     let doc: Document;
     try {
         doc = new DOMParser().parseFromString(html, "text/html");
@@ -186,7 +191,8 @@ function sanitizeHtmlBody(html: string, cidMap: Map<string, string>): string {
         }
     });
 
-    // Neutralise images: cid: → inline data URL (safe), data: kept, remote → blocked pill.
+    // Neutralise images: cid: → inline data URL (safe), data: kept, remote → blocked pill
+    // (or kept when the user opted into remote images).
     root.querySelectorAll("img").forEach(img => {
         const src = (img.getAttribute("src") || "").trim();
         if (/^cid:/i.test(src)) {
@@ -198,17 +204,21 @@ function sanitizeHtmlBody(html: string, cidMap: Map<string, string>): string {
         }
         if (/^data:/i.test(src)) return; // inline data image — no network, keep it
         if (!src) { img.remove(); return; }
-        // anything else (http/https/protocol-relative/relative) is a remote fetch → block.
+        // anything else (http/https/protocol-relative/relative) is a remote fetch.
+        if (allowRemote) return; // user opted in — leave the remote <img> to load
         replaceWithBlockedPill(doc, img, "remote image blocked");
     });
 
-    // Also strip CSS background-image: url(remote) in inline styles (another fetch vector).
-    root.querySelectorAll<HTMLElement>("[style]").forEach(el => {
-        const style = el.getAttribute("style") || "";
-        if (/url\(\s*['"]?\s*(?:https?:)?\/\//i.test(style)) {
-            el.setAttribute("style", style.replace(/background(-image)?\s*:[^;]*url\([^)]*\)[^;]*;?/gi, ""));
-        }
-    });
+    // Also strip CSS background-image: url(remote) in inline styles (another fetch
+    // vector) — unless the user opted into remote images.
+    if (!allowRemote) {
+        root.querySelectorAll<HTMLElement>("[style]").forEach(el => {
+            const style = el.getAttribute("style") || "";
+            if (/url\(\s*['"]?\s*(?:https?:)?\/\//i.test(style)) {
+                el.setAttribute("style", style.replace(/background(-image)?\s*:[^;]*url\([^)]*\)[^;]*;?/gi, ""));
+            }
+        });
+    }
 
     return root.innerHTML;
 }
@@ -224,9 +234,9 @@ function replaceWithBlockedPill(doc: Document, img: Element, label: string): voi
 
 /** Build the message-body section: the sanitised HTML body if present, else the
  *  plaintext body in a pre-wrapped block, else an empty-state line. */
-function renderBody(email: ParsedEmail, cidMap: Map<string, string>): string {
+function renderBody(email: ParsedEmail, cidMap: Map<string, string>, allowRemote: boolean): string {
     if (email.html && email.html.trim()) {
-        return `<div class="dv-eml-body">${sanitizeHtmlBody(email.html, cidMap)}</div>`;
+        return `<div class="dv-eml-body">${sanitizeHtmlBody(email.html, cidMap, allowRemote)}</div>`;
     }
     if (email.text && email.text.trim()) {
         return `<div class="dv-eml-body dv-eml-body-text">${escapeHtml(email.text)}</div>`;
@@ -264,9 +274,11 @@ function row(label: string, valueHtml: string): string {
 /**
  * Build the full body-HTML fragment for an .eml: the header card, the (sanitised)
  * message body, and the attachment list. Wrapped by the loader in the shared dark doc
- * shell. Remote content is already neutralised here, so the fragment is inert.
+ * shell. `allowRemote` (the Privacy page's "load remote images" switch, read live by the
+ * loader and passed in) decides whether remote <img> load or are replaced with a blocked
+ * pill — the loader keeps the setting read out of this pure transform.
  */
-export function emailToHtml(email: ParsedEmail): string {
+export function emailToHtml(email: ParsedEmail, allowRemote = false): string {
     const cidMap = buildCidMap(email.attachments);
     const subject = email.subject && email.subject.trim()
         ? escapeHtml(email.subject)
@@ -281,5 +293,5 @@ export function emailToHtml(email: ParsedEmail): string {
         row("Date", renderDate(email.date)) +
         `</div>`;
 
-    return head + renderBody(email, cidMap) + renderAttachments(email.attachments);
+    return head + renderBody(email, cidMap, allowRemote) + renderAttachments(email.attachments);
 }

@@ -27,6 +27,7 @@
 
 import { withLibLoading } from "../../engine/lazyLib";
 import { injectNonce, pageNonce, setArtifactHtml } from "../../engine/nonce";
+import { settings } from "../../settings";
 import { STRINGS } from "../../strings";
 import type {
     CacheEntry, LoadOpts, LoadToken, Viewer, ViewerContext
@@ -60,9 +61,12 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             return email;
         })
         .then(email => {
-            // Build the body fragment (remote content already neutralised) and wrap it
-            // in the dark doc shell (no math) so it themes + sandboxes identically.
-            const fullHtml = wrapMarkdownDoc(emailToHtml(email), false);
+            // Build the body fragment and wrap it in the dark doc shell (no math) so it
+            // themes + sandboxes identically. The Privacy switch decides whether remote
+            // images load; read it live here so a flip applies to the next .eml opened.
+            let allowRemote = false;
+            try { allowRemote = settings.store.emailRemoteImages === true; } catch { /* default block */ }
+            const fullHtml = wrapMarkdownDoc(emailToHtml(email, allowRemote), false);
             if (entry) {
                 entry.html = fullHtml;
                 const nonce = pageNonce();

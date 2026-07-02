@@ -145,13 +145,18 @@ function row(label: string, valueHtml: string): string {
  * viewers use (sandbox="allow-scripts", no allow-same-origin). The sandbox blocks
  * host-DOM access but NOT network image loads, so — exactly like the .eml path —
  * we neutralise remote content HERE in main, with a regex pass over the source
- * (main has no DOMParser): every remote <img> is stripped (replaced with a
- * "blocked" pill), and <script>/<style>/<link>/<iframe>/<object>/<embed>/on*=
- * handlers + javascript: urls are removed. data: images are kept (no network).
+ * (main has no DOMParser): <script>/<style>/<link>/<iframe>/<object>/<embed>/on*=
+ * handlers + javascript: urls are ALWAYS removed. data: images are kept (no network).
  * This is a defensive belt-and-braces pass; the iframe sandbox is the primary
  * isolation.
+ *
+ * `allowRemote` mirrors the .eml path's Privacy switch, threaded down as an ARGUMENT
+ * from the renderer through the convertAttachment IPC (main stays stateless — it holds
+ * no setting, it's told per-call): when false (default) every remote <img> becomes a
+ * "blocked" pill and remote CSS background-image url() is stripped, so no tracking-pixel
+ * request is made; when true the remote <img>/background is left to load.
  */
-function sanitizeHtmlBody(html: string): string {
+function sanitizeHtmlBody(html: string, allowRemote: boolean): string {
     let s = html;
     // Drop active / network / restyling elements wholesale (with their content).
     s = s.replace(/<(script|style|iframe|object|embed|link|base|meta|form)\b[\s\S]*?<\/\1\s*>/gi, "");
@@ -163,13 +168,15 @@ function sanitizeHtmlBody(html: string): string {
     // Strip javascript: in href/src.
     s = s.replace(/\s(href|src)\s*=\s*"(?:\s*javascript:[^"]*)"/gi, "");
     s = s.replace(/\s(href|src)\s*=\s*'(?:\s*javascript:[^']*)'/gi, "");
-    // Neutralise REMOTE images (http/https/protocol-relative): replace the whole
-    // <img …> with a "blocked" pill so no tracking-pixel request is ever made.
-    // data: images carry no network request and are left untouched.
-    s = s.replace(/<img\b[^>]*\bsrc\s*=\s*(["'])(https?:\/\/|\/\/)[^"']*\1[^>]*>/gi,
-        '<span class="dv-eml-blocked">remote image blocked</span>');
-    // Strip remote background-image url() in inline styles (another fetch vector).
-    s = s.replace(/background(-image)?\s*:[^;"']*url\(\s*['"]?\s*(?:https?:)?\/\/[^)]*\)[^;"']*;?/gi, "");
+    if (!allowRemote) {
+        // Neutralise REMOTE images (http/https/protocol-relative): replace the whole
+        // <img …> with a "blocked" pill so no tracking-pixel request is ever made.
+        // data: images carry no network request and are left untouched.
+        s = s.replace(/<img\b[^>]*\bsrc\s*=\s*(["'])(https?:\/\/|\/\/)[^"']*\1[^>]*>/gi,
+            '<span class="dv-eml-blocked">remote image blocked</span>');
+        // Strip remote background-image url() in inline styles (another fetch vector).
+        s = s.replace(/background(-image)?\s*:[^;"']*url\(\s*['"]?\s*(?:https?:)?\/\/[^)]*\)[^;"']*;?/gi, "");
+    }
     return s;
 }
 
@@ -292,10 +299,11 @@ function humanSize(bytes: number): string {
  *
  * Body precedence: a direct HTML body (sanitised) → encapsulated HTML inside the
  * compressed RTF (de-encapsulated + sanitised) → the plain-text body → empty-state.
- * Remote content is neutralised here (main has no DOMParser, so via a regex pass);
- * the renderer's null-origin sandbox is the primary isolation.
+ * Remote content is neutralised here (main has no DOMParser, so via a regex pass)
+ * UNLESS `allowRemote` (the renderer's Privacy switch, passed through the IPC); the
+ * renderer's null-origin sandbox is the primary isolation either way.
  */
-function convertMsg(input: Uint8Array): ConvertOutput {
+function convertMsg(input: Uint8Array, allowRemote: boolean): ConvertOutput {
     // msgreader's class is the CJS default-of-default under ESM interop.
     const Ctor: any = (MsgReader as any)?.default ?? MsgReader;
     const reader = new Ctor(input);
@@ -326,7 +334,7 @@ function convertMsg(input: Uint8Array): ConvertOutput {
     // Body precedence.
     let bodyHtml: string;
     if (data.bodyHtml && data.bodyHtml.trim()) {
-        bodyHtml = `<div class="dv-eml-body">${sanitizeHtmlBody(data.bodyHtml)}</div>`;
+        bodyHtml = `<div class="dv-eml-body">${sanitizeHtmlBody(data.bodyHtml, allowRemote)}</div>`;
     } else if (data.compressedRtf && data.compressedRtf.length) {
         let recovered: string | null = null;
         try {
@@ -337,7 +345,7 @@ function convertMsg(input: Uint8Array): ConvertOutput {
             recovered = null;
         }
         if (recovered) {
-            bodyHtml = `<div class="dv-eml-body">${sanitizeHtmlBody(recovered)}</div>`;
+            bodyHtml = `<div class="dv-eml-body">${sanitizeHtmlBody(recovered, allowRemote)}</div>`;
         } else if (data.body && data.body.trim()) {
             bodyHtml = `<div class="dv-eml-body dv-eml-body-text">${escHtml(data.body)}</div>`;
         } else {
@@ -584,13 +592,20 @@ function crc32(data: Uint8Array): number {
 //  dispatch
 // ════════════════════════════════════════════════════════════════════════════
 
+/** Per-call options a converter may honour. `allowRemote` (msg only) mirrors the .eml
+ *  Privacy switch — passed down from the renderer through the IPC so main stays
+ *  stateless. RAW ignores it. */
+export interface ConvertOptions {
+    allowRemote?: boolean;
+}
+
 /** Run the converter for `kind` over the fetched attachment bytes. Throws a plain
  *  Error for an unknown kind or a conversion failure; convertAttachment (native.ts)
  *  catches and returns it as { ok:false, error }. */
-export function runConverter(kind: string, input: Uint8Array): ConvertOutput {
+export function runConverter(kind: string, input: Uint8Array, opts: ConvertOptions = {}): ConvertOutput {
     switch (kind) {
         case "msg":
-            return convertMsg(input);
+            return convertMsg(input, opts.allowRemote === true);
         case "raw":
             return convertRaw(input);
         default:
