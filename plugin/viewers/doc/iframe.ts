@@ -29,6 +29,7 @@
 
 import { React } from "@webpack/common";
 
+import { escapeHtml } from "../../engine/html";
 import { getActiveWindow } from "../../engine/window";
 import { KATEX_CSS } from "../../katex-css";
 import { LoadingBody, renderErrorBody } from "../../ui/StateCards";
@@ -243,6 +244,138 @@ export const MD_LINK_SCRIPT = `<script>(function(){
 export function wrapMarkdownDoc(bodyHtml: string, hasMath: boolean): string {
     const mathStyle = hasMath ? `<style>${KATEX_CSS}</style>${MD_MATH_STYLE}` : "";
     return `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">${MD_STYLE}${mathStyle}</head><body><article class="md">${bodyHtml}</article>${MD_LINK_SCRIPT}</body></html>`;
+}
+
+// Extra dark-doc styles for the markdown viewer's own polish (NOT shared with the
+// docx/ipynb/mermaid/etc. doc viewers — only wrapMarkdownDocFull injects these):
+//  - the frontmatter card (a key/value readout of the leading YAML block),
+//  - the table-of-contents overlay (a heading outline that slides in from the right),
+//  - the per-fence copy button (revealed on hover over a code block).
+// Colours mirror MD_STYLE's palette (this srcdoc iframe can't see Discord's theme
+// vars). The TOC/copy affordances are keyboard/pointer-driven inside the sandbox.
+export const MD_ENHANCE_STYLE = `<style>
+/* Frontmatter card: a quiet panel-surface table above the body, same hairline
+   border + muted key tone the docx/eml chrome uses. */
+.dv-fm { margin: 0 0 20px; padding: 4px 0 0; border-bottom: 1px solid #3f4147; }
+.dv-fm-row { display: flex; gap: 12px; padding: 5px 0; font-size: 13.5px; line-height: 1.5; }
+.dv-fm-key { flex: 0 0 30%; max-width: 180px; color: #949ba4; font-weight: 600; word-break: break-word; }
+.dv-fm-val { flex: 1 1 auto; min-width: 0; color: #dbdee1; word-break: break-word; white-space: pre-wrap; }
+.dv-fm-raw .dv-fm-val { color: #b5bac1; font-family: Consolas, "Andale Mono", monospace; font-size: 12.5px; }
+/* Code-fence copy button: sits top-right inside each <pre>, hidden until the block
+   is hovered (or the button focused for keyboard use). Flips to a check on copy. */
+.md pre { position: relative; }
+.dv-copy-btn {
+  position: absolute; top: 6px; right: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0;
+  background: #383a40; color: #b5bac1;
+  border: 1px solid #1e1f22; border-radius: 4px;
+  cursor: pointer; opacity: 0; transition: opacity .1s ease, background .1s ease;
+}
+.md pre:hover .dv-copy-btn, .dv-copy-btn:focus-visible { opacity: 1; }
+.dv-copy-btn:hover { background: #4e5058; color: #dbdee1; }
+.dv-copy-btn svg { width: 16px; height: 16px; display: block; fill: currentColor; }
+.dv-copy-btn .dv-copy-check { display: none; }
+.dv-copy-btn.dv-copied { background: #248046; color: #fff; }
+.dv-copy-btn.dv-copied .dv-copy-icon { display: none; }
+.dv-copy-btn.dv-copied .dv-copy-check { display: block; }
+/* TOC overlay: a scrollable outline pinned to the right edge, hidden until the
+   header toggle opens it. Panel-surface card so it reads as chrome over the doc. */
+.dv-toc {
+  position: fixed; top: 0; right: 0; bottom: 0; width: 260px; z-index: 20;
+  box-sizing: border-box; padding: 14px 8px 24px 14px; overflow-y: auto;
+  background: #232428; border-left: 1px solid #3f4147;
+  transform: translateX(100%); transition: transform .16s ease; display: none;
+}
+.dv-toc.dv-toc-open { transform: translateX(0); display: block; }
+.dv-toc-title { color: #949ba4; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; margin: 0 0 10px; }
+.dv-toc a {
+  display: block; padding: 4px 8px; margin: 1px 0; border-radius: 4px;
+  color: #b5bac1; font-size: 13px; line-height: 1.4; text-decoration: none;
+  word-break: break-word; cursor: pointer;
+}
+.dv-toc a:hover { background: #35373c; color: #dbdee1; }
+.dv-toc-l2 { padding-left: 20px; }
+.dv-toc-l3 { padding-left: 34px; }
+.dv-toc-l4 { padding-left: 48px; }
+.dv-toc-l5 { padding-left: 62px; }
+.dv-toc-l6 { padding-left: 76px; }
+</style>`;
+
+/** The in-iframe script for the markdown polish: copy buttons on code fences, and
+ *  the TOC open/close driven by a postMessage from the host header toggle.
+ *
+ *  CLIPBOARD: this is a null-origin sandbox (allow-scripts only), where BOTH
+ *  navigator.clipboard.writeText (rejects — opaque origin) AND
+ *  document.execCommand("copy") (returns false — verified live) are unavailable. So
+ *  the copy button posts the raw code up to the host, which owns a real Discord
+ *  origin and does the clipboard write, then acks back so the button flips to the
+ *  copied check. Each button gets an id so the ack targets the right one. */
+export const MD_ENHANCE_SCRIPT = `<script>(function(){
+  var COPY = '<svg class="dv-copy-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2Zm2 0h5a2 2 0 0 1 2 2v5h2V5h-9v2ZM6 9v9h9V9H6Z"/></svg>';
+  var CHECK = '<svg class="dv-copy-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z"/></svg>';
+  var byId = {};
+  document.querySelectorAll(".md pre").forEach(function(pre, i){
+    var code = pre.querySelector("code"); if(!code) return;
+    var id = "c" + i;
+    var btn = document.createElement("button");
+    btn.type="button"; btn.className="dv-copy-btn";
+    btn.setAttribute("aria-label","Copy code"); btn.title="Copy";
+    btn.innerHTML = COPY + CHECK;
+    byId[id] = btn;
+    btn.addEventListener("click", function(){
+      try { parent.postMessage({ __dockViewMdCopy: { id: id, text: code.textContent || "" } }, "*"); } catch(e) {}
+    });
+    pre.appendChild(btn);
+  });
+  var toc = document.querySelector(".dv-toc");
+  // TOC entries scroll to their heading. The document carries <base target="_blank">
+  // (so stray links open externally), which makes a bare #anchor try to navigate a
+  // new context instead of scrolling — so scroll the target into view ourselves.
+  if (toc) toc.addEventListener("click", function(e){
+    var a = e.target && e.target.closest ? e.target.closest("a[href^='#']") : null;
+    if (!a) return;
+    e.preventDefault();
+    var el = document.getElementById(decodeURIComponent(a.getAttribute("href").slice(1)));
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  window.addEventListener("message", function(e){
+    var d = e && e.data; if (!d) return;
+    if (d.__dockViewMdToc !== undefined && toc) {
+      toc.classList.toggle("dv-toc-open", !!d.__dockViewMdToc);
+    }
+    // The host copied a fence's text — flip that button to the copied check.
+    if (d.__dockViewMdCopied && byId[d.__dockViewMdCopied]) {
+      var b = byId[d.__dockViewMdCopied];
+      b.classList.add("dv-copied"); b.title="Copied";
+      setTimeout(function(){ b.classList.remove("dv-copied"); b.title="Copy"; }, 1200);
+    }
+  });
+  // Ask the host for the current TOC state so a remounted frame (cache return /
+  // leaving edit mode) reopens the outline if it was left open.
+  if (toc) { try { parent.postMessage({ __dockViewMdTocReady: true }, "*"); } catch(e) {} }
+})();</script>`;
+
+/** Build the outline markup (a nav of anchor links) from the collected headings.
+ *  Returns "" when the doc has no headings (the header toggle is then disabled). */
+export function buildTocHtml(toc: { id: string; text: string; level: number }[]): string {
+    if (toc.length === 0) return "";
+    const items = toc.map(h =>
+        `<a href="#${h.id}" class="dv-toc-l${h.level}">${escapeHtml(h.text)}</a>`
+    ).join("");
+    return `<nav class="dv-toc" aria-label="Table of contents"><div class="dv-toc-title">Contents</div>${items}</nav>`;
+}
+
+/** The markdown VIEWER's full document — the shared dark markdown doc plus the
+ *  viewer-only polish (frontmatter card, TOC overlay, code-fence copy). Kept separate
+ *  from wrapMarkdownDoc so the other doc viewers (docx / ipynb / mermaid / …) are
+ *  untouched. `frontmatterHtml` / `toc` are "" / [] when the source has neither. */
+export function wrapMarkdownDocFull(bodyHtml: string, hasMath: boolean, frontmatterHtml: string, toc: { id: string; text: string; level: number }[]): string {
+    const mathStyle = hasMath ? `<style>${KATEX_CSS}</style>${MD_MATH_STYLE}` : "";
+    const tocHtml = buildTocHtml(toc);
+    return `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">${MD_STYLE}${MD_ENHANCE_STYLE}${mathStyle}</head><body>`
+        + `<article class="md">${frontmatterHtml}${bodyHtml}</article>${tocHtml}`
+        + `${MD_LINK_SCRIPT}${MD_ENHANCE_SCRIPT}</body></html>`;
 }
 
 /** The shared DOC iframe body. Mounts content.frameHtml in a null-origin sandboxed

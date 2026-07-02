@@ -180,6 +180,15 @@ export interface TreeViewState {
     kind: "json" | "xml";
 }
 
+/** The markdown viewer's per-window view-state: whether the table-of-contents
+ *  overlay is open. The TOC itself lives inside the rendered srcdoc iframe (it must
+ *  scroll the iframe's own document); this flag drives the header toggle's active
+ *  state and is posted into the iframe to show/hide the overlay. Parked on the cache
+ *  entry so a return reopens with the TOC as it was left. */
+export interface MarkdownViewState {
+    tocOpen: boolean;
+}
+
 export interface McpAppViewState {
     appId: string | null;
 }
@@ -295,6 +304,7 @@ export interface CachedView {
     scrollTop?: number; // shared scroll of the active body scroller
     csvMode?: "grid" | "raw";
     treeMode?: "tree" | "raw";
+    mdTocOpen?: boolean;
     editMode?: "view" | "edit";
     editBuffer?: string | null;
     // code/text find state, so a cache return reopens the file with the find bar

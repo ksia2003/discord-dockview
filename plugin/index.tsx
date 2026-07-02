@@ -26,6 +26,7 @@ import managedStyle from "./style.css?managed";
 
 import { clearArtifact, load, retryActiveLoad } from "./engine/load";
 import { clearContentCache } from "./engine/cache";
+import { fallbackCopy } from "./engine/fetch";
 import { detectType } from "./engine/detectType";
 import { requestRender } from "./engine/forceRender";
 import {
@@ -47,6 +48,7 @@ import { applyOpenState, ensureHost } from "./host/mount";
 import { closePanel, registerHost, startHost, stopHost, toggle } from "./host/open";
 import { openExternalLink } from "./external/openExternal";
 import { openInVesktopWindow, popoutArtifact, vesktopWindowHtml } from "./external/vesktopWindow";
+import { markdownHasToc, mdState } from "./viewers/doc/MarkdownViewer";
 import {
     closeAttachBar, confirmAttachBar, isAttachBarOpen, openAttachBar, setAttachBarName,
     attachActiveFile
@@ -325,8 +327,31 @@ export default definePlugin({
         //    emit these land in P5; the listener is harmless until then.)
         onMessage = (e: MessageEvent) => {
             const d = e?.data;
-            if (d && typeof d === "object" && typeof d.__dockViewOpenLink === "string") {
+            if (!d || typeof d !== "object") return;
+            if (typeof d.__dockViewOpenLink === "string") {
                 openExternalLink(d.__dockViewOpenLink);
+                return;
+            }
+            // A markdown iframe just (re)loaded and asks for the current TOC state, so a
+            // cache return / edit-back reopens the outline if it was left open.
+            if (d.__dockViewMdTocReady) {
+                const win = getActiveWindow();
+                if (win.content.type === "markdown" && markdownHasToc(win)) {
+                    try { (e.source as WindowProxy | null)?.postMessage({ __dockViewMdToc: mdState(win).tocOpen }, "*"); } catch { /* ignore */ }
+                }
+                return;
+            }
+            // A code-fence copy button in the markdown sandbox: the null-origin frame
+            // can't reach the clipboard itself, so it hands us the text and we copy it
+            // (a real Discord origin), then ack back so the button shows "copied".
+            if (d.__dockViewMdCopy && typeof d.__dockViewMdCopy.text === "string") {
+                const { id, text } = d.__dockViewMdCopy;
+                const ack = () => { try { (e.source as WindowProxy | null)?.postMessage({ __dockViewMdCopied: id }, "*"); } catch { /* ignore */ } };
+                try {
+                    if (navigator.clipboard?.writeText) {
+                        navigator.clipboard.writeText(text).then(ack, () => fallbackCopy(text, ack));
+                    } else { fallbackCopy(text, ack); }
+                } catch { fallbackCopy(text, ack); }
             }
         };
         window.addEventListener("message", onMessage);

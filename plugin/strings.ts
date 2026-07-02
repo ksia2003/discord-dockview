@@ -243,6 +243,15 @@ export const STRINGS = {
         copied: "Copied"
     },
 
+    // --- markdown header controls -------------------------------------------
+    // The table-of-contents control is a single STATE-COLOUR toggle (the same
+    // grammar the csv/tree raw toggles use): off = outline hidden, highlighted =
+    // outline shown. It stays in its slot but DISABLED when the document has no
+    // headings (grammar rule 9 — a control never disappears by mode).
+    markdown: {
+        toc: "Table of contents"
+    },
+
     // --- edit toggle (code / markdown / artifact) ---------------------------
     // A single STATE-COLOUR toggle (Discord member-list grammar): one pencil icon
     // button that highlights when EDIT is active. A file opens in its view mode

@@ -23,19 +23,22 @@
 
 import { React } from "@webpack/common";
 
+import { requestRender } from "../../engine/forceRender";
 import { injectNonce, pageNonce, setArtifactHtml } from "../../engine/nonce";
 import { getActiveWindow } from "../../engine/window";
 import { STRINGS } from "../../strings";
 import type {
-    CacheEntry, LoadOpts, LoadToken, Viewer, ViewerContext
+    CacheEntry, LoadOpts, LoadToken, MarkdownViewState, Viewer, ViewerContext
 } from "../../engine/types";
 import type { FindBarModel } from "../../engine/types";
 import { resetEditView, restoreEditState, snapshotEditState } from "../../edit/editMode";
 import { CodeBody } from "../text/CodeBody";
 import { CodeViewer } from "../text/CodeViewer";
 import { DocHeaderControls } from "./DocHeaderControls";
-import { HtmlBody, wrapMarkdownDoc } from "./iframe";
-import { highlightMarkdownCode, markdownToHtml } from "./markdown";
+import { HtmlBody, wrapMarkdownDocFull } from "./iframe";
+import {
+    addHeadingIds, highlightMarkdownCode, markdownToHtml, renderFrontmatterCard, splitFrontmatter
+} from "./markdown";
 
 /** The full markdown → dark sandboxed-doc pipeline (marked + code highlight +
  *  KaTeX-aware wrapper). Pulled out so the loader (first render from the fetched
@@ -43,13 +46,51 @@ import { highlightMarkdownCode, markdownToHtml } from "./markdown";
  *  identically. Exported so edit/ (the cross-cutting edit layer) and external/
  *  (the pop-out window) re-render markdown the same way the viewer does. */
 export function renderMarkdownDoc(md: string): string {
-    const { html, hasMath } = markdownToHtml(md);
-    const bodyHtml = highlightMarkdownCode(html);
-    return wrapMarkdownDoc(bodyHtml, hasMath);
+    // Peel a leading YAML frontmatter block off before marked sees it (else the `---`
+    // opener becomes a rule and the keys a loose paragraph) and render it as a card.
+    const { frontmatter, body } = splitFrontmatter(md);
+    const frontmatterHtml = frontmatter != null ? renderFrontmatterCard(frontmatter) : "";
+    const { html, hasMath } = markdownToHtml(body);
+    // Give headings stable ids + collect the outline for the TOC overlay.
+    const withIds = addHeadingIds(html);
+    const bodyHtml = highlightMarkdownCode(withIds.html);
+    return wrapMarkdownDocFull(bodyHtml, hasMath, frontmatterHtml, withIds.toc);
+}
+
+/** The markdown viewer's per-window view-state slice (the TOC open flag). */
+export function mdState(win = getActiveWindow()): MarkdownViewState {
+    return (win.viewStates.markdown ??= { tocOpen: false }) as MarkdownViewState;
+}
+
+/** Does the CURRENT markdown doc have any headings? The rendered frameHtml carries a
+ *  `.dv-toc` nav exactly when the outline is non-empty, so the header can gate its
+ *  TOC toggle on that without re-parsing. False for a still-loading / empty doc. */
+export function markdownHasToc(win = getActiveWindow()): boolean {
+    return typeof win.content.frameHtml === "string" && win.content.frameHtml.includes('class="dv-toc"');
+}
+
+/** Toggle the markdown TOC overlay. The overlay lives INSIDE the srcdoc iframe (it
+ *  scrolls that document), so we flip the view-state for the header's active colour
+ *  and postMessage the new state into the iframe. The iframe isn't remounted by this
+ *  (no seq bump), so the message reaches the live frame. */
+export function toggleMarkdownToc(): void {
+    const win = getActiveWindow();
+    if (win.content.type !== "markdown" || !markdownHasToc(win)) return;
+    const st = mdState(win);
+    st.tocOpen = !st.tocOpen;
+    postTocState(st.tocOpen);
+    requestRender(); // repaint the toggle's active state
+}
+
+/** Post the TOC open/close state into the dock's markdown iframe. */
+function postTocState(open: boolean): void {
+    const frame = document.querySelector<HTMLIFrameElement>("#dockview-root .dockview-body .dockview-frame");
+    try { frame?.contentWindow?.postMessage({ __dockViewMdToc: open }, "*"); } catch { /* ignore */ }
 }
 
 /** MARKDOWN loader: fetch → marked → dark doc → nonce sandbox iframe path. */
 function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): void {
+    mdState(ctx.window).tocOpen = false; // a fresh markdown file opens with the TOC closed
     resetEditView(ctx.window); // a fresh markdown file opens rendered + unedited
     if (!opts.url) {
         ctx.content.loading = false;
@@ -95,19 +136,22 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
         });
 }
 
-function createState(): unknown {
-    return {};
+function createState(): MarkdownViewState {
+    return { tocOpen: false };
 }
-function resetState(): void {
-    /* markdown has no per-window view-state of its own (edit mode rides editView) */
+function resetState(vs: MarkdownViewState): void {
+    if (vs) vs.tocOpen = false; // a fresh markdown file opens with the TOC closed
 }
-/** Park the cross-cutting edit mode + buffer so a cache return reopens the edited
- *  source / the rendered-vs-edit mode (markdown has no format-specific view-state). */
-function snapshot(_vs: unknown, entry: CacheEntry, ctx: ViewerContext): void {
+/** Park the TOC open flag + the cross-cutting edit mode + buffer so a cache return
+ *  reopens the TOC state and the edited source / rendered-vs-edit mode. */
+function snapshot(vs: MarkdownViewState, entry: CacheEntry, ctx: ViewerContext): void {
+    entry.view.mdTocOpen = vs?.tocOpen ?? false;
     snapshotEditState(ctx.window, entry);
 }
-/** Restore the edit mode + buffer (restore runs on the active window in showContent). */
-function restore(_vs: unknown, entry: CacheEntry): void {
+/** Restore the TOC open flag + the edit mode + buffer (restore runs on the active
+ *  window in showContent). */
+function restore(vs: MarkdownViewState, entry: CacheEntry): void {
+    if (vs) vs.tocOpen = entry.view.mdTocOpen ?? false;
     restoreEditState(getActiveWindow(), entry);
 }
 
@@ -127,7 +171,7 @@ function findModel(ctx: ViewerContext): FindBarModel | null {
     return CodeViewer.findModel ? CodeViewer.findModel(ctx) : null;
 }
 
-export const MarkdownViewer: Viewer = {
+export const MarkdownViewer: Viewer<MarkdownViewState> = {
     type: "markdown",
     load,
     createState,
