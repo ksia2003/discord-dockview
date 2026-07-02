@@ -31,10 +31,17 @@
  *                           correct on its own; uncertainty defaults to false).
  *   DOCKVIEW_REPO           owner/repo used for the auto-detect API + asset fetch
  *                           (default: ksia2003/discord-dockview)
+ *   DOCKVIEW_INSTALLERS_DIR the electron-builder output dir (usually dist/) to scan for
+ *                           the app INSTALLER artifacts (exe/AppImage/deb/rpm). When set
+ *                           and present, each installer's sha256 + size is recorded under
+ *                           the manifest's `shell` map so the in-app shell updater can
+ *                           download + verify the right one for the running platform. When
+ *                           UNSET/absent the manifest is plugin-only (a shellVersion is
+ *                           still recorded from the source constant, but no installers).
  */
 
 import { createHash } from "crypto";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
@@ -43,6 +50,7 @@ const ROOT = join(__dirname, "..");
 
 const DIST = join(ROOT, "static", "vencordDist");
 const PLUGIN_SRC = join(ROOT, "plugin");
+const SHARED_SRC = join(ROOT, "src", "shared");
 
 // The core artifacts in a plugin-only patch release: the four desktop bundle files
 // plus the version stamp. Every one is recorded in the manifest. The out-of-bundle
@@ -76,6 +84,16 @@ function readPluginVersion() {
     const src = readFileSync(join(PLUGIN_SRC, "version.ts"), "utf-8");
     const m = src.match(/DOCKVIEW_PLUGIN_VERSION\s*=\s*["']([^"']+)["']/);
     if (!m) throw new Error("Could not extract DOCKVIEW_PLUGIN_VERSION from plugin/version.ts");
+    return m[1];
+}
+
+// src/shared/dockviewVersion.ts is the SINGLE home of the app-SHELL version (the
+// Vesktop main/preload layer that ships in app.asar and only an installer can update).
+// Same regex-off-the-literal trick as the plugin version — one source of truth.
+function readShellVersion() {
+    const src = readFileSync(join(SHARED_SRC, "dockviewVersion.ts"), "utf-8");
+    const m = src.match(/DOCKVIEW_SHELL_VERSION\s*=\s*["']([^"']+)["']/);
+    if (!m) throw new Error("Could not extract DOCKVIEW_SHELL_VERSION from src/shared/dockviewVersion.ts");
     return m[1];
 }
 
@@ -217,12 +235,75 @@ for (const name of FILES) {
 const pluginVersion = readPluginVersion();
 const needsRelaunch = await detectNeedsRelaunch(pluginVersion, files);
 
+// ---- Shell (app) update block -------------------------------------------------
+// The plugin bundle above only patches VENCORD_FILES_DIR. The SHELL (app.asar) is
+// updated by re-running an installer. Record the shell version this release requires
+// and, when the installer artifacts are on disk, each installer's sha256 + size so
+// the in-app shell updater can pick + verify the one for the running platform.
+//
+// Install methods (the key the runtime shell-updater matches on):
+//   win-nsis   → the Windows one-click Setup exe
+//   appimage   → the Linux .AppImage (self-replacing)
+//   deb        → the Debian/Ubuntu .deb (pkexec dpkg -i)
+//   rpm        → the Fedora/RHEL .rpm  (pkexec rpm -U)
+// The .exe.blockmap, -win.zip, tar.gz and latest*.yml are NOT installers we drive —
+// they're skipped here. Per-arch installers are keyed by "<method>-<arch>" (arm64
+// vs x64) so a runtime shell-updater downloads the artifact matching its own arch.
+const shellVersion = readShellVersion();
+
+/** Classify an electron-builder output filename into a { method, arch } we can drive,
+ *  or null to skip it. Arch defaults to "x64" when the name carries no arch marker
+ *  (electron-builder omits the suffix for the x64 default on some targets). */
+function classifyInstaller(name) {
+    const lower = name.toLowerCase();
+    const arch = /arm64|aarch64/.test(lower) ? "arm64" : "x64";
+    if (/ setup .*\.exe$/i.test(name) || (lower.endsWith(".exe") && !lower.endsWith(".blockmap")))
+        return { method: "win-nsis", arch };
+    if (lower.endsWith(".appimage")) return { method: "appimage", arch };
+    if (lower.endsWith(".deb")) return { method: "deb", arch };
+    if (lower.endsWith(".rpm")) return { method: "rpm", arch };
+    return null;
+}
+
+const installersDir = process.env.DOCKVIEW_INSTALLERS_DIR || "";
+const shellInstallers = {};
+if (installersDir && existsSync(installersDir)) {
+    for (const name of readdirSync(installersDir)) {
+        const cls = classifyInstaller(name);
+        if (!cls) continue;
+        const path = join(installersDir, name);
+        try {
+            if (!statSync(path).isFile()) continue;
+        } catch {
+            continue;
+        }
+        const key = `${cls.method}-${cls.arch}`;
+        shellInstallers[key] = {
+            method: cls.method,
+            arch: cls.arch,
+            assetName: name,
+            sha256: sha256Hex(path),
+            size: statSync(path).size,
+            url: baseDownloadUrl ? `${baseDownloadUrl}/${encodeURIComponent(name)}` : name
+        };
+    }
+}
+
+const shell = {
+    version: shellVersion,
+    // Present only when installers were scanned. An empty map still lets the updater
+    // report "a newer app is available — reinstall" honestly (with the release link).
+    installers: shellInstallers
+};
+
 const manifest = {
-    schema: 1,
+    schema: 2,
     pluginVersion,
+    shellVersion,
     vencordRef: readVencordRef(),
     needsRelaunch,
-    files
+    files,
+    shell
 };
 
 const outPath = join(DIST, "manifest.json");
@@ -230,9 +311,15 @@ writeFileSync(outPath, JSON.stringify(manifest, null, 4) + "\n");
 
 console.log(`✔ Wrote ${outPath}`);
 console.log(`  pluginVersion: ${manifest.pluginVersion}`);
+console.log(`  shellVersion:  ${manifest.shellVersion}`);
 console.log(`  vencordRef:    ${manifest.vencordRef ?? "(unknown)"}`);
 console.log(`  needsRelaunch: ${manifest.needsRelaunch}`);
 console.log(`  baseDownloadUrl: ${baseDownloadUrl || "(none)"}`);
+const shellKeys = Object.keys(shellInstallers);
+console.log(`  shell installers: ${shellKeys.length ? shellKeys.join(", ") : "(none — plugin-only manifest)"}`);
+for (const key of shellKeys) {
+    console.log(`  - [shell] ${shellInstallers[key].assetName}  ${shellInstallers[key].sha256}`);
+}
 for (const name of FILES) {
     console.log(`  - ${name}  ${files[name].sha256}`);
 }

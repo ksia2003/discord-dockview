@@ -15,8 +15,21 @@
  *
  * DOCKVIEW_PLUGIN_VERSION is intentionally NOT redeclared here: plugin/version.ts
  * is its single home (the build reads that literal). This file only carries the
- * parse/compare/format helpers.
+ * parse/compare/format helpers — plus DOCKVIEW_SHELL_VERSION below.
+ *
+ * DOCKVIEW_SHELL_VERSION, by contrast, DOES live here. It stamps the app SHELL
+ * (the Vesktop main/preload/renderer that ships inside app.asar) — the layer the
+ * in-app plugin updater CAN'T touch, since a plugin-bundle patch only rewrites the
+ * files under VENCORD_FILES_DIR, never app.asar. Bump it by hand whenever a shell
+ * change ships (a new src/main IPC, a tray item, an account-switch fix, …), the
+ * same way plugin/version.ts is bumped per plugin change. The release manifest
+ * records the shell version a release REQUIRES; the shell-update flow compares this
+ * compiled-in value against it to decide whether the installer needs to run.
  */
+
+/** The compiled-in app-shell build. Bump per shell (Vesktop main/preload) change
+ *  that ships in a release; only an installer can update the running value. */
+export const DOCKVIEW_SHELL_VERSION = "0.1.26";
 
 export interface ParsedVersionTxt {
     plugin: string | null;
@@ -89,4 +102,15 @@ export function compareDockviewVersions(a: string, b: string): -1 | 0 | 1 {
 /** Canonical writer for version.txt (the build is the sole user of this shape). */
 export function formatVersionTxt(v: { plugin: string; vencordRef: string; gitHash: string }): string {
     return `dockview:${v.plugin} ${v.vencordRef} ${v.gitHash}\n`;
+}
+
+/**
+ * Compare two bare shell versions ("0.1.25" vs "0.1.26") numerically. Unlike the
+ * version.txt comparators above, a shell version is a plain dotted string (no
+ * "dockview:" wrapper), so this is the plain numeric compare the shell-update flow
+ * uses to decide "is the release's required shell newer than the one running?".
+ * A missing/unparseable side sorts as the OLDEST (returns as if it were "0").
+ */
+export function compareShellVersions(a: string | null | undefined, b: string | null | undefined): -1 | 0 | 1 {
+    return compareSemver(typeof a === "string" ? a : "", typeof b === "string" ? b : "");
 }
