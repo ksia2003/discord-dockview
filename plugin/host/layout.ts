@@ -15,7 +15,7 @@
  */
 
 import { dockVisible } from "../engine/channelMemory";
-import { LS_WIDTH, lsGet } from "../engine/persist";
+import { LS_WIDTH, lsGet, lsSet } from "../engine/persist";
 import { getActiveWindow } from "../engine/window";
 
 const HOST_ID = "dockview-root";
@@ -187,4 +187,18 @@ export function applyDockLayout(): void {
  *  recompute lives in applyDockLayout(), so a drag re-evaluates the mode live too. */
 export function applyHostWidth(): void {
     applyDockLayout();
+}
+
+/** Set the dock width through the SAME store the drag-resize writes: clamp, write it to
+ *  the one global width (state.width proxies onto dockWidth), repaint the host geometry,
+ *  and persist to LS_WIDTH. The General page's width slider calls this so it reflects
+ *  and drives the live dock width with no second "default width" concept — dragging the
+ *  slider resizes the dock exactly like dragging its edge. Returns the clamped width so
+ *  the slider can sync its own state to what actually applied. */
+export function setDockWidthPersisted(w: number): number {
+    const clamped = clampWidthRaw(w);
+    getActiveWindow().state.width = clamped;
+    applyHostWidth();
+    lsSet(LS_WIDTH, String(Math.round(clamped)));
+    return clamped;
 }

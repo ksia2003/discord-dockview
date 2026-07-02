@@ -359,9 +359,72 @@ export const STRINGS = {
     // like native ones — short single words, not sentences.
     settings: {
         section: "DockView",
+        general: "General",
+        viewers: "Viewers",
         updates: "Updates",
         examples: "Examples",
         about: "About"
+    },
+
+    // --- General settings page ----------------------------------------------
+    // The dock's behaviour preferences: width, sidebar exclusivity, media autoplay,
+    // per-channel memory. Each row is a native-style switch (or the width slider) with a
+    // one-line note under it. Changes apply live.
+    general: {
+        // Width slider group.
+        widthTitle: "Dock width",
+        widthNote: "How wide the dock opens. Drag the dock's edge for the same effect.",
+        // {px} -> the current width in pixels.
+        widthValue: (px: number) => `${px}px`,
+        // Sidebar exclusivity switch.
+        exclusivityTitle: "Collapse the member list while the dock is open",
+        exclusivityNote:
+            "The dock takes the member-list slot like a thread, then restores it on close. " +
+            "Turn off to keep the member list open beside the dock.",
+        // Media autoplay switch.
+        autoplayTitle: "Autoplay media when opened",
+        autoplayNote:
+            "Start playback when an audio or video file opens. Autoplaying media starts " +
+            "muted — unmute it with the player controls.",
+        // Per-channel memory switch.
+        memoryTitle: "Remember the open file per channel",
+        memoryNote: "Reopen the file the dock had open in each channel as you switch between them."
+    },
+
+    // --- Viewers settings page ----------------------------------------------
+    // The master switch + per-category switches deciding which attachments open in the
+    // dock. A disabled category (or the master off) makes those chips behave like stock
+    // Discord (download / lightbox). Changes apply to the next chip click.
+    viewers: {
+        // Master switch.
+        masterTitle: "Open attachments in the dock",
+        masterNote:
+            "Click an attachment to preview it in the dock. Turn off to let attachments " +
+            "download or open in Discord's lightbox instead.",
+        // The heading over the category list.
+        categoriesTitle: "File types",
+        categoriesNote: "Choose which kinds of files open in the dock.",
+        // Category labels + the formats each covers (the note under each switch).
+        cat: {
+            documents: "Documents",
+            documentsNote: "PDF, Word, RTF, ODT, HTML, email, Jupyter notebooks",
+            spreadsheets: "Spreadsheets",
+            spreadsheetsNote: "Excel, ODS, CSV, TSV",
+            images: "Images",
+            imagesNote: "PNG, JPEG, GIF, WebP, SVG, AVIF, BMP, APNG, ICO",
+            exoticImages: "Exotic images",
+            exoticImagesNote: "TIFF, HEIC, PSD, camera RAW, DICOM, DXF, JPEG XL, JPEG 2000, EPS, AI",
+            codeText: "Code & text",
+            codeTextNote: "Source files, logs, plain text, Markdown, JSON/XML trees",
+            diagrams: "Diagrams",
+            diagramsNote: "Mermaid, Graphviz",
+            models3d: "3D models",
+            models3dNote: "OBJ, STL, PLY, FBX, DAE, 3DS, glTF, GLB",
+            media: "Media",
+            mediaNote: "Audio and video",
+            presentations: "Presentations",
+            presentationsNote: "PowerPoint, ODP"
+        }
     },
 
     // --- about page ---------------------------------------------------------

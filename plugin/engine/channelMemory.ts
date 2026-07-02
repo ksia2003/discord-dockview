@@ -13,6 +13,7 @@
  */
 
 import { getCurrentChannelId } from "../host/channel";
+import { settings } from "../settings";
 import { detectType } from "./detectType";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
@@ -26,6 +27,20 @@ import type { ChannelDescriptor, ChannelMemory } from "./types";
 
 const channelStates = new Map<string, ChannelMemory>();
 let currentChannelId: string | null = null;
+
+/** Whether per-channel file memory is on (General page setting, default ON). ON = a
+ *  channel switch re-shows the file the dock had open in the entering channel. OFF =
+ *  navigating channels doesn't reopen previous files; the transient preview doesn't
+ *  stick per channel. Read LIVE so a toggle applies to the next channel switch. Only
+ *  the RESTORE is gated — pinned tabs are global (not per-channel memory) and are never
+ *  affected, and the F9/chip open still works in the current channel. */
+function perChannelMemoryEnabled(): boolean {
+    try {
+        return settings.store.dockPerChannelMemory !== false;
+    } catch {
+        return true; // settings not resolved yet → the default (on) behaviour
+    }
+}
 
 // Explicit per-channel dock VISIBILITY (show/hide), kept SEPARATE from content.
 // Absent for a channel = unset → the dock defaults to visible iff there's content to
@@ -152,7 +167,10 @@ export function onChannelSelect(newId: string | null): void {
     // 4. restore the entering channel's transient CONTENT (if it had a preview). This
     //    is purely about which tab exists — it NEVER forces the dock visible. A channel
     //    the user F9-hid is restored with its tab present but stays hidden (step 5).
-    const mem = channelStates.get(newId);
+    //    Gated by the per-channel-memory setting: OFF → treat as no remembered preview
+    //    (don't reopen the previous file), falling through to the pinned/empty branches.
+    //    Pinned tabs are global and stay regardless.
+    const mem = perChannelMemoryEnabled() ? channelStates.get(newId) : undefined;
     if (mem && mem.descriptor) {
         // GUARD (design §11): if a window is ALREADY open for this same file — a
         // PINNED tab pinned out of this very channel — don't spawn a second transient

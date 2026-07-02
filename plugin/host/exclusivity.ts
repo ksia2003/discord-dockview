@@ -51,6 +51,7 @@
 import { findByProps } from "@webpack";
 
 import { dockVisible } from "../engine/channelMemory";
+import { settings } from "../settings";
 import { getCurrentChannelId } from "./channel";
 import { findPageInner } from "./layout";
 
@@ -222,8 +223,25 @@ function scheduleMemberListReconcile(): void {
     memberReconcileTimer = setTimeout(tick, 30);
 }
 
+/** Exclusivity is a user setting (General page, default ON). When OFF the dock opens
+ *  WITHOUT competing for the right slot: the open-side collapse is skipped, so the
+ *  member list / profile sidebar stay put. The close-side restore is NEVER gated on
+ *  this — it's guarded by the *ByUs bookkeeping, so a mid-session toggle-off can't
+ *  strand a list WE collapsed while it was on (we still owe that restore). Read live so
+ *  a change applies to the next dock open with no reload. */
+function exclusivityEnabled(): boolean {
+    try {
+        return settings.store.dockExclusivity !== false;
+    } catch {
+        return true; // settings not resolved yet → the default (on) behaviour
+    }
+}
+
 export function syncNativeMemberList(open: boolean): void {
     if (open) {
+        // Exclusivity off → don't take the slot: leave the member list alone (and owe
+        // no restore, so a later close touches nothing it didn't collapse).
+        if (!exclusivityEnabled()) return;
         // Only owe a restore if WE actually collapsed a SHOWN list (never restore one
         // the user had already hidden themselves).
         if (isMemberListShown() && dispatchMemberListToggle()) memberListCollapsedByUs = true;
@@ -238,6 +256,7 @@ export function syncNativeMemberList(open: boolean): void {
 
 export function syncNativeProfileSidebar(open: boolean): void {
     if (open) {
+        if (!exclusivityEnabled()) return;
         if (isUserProfileSidebarShown() && dispatchUserProfileSidebarToggle()) profileSidebarCollapsedByUs = true;
     } else if (profileSidebarCollapsedByUs) {
         if (!isUserProfileSidebarShown()) dispatchUserProfileSidebarToggle();

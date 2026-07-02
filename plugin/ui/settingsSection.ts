@@ -36,6 +36,7 @@
 import { AboutPanel } from "./AboutPanel";
 import { DockViewIcon } from "./DockViewIcon";
 import { GallerySection } from "./GallerySection";
+import { GeneralPanel } from "./GeneralPanel";
 import { STRINGS } from "../strings";
 import { UpdatePanel } from "./UpdatePanel";
 
@@ -65,6 +66,12 @@ function buildDockViewEntries(plugin: any): any[] {
     const S = STRINGS.settings;
     const buildEntry = plugin.buildEntry.bind(plugin);
     return [
+        buildEntry({
+            key: "dockview_general",
+            title: S.general,
+            Component: GeneralPanel,
+            Icon: DockViewIcon
+        }),
         buildEntry({
             key: "dockview_updates",
             title: S.updates,
