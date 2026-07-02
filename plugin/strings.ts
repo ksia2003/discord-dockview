@@ -491,8 +491,9 @@ export const STRINGS = {
     // ("Profiles") comes from the sidebar row's panel title, so it isn't repeated.
     profiles: {
         intro:
-            "Run more than one account at once. Each profile is a completely separate " +
-            "login with its own settings, and opens in its own window.",
+            "Run more than one account. Each profile is a completely separate login with " +
+            "its own settings. Switch replaces this window with another profile — one window, " +
+            "and both stay signed in. Open puts a second profile in its own window beside this one.",
         // Current-profile indicator.
         currentLabel: "Current profile",
         // The label for the running default (unnamed) install.
@@ -503,10 +504,15 @@ export const STRINGS = {
         listTitle: "Profiles",
         none: "No profiles yet. Create one below to run a second account.",
         // Per-profile actions.
+        // Switch = replace THIS window with that profile (one window; the primary action).
+        switch: "Switch",
         open: "Open",
         delete: "Delete",
         confirmDelete: "Confirm delete",
         cancel: "Cancel",
+        // The Default row (shown while running a named profile) — switch back to the
+        // default install without creating a second window.
+        switchToDefault: "Switch to Default",
         // The new-profile group.
         newTitle: "New profile",
         namePlaceholder: "Profile name",
@@ -514,10 +520,14 @@ export const STRINGS = {
         working: "Working…",
         // The honest cost note under the create row.
         note:
-            "Each profile is a separate Discord login and runs as its own window and process, " +
-            "so it uses additional memory. Deleting a profile removes its data on this device.",
+            "Switch replaces this window with the chosen profile — one window at a time, and " +
+            "every profile stays signed in on this device, so switching back doesn't ask you to " +
+            "log in again. Open instead runs a profile in a second window beside this one, which " +
+            "uses additional memory. Deleting a profile removes its data on this device.",
         // Status lines (one line under the create row). {name} -> the profile name.
         opened: (name: string) => `Opening ${name} in a new window…`,
+        // Shown briefly after Switch, before this window closes. {name} -> target name.
+        switching: (name: string) => `Switching to ${name}…`,
         deleted: (name: string) => `Deleted ${name}.`,
         // {raw} -> the underlying error text.
         error: (raw: string) => raw,

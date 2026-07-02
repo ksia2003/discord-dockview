@@ -29,6 +29,13 @@ import { mkdir, readdir, rm, stat } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 
+/** The one Electron main API this module needs (app.quit), typed locally so we never
+ *  write `import("electron")` — the build's dep scanner would treat that as an npm dep
+ *  (see switchProfileImpl). We reach it via a runtime require, which the scanner ignores. */
+interface ElectronApp {
+    quit(): void;
+}
+
 /** A profile's on-disk presence + whether it's the one THIS instance is running. */
 export interface ProfileInfo {
     name: string;
@@ -175,6 +182,97 @@ export async function openProfileImpl(
     } catch (err) {
         return { ok: false, error: `Couldn't open the profile: ${(err as Error)?.message ?? err}` };
     }
+}
+
+/** Sentinel the UI/tray pass to switchProfile to mean "the default (unnamed) install"
+ *  — spawn with NO --profile so the child runs the default data dir. Kept out of the
+ *  PROFILE_NAME_RE charset space on purpose (it contains a leading "@") so it can never
+ *  collide with a real profile name. */
+const DEFAULT_SENTINEL = "@default";
+
+/** Grace delay (ms) between spawning the target profile and quitting this instance, so
+ *  the new window is coming up as this one closes (no empty-desktop flash). Tuned live
+ *  on the rig — long enough to overlap, short enough that the switch feels immediate. */
+const SWITCH_GRACE_MS = 900;
+
+/**
+ * SWITCH this window to another profile in place: spawn the target as a fresh instance,
+ * then quit THIS one after a short grace delay so the two overlap briefly (the new
+ * window is coming up as this one closes → the desktop is never empty). Net result is
+ * always ONE window: switching to an ALREADY-running profile folds the spawn into a
+ * focus of that instance (the per-dir single-instance lock, batch-4 ④), and we still
+ * quit this one.
+ *
+ *   name === DEFAULT_SENTINEL → spawn the DEFAULT install (no --profile, env stripped).
+ *   name === <profile>        → spawn that --profile=<name> (openProfileImpl path).
+ *
+ * Switching to the CURRENT profile is a no-op (the UI/tray disable it; guarded here too).
+ * The graceful quit is Electron's normal app.quit() — the same path the tray's Quit item
+ * takes. app's own `before-quit` sets the window's isQuitting flag first, so the quit is
+ * NOT intercepted by minimize-to-tray; the window really closes and the process exits,
+ * flushing the session so the login persists on disk (the "no re-login" property).
+ *
+ * NOTE ON electron: this module deliberately avoids an `import ... from "electron"` (the
+ * build's deriveDockviewDeps scanner would treat it as an npm dep — see the header). We
+ * reach app.quit() via a runtime require("electron"), which the main bundle already uses
+ * for its own electron access and which the import scanner does not match. Everything else
+ * (spawn, execPath, argv) needs no electron at all.
+ */
+export async function switchProfileImpl(name: string): Promise<{ ok: boolean; error?: string }> {
+    const raw = typeof name === "string" ? name.trim() : "";
+    const toDefault = raw === DEFAULT_SENTINEL;
+    if (!toDefault && (!raw || !PROFILE_NAME_RE.test(raw))) {
+        return { ok: false, error: "Invalid profile name." };
+    }
+
+    // No-op guard: switching to the profile already running here changes nothing.
+    const current = currentProfileName();
+    if (toDefault ? current === null : raw === current) {
+        return { ok: false, error: "That profile is already open in this window." };
+    }
+
+    try {
+        // Spawn the target instance (detached, env cleaned of the pinned data dir so
+        // it honours --profile / the default). For a named profile this is exactly the
+        // Open spawn; for the default we spawn with NO --profile at all.
+        const env = { ...process.env };
+        delete env.VENCORD_USER_DATA_DIR;
+
+        if (toDefault) {
+            await new Promise<void>((resolve, reject) => {
+                try {
+                    const child = spawn(process.execPath, [], { detached: true, stdio: "ignore", env });
+                    child.unref();
+                    resolve();
+                } catch (err) {
+                    reject(err as Error);
+                }
+            });
+        } else {
+            const opened = await openProfileImpl(raw);
+            if (!opened.ok) return opened;
+        }
+    } catch (err) {
+        return { ok: false, error: `Couldn't start the other profile: ${(err as Error)?.message ?? err}` };
+    }
+
+    // Quit THIS instance after a short grace so the incoming window overlaps this one
+    // (no empty-desktop flash). The child is detached + unref'd, so it survives our exit.
+    // We reach app.quit() via a RUNTIME require("electron"), NOT an `import`: the build's
+    // deriveDockviewDeps scanner matches `import("x")`/`from "x"` string literals (a bare
+    // `import("electron")` even inside a type cast is treated as an npm dep and breaks the
+    // build) — a plain require is invisible to it, and the main bundle already resolves
+    // require("electron") at runtime. The local ElectronApp type keeps this off the scanner.
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const electron = require("electron") as { app: ElectronApp };
+        const { app } = electron;
+        setTimeout(() => app.quit(), SWITCH_GRACE_MS);
+    } catch (err) {
+        return { ok: false, error: `Couldn't close this window: ${(err as Error)?.message ?? err}` };
+    }
+
+    return { ok: true };
 }
 
 /**

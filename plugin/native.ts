@@ -55,7 +55,8 @@ import {
     deleteProfileImpl,
     listProfilesImpl,
     openProfileImpl,
-    type ProfilesList
+    type ProfilesList,
+    switchProfileImpl
 } from "./native-profiles";
 
 /**
@@ -597,4 +598,14 @@ export async function deleteProfile(
     name: string
 ): Promise<{ ok: boolean; error?: string }> {
     return deleteProfileImpl(name);
+}
+
+/** Switch THIS window to another profile in place: spawn the target, then quit this
+ *  instance after a short grace so exactly one window remains. `name` is a profile
+ *  name, or the "@default" sentinel to switch back to the default install. */
+export async function switchProfile(
+    _: IpcMainInvokeEvent,
+    name: string
+): Promise<{ ok: boolean; error?: string }> {
+    return switchProfileImpl(name);
 }

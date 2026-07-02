@@ -28,6 +28,11 @@ const h = (...args: any[]) => (React.createElement as any)(...args);
 
 const P = STRINGS.profiles;
 
+/** The value switchProfile takes to mean "the default (unnamed) install". Kept in
+ *  sync with native-profiles.ts DEFAULT_SENTINEL (renderer can't import a main module),
+ *  and picked so it can never collide with a real profile name (leading "@"). */
+const DEFAULT_SENTINEL = "@default";
+
 /** One profile as reported by native.listProfiles. */
 interface ProfileInfo {
     name: string;
@@ -44,6 +49,7 @@ interface ProfilesNative {
     listProfiles: () => Promise<ProfilesList>;
     createProfile: (name: string) => Promise<{ ok: boolean; name?: string; error?: string }>;
     openProfile: (name: string, extraArgs?: string[]) => Promise<{ ok: boolean; error?: string }>;
+    switchProfile: (name: string) => Promise<{ ok: boolean; error?: string }>;
     deleteProfile: (name: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
@@ -57,6 +63,7 @@ function getNative(): ProfilesNative | null {
             typeof n.listProfiles === "function" &&
             typeof n.createProfile === "function" &&
             typeof n.openProfile === "function" &&
+            typeof n.switchProfile === "function" &&
             typeof n.deleteProfile === "function"
         ) {
             return n as ProfilesNative;
@@ -68,17 +75,21 @@ function getNative(): ProfilesNative | null {
 }
 
 /** One profile row: the name (with a "current" badge when it's this instance), and
- *  Open / Delete actions. Delete is a two-click confirm (label flips first click). */
+ *  Switch / Open / Delete actions. Switch is the PRIMARY action (replace this window
+ *  with the profile — one window); Open is the second-window power path. Both are
+ *  disabled for the profile already running here. Delete is a two-click confirm (label
+ *  flips first click). */
 function ProfileRow(props: {
     profile: ProfileInfo;
     busy: boolean;
     confirming: boolean;
+    onSwitch: (name: string) => void;
     onOpen: (name: string) => void;
     onAskDelete: (name: string) => void;
     onConfirmDelete: (name: string) => void;
     onCancelDelete: () => void;
 }) {
-    const { profile, busy, confirming, onOpen, onAskDelete, onConfirmDelete, onCancelDelete } = props;
+    const { profile, busy, confirming, onSwitch, onOpen, onAskDelete, onConfirmDelete, onCancelDelete } = props;
     return h(
         "div",
         {
@@ -108,12 +119,25 @@ function ProfileRow(props: {
                     P.currentBadge
                 )
         ),
-        // Open — disabled for the profile already running here (it IS this window).
+        // Switch — the primary action: replace THIS window with the profile (one window).
+        // Disabled for the profile already running here (switching to yourself is a no-op).
+        h(
+            Button,
+            {
+                size: Button.Sizes.SMALL,
+                color: Button.Colors.BRAND,
+                disabled: busy || profile.active,
+                onClick: () => onSwitch(profile.name)
+            },
+            P.switch
+        ),
+        // Open — a SECOND window beside this one (power path). Disabled for the running one.
         h(
             Button,
             {
                 size: Button.Sizes.SMALL,
                 color: Button.Colors.PRIMARY,
+                look: Button.Looks.LINK,
                 disabled: busy || profile.active,
                 onClick: () => onOpen(profile.name)
             },
@@ -205,6 +229,30 @@ export function ProfilesPanel() {
         [native]
     );
 
+    // Switch THIS window to another profile. On success the native side spawns the
+    // target and quits us after a short grace, so this window is about to close — we
+    // stay "busy" (no finally-clears-busy) and show a "Switching…" line until then.
+    // `target` is a profile name, or DEFAULT_SENTINEL for the default install.
+    const onSwitch = useCallback(
+        async (target: string, label: string) => {
+            if (!native) return;
+            setBusy(true);
+            setStatus(P.switching(label));
+            try {
+                const res = await native.switchProfile(target);
+                if (!res.ok) {
+                    setStatus(P.error(res.error ?? "unknown error"));
+                    setBusy(false);
+                }
+                // On success we do NOT clear busy: the process is quitting momentarily.
+            } catch (err) {
+                setStatus(P.error((err as Error)?.message ?? String(err)));
+                setBusy(false);
+            }
+        },
+        [native]
+    );
+
     const onCreateAndOpen = useCallback(async () => {
         if (!native) return;
         const name = newName.trim();
@@ -277,7 +325,38 @@ export function ProfilesPanel() {
 
         // Profile list.
         h(Forms.FormTitle, { tag: "h3", style: { marginTop: "16px" } }, P.listTitle),
-        profiles.length === 0
+        // A "Default" row appears only while running a named profile — Switch back to the
+        // default install without opening a second window. (When already on Default, this
+        // window IS the default, so there's nothing to switch to.)
+        current !== null &&
+            h(
+                "div",
+                {
+                    style: {
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        padding: "8px 0",
+                        borderTop: "1px solid var(--background-modifier-accent)"
+                    }
+                },
+                h(
+                    "div",
+                    { style: { flex: "1 1 auto", minWidth: 0 } },
+                    h(Text, { variant: "text-md/medium" }, P.defaultName)
+                ),
+                h(
+                    Button,
+                    {
+                        size: Button.Sizes.SMALL,
+                        color: Button.Colors.BRAND,
+                        disabled: busy,
+                        onClick: () => onSwitch(DEFAULT_SENTINEL, P.defaultName)
+                    },
+                    P.switch
+                )
+            ),
+        profiles.length === 0 && current === null
             ? h(Forms.FormText, { style: { color: "var(--text-muted)", padding: "4px 0" } }, P.none)
             : h(
                   "div",
@@ -288,6 +367,7 @@ export function ProfilesPanel() {
                           profile: pf,
                           busy,
                           confirming: confirmDelete === pf.name,
+                          onSwitch: (n: string) => onSwitch(n, n),
                           onOpen,
                           onAskDelete: (n: string) => setConfirmDelete(n),
                           onConfirmDelete,
