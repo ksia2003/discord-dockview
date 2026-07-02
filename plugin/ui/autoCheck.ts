@@ -20,7 +20,7 @@
 import { settings } from "../settings";
 import { STRINGS } from "../strings";
 import { DOCKVIEW_PLUGIN_VERSION } from "../version";
-import { getNative, getTargetDir, isNewer, OWNER, REPO } from "./updateShared";
+import { getNative, getShellVersion, getTargetDir, isNewer, OWNER, REPO, shellIsNewer } from "./updateShared";
 
 const U = STRINGS.update;
 
@@ -97,17 +97,30 @@ async function runCheck(): Promise<void> {
 
         const latestVer =
             typeof found.manifest?.pluginVersion === "string" ? found.manifest.pluginVersion : null;
-        if (!latestVer) return;
 
-        const installed = await native.readInstalledVersion(targetDir).catch(() => null);
-        // Newer than BOTH what's on disk and what's running (a patch already applied on
-        // disk but pending a reload shouldn't re-notify as if it were new).
-        const newerThanDisk = isNewer(latestVer, installed);
-        const newerThanRunning = isNewer(latestVer, `dockview:${DOCKVIEW_PLUGIN_VERSION} x x`);
-        if (!newerThanDisk || !newerThanRunning) return;
+        // A release can be worth flagging for EITHER a newer plugin OR a newer shell
+        // (the app itself). Compute both; notify if either is genuinely newer than what
+        // is installed/running so the daily check surfaces a shell-only update too.
+        let pluginUpdate = false;
+        if (latestVer) {
+            const installed = await native.readInstalledVersion(targetDir).catch(() => null);
+            // Newer than BOTH what's on disk and what's running (a patch already applied
+            // on disk but pending a reload shouldn't re-notify as if it were new).
+            pluginUpdate =
+                isNewer(latestVer, installed) && isNewer(latestVer, `dockview:${DOCKVIEW_PLUGIN_VERSION} x x`);
+        }
 
+        const requiredShell =
+            typeof found.manifest?.shellVersion === "string" ? found.manifest.shellVersion : null;
+        const shellUpdate = shellIsNewer(requiredShell, getShellVersion());
+
+        if (!pluginUpdate && !shellUpdate) return;
+
+        // Prefer the plugin version in the notice when there's a plugin update; otherwise
+        // the notice announces the shell version (a shell-only release).
+        const noticeVersion = pluginUpdate && latestVer ? latestVer : requiredShell!;
         updateFlagged = true;
-        showUpdateNotice(latestVer);
+        showUpdateNotice(noticeVersion);
     } catch {
         /* never let a background check throw into the caller */
     }

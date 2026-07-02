@@ -42,6 +42,35 @@ export interface DockViewNative {
     ) => Promise<{ ok: boolean; needsRelaunch: boolean; error?: string }>;
 }
 
+/** How the running app was installed (mirrors src/main/shellUpdate.ts InstallMethod). */
+export type ShellInstallMethod = "win-nsis" | "appimage" | "deb" | "rpm" | "unknown";
+
+/** What VesktopNative.shellUpdate.getInfo() reports about the running SHELL install. */
+export interface ShellUpdateInfo {
+    method: ShellInstallMethod;
+    arch: string;
+    methodLabel: string;
+    canAutoUpdate: boolean;
+}
+
+/** The result of a shell-update apply. `manual:true` = we can't drive this install
+ *  method; the panel then shows the download link so the user finishes by hand. */
+export interface ShellApplyResult {
+    ok: boolean;
+    manual?: boolean;
+    url?: string;
+    error?: string;
+}
+
+/** The Vesktop SHELL updater bridge (main process), reached off VesktopNative — a
+ *  DIFFERENT bridge from the plugin updater above (which comes off VencordNative).
+ *  getVersion is sync (sendSync); getInfo/apply are async (invoke). */
+export interface ShellNative {
+    getVersion: () => string;
+    getInfo: () => Promise<ShellUpdateInfo>;
+    apply: (shell: unknown, baseUrl: string) => Promise<ShellApplyResult>;
+}
+
 /** Resolve the native updater bridge, or null if this build doesn't expose it.
  *  Mirrors the openExternal.ts guard: optional-chain to the helper, then verify each
  *  function is callable before trusting it. */
@@ -60,6 +89,53 @@ export function getNative(): DockViewNative | null {
         /* fall through to unavailable */
     }
     return null;
+}
+
+/** Resolve the Vesktop SHELL updater bridge, or null if this build doesn't expose it
+ *  (an older shell without the shellUpdate IPC). Same guard shape as getNative — check
+ *  each method is callable before trusting the bridge. */
+export function getShellNative(): ShellNative | null {
+    try {
+        const shell = (window as any).VesktopNative?.shellUpdate;
+        if (
+            shell &&
+            typeof shell.getVersion === "function" &&
+            typeof shell.getInfo === "function" &&
+            typeof shell.apply === "function"
+        ) {
+            return shell as ShellNative;
+        }
+    } catch {
+        /* fall through to unavailable */
+    }
+    return null;
+}
+
+/** The compiled-in app-SHELL version, read synchronously off the shell bridge. null
+ *  when the bridge is absent (an older shell) — the panel then hides the shell row. */
+export function getShellVersion(): string | null {
+    try {
+        const v = (window as any).VesktopNative?.shellUpdate?.getVersion?.();
+        return typeof v === "string" && v ? v : null;
+    } catch {
+        return null;
+    }
+}
+
+/** Numeric dotted-version compare for bare SHELL versions ("0.1.25" vs "0.1.26").
+ *  Returns true when `required` is strictly newer than `installed`. A missing side
+ *  sorts as oldest. Kept here (not in ../version) so it lives beside its only callers. */
+export function shellIsNewer(required: string | null, installed: string | null): boolean {
+    if (!required) return false;
+    const as = (installed ?? "").split(".");
+    const bs = required.split(".");
+    for (let i = 0; i < Math.max(as.length, bs.length); i++) {
+        const an = parseInt(as[i] ?? "0", 10) || 0;
+        const bn = parseInt(bs[i] ?? "0", 10) || 0;
+        if (bn > an) return true;
+        if (bn < an) return false;
+    }
+    return false;
 }
 
 /** The install directory the updater writes into (VENCORD_FILES_DIR, honouring a

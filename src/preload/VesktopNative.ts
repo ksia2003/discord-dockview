@@ -48,6 +48,23 @@ export const VesktopNative = {
         enable: () => invoke<void>(IpcEvents.ENABLE_AUTOSTART),
         disable: () => invoke<void>(IpcEvents.DISABLE_AUTOSTART)
     },
+    shellUpdate: {
+        /** The compiled-in app-shell version (only an installer can change it). */
+        getVersion: () => sendSync<string>(IpcEvents.SHELL_UPDATE_VERSION),
+        /** How the app was installed + whether an in-app shell update can be driven. */
+        getInfo: () =>
+            invoke<{ method: string; arch: string; methodLabel: string; canAutoUpdate: boolean }>(
+                IpcEvents.SHELL_UPDATE_INFO
+            ),
+        /** Download + verify + run the installer for this platform, then relaunch. A
+         *  method we can't drive resolves { ok:false, manual:true, url } for a manual finish. */
+        apply: (shell: unknown, baseUrl: string) =>
+            invoke<{ ok: boolean; manual?: boolean; url?: string; error?: string }>(
+                IpcEvents.SHELL_UPDATE_APPLY,
+                shell,
+                baseUrl
+            )
+    },
     fileManager: {
         isUsingCustomVencordDir: () => sendSync<boolean>(IpcEvents.IS_USING_CUSTOM_VENCORD_DIR),
         getVencordDir: () => sendSync<string>(IpcEvents.GET_VENCORD_FILES_DIR),

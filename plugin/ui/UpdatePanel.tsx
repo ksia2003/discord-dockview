@@ -23,15 +23,18 @@
 
 import { Button, Forms, React, Switch, Text } from "@webpack/common";
 
+import { downloadUrl } from "../external/openExternal";
 import { settings } from "../settings";
 import { STRINGS } from "../strings";
 import { compareDockviewVersions, DOCKVIEW_PLUGIN_VERSION, parseVersionTxt } from "../version";
 import { clearUpdateFlag } from "./autoCheck";
 import {
-    DiscoverResult, getNative, getTargetDir, OWNER, pluginStamp, REPO
+    DiscoverResult, getNative, getShellNative, getShellVersion, getTargetDir, OWNER, pluginStamp, REPO,
+    shellIsNewer, ShellUpdateInfo
 } from "./updateShared";
 
 const U = STRINGS.update;
+const SH = STRINGS.update.shell;
 
 /** Turn a discovery FAILURE (never the ok case) into its precise one-line copy. Each
  *  code maps to its own sentence so the panel never shows a silent "—" or a vague
@@ -101,6 +104,18 @@ export function UpdatePanel() {
     const [checkFailed, setCheckFailed] = useState(false);
     const [applied, setApplied] = useState(false);
 
+    // --- app-shell state (the installer-driven update of Vesktop itself) ---------
+    // How the app is installed (for the "Installed via:" line + which installer to
+    // fetch), read once on mount. The compiled-in shell version is read synchronously.
+    const shellNative = getShellNative();
+    const shellVersion = getShellVersion();
+    const [shellInfo, setShellInfo] = useState<ShellUpdateInfo | null>(null);
+    const [shellApplying, setShellApplying] = useState(false);
+    const [shellStatus, setShellStatus] = useState<string | null>(null);
+    // Set when a shell apply couldn't run here (unsupported method / no pkexec): the
+    // panel then shows a manual-download card with this url.
+    const [shellManualUrl, setShellManualUrl] = useState<string | null>(null);
+
     // Read the on-disk stamp once (transient pre-render shows "—"). Also clear the
     // background-check highlight flag: opening this page means the user has seen it.
     useEffect(() => {
@@ -111,6 +126,17 @@ export function UpdatePanel() {
             .readInstalledVersion(targetDir)
             .then(raw => { if (live) setInstalled(raw); })
             .catch(() => { if (live) setInstalled(null); });
+        return () => { live = false; };
+    }, []);
+
+    // Read the shell install info once (how we're installed + can we auto-update).
+    useEffect(() => {
+        if (!shellNative) return;
+        let live = true;
+        shellNative
+            .getInfo()
+            .then(info => { if (live) setShellInfo(info); })
+            .catch(() => { if (live) setShellInfo(null); });
         return () => { live = false; };
     }, []);
 
@@ -166,6 +192,31 @@ export function UpdatePanel() {
         }
     }, [native, targetDir, latest]);
 
+    // Apply the SHELL update: hand the manifest's shell block to the shell bridge,
+    // which downloads + verifies + runs the installer for this platform (or reports
+    // { manual, url } when it can't drive the method — we then show the download card).
+    const onShellApply = useCallback(async () => {
+        if (!shellNative || !latest?.manifest?.shell) return;
+        setShellApplying(true);
+        setShellStatus(null);
+        setShellManualUrl(null);
+        try {
+            const res = await shellNative.apply(latest.manifest.shell, latest.baseUrl);
+            if (res.ok) {
+                setShellStatus(SH.launched);
+            } else if (res.manual) {
+                setShellManualUrl(res.url ?? null);
+                setShellStatus(null);
+            } else {
+                setShellStatus(SH.error(res.error ?? "unknown error"));
+            }
+        } catch (err) {
+            setShellStatus(SH.error((err as Error)?.message ?? String(err)));
+        } finally {
+            setShellApplying(false);
+        }
+    }, [shellNative, latest]);
+
     // --- updater missing entirely → a single sober fallback line. -----------
     if (!native) {
         return React.createElement(
@@ -190,6 +241,13 @@ export function UpdatePanel() {
     // A patch is on disk but the running code is older → a reload runs it.
     const patchPending =
         !!installed && compareDockviewVersions(installed, pluginStamp(current)) === 1;
+
+    // The release's required shell version (manifest.shellVersion), and whether it is
+    // newer than the shell running now → the app itself (not just the plugin) needs an
+    // installer update. Only meaningful once a Check has fetched the manifest.
+    const requiredShell: string | null =
+        typeof latest?.manifest?.shellVersion === "string" ? latest.manifest.shellVersion : null;
+    const shellUpdateNeeded = shellIsNewer(requiredShell, shellVersion);
 
     // Derive the verdict line shown when there's no transient status set.
     let verdict: string;
@@ -221,8 +279,19 @@ export function UpdatePanel() {
             { style: { margin: "8px 0" } },
             versionRow(U.current, current),
             versionRow(U.onDisk, parseVersionTxt(installed ?? "").plugin ?? installed),
-            versionRow(U.latest, latestVer)
+            versionRow(U.latest, latestVer),
+            // The app-shell version row only appears when the shell bridge is present
+            // (an older shell without shellUpdate simply omits it).
+            shellVersion ? versionRow(SH.shellVersion, shellVersion) : null
         ),
+        // "Installed via: AppImage" — how the app is installed, shown once detected.
+        shellInfo
+            ? React.createElement(
+                Text,
+                { variant: "text-xs/normal", style: { display: "block", margin: "-2px 0 6px", color: "var(--text-muted)" } },
+                SH.installedVia(shellInfo.methodLabel)
+            )
+            : null,
         React.createElement(
             Text,
             { variant: "text-sm/normal", style: { display: "block", margin: "8px 0", color: "var(--text-muted)" } },
@@ -254,6 +323,61 @@ export function UpdatePanel() {
                 applying ? U.applying : U.apply
             )
         ),
+
+        // --- app-shell update (only when a fetched release needs a newer shell) -----
+        // Surfaced after a Check reveals the release requires a shell newer than the one
+        // running. A driveable install method gets an "Update app" button; a method we
+        // can't drive (or a shell apply that returned manual) gets a download card. The
+        // shell status line (launched / error) shows under either.
+        shellUpdateNeeded && shellNative
+            ? React.createElement(
+                "div",
+                { style: { marginTop: "14px", paddingTop: "12px", borderTop: "1px solid var(--background-modifier-accent)" } },
+                React.createElement(
+                    Text,
+                    { variant: "text-sm/normal", style: { display: "block", marginBottom: "8px" } },
+                    SH.updateAvailable(requiredShell!)
+                ),
+                // Manual card: no driveable method, or a prior apply came back manual.
+                shellManualUrl || (shellInfo && !shellInfo.canAutoUpdate)
+                    ? React.createElement(
+                        "div",
+                        null,
+                        React.createElement(
+                            Text,
+                            { variant: "text-sm/normal", style: { display: "block", marginBottom: "8px", color: "var(--text-muted)" } },
+                            SH.manual
+                        ),
+                        React.createElement(
+                            Button,
+                            {
+                                size: Button.Sizes.SMALL,
+                                color: Button.Colors.PRIMARY,
+                                disabled: !shellManualUrl,
+                                onClick: () => shellManualUrl && downloadUrl(shellManualUrl)
+                            },
+                            SH.download
+                        )
+                    )
+                    : React.createElement(
+                        Button,
+                        {
+                            size: Button.Sizes.SMALL,
+                            color: Button.Colors.BRAND,
+                            disabled: shellApplying,
+                            onClick: onShellApply
+                        },
+                        shellApplying ? SH.updating : SH.update
+                    ),
+                shellStatus
+                    ? React.createElement(
+                        Text,
+                        { variant: "text-sm/normal", style: { display: "block", marginTop: "8px", color: "var(--text-muted)" } },
+                        shellStatus
+                    )
+                    : null
+            )
+            : null,
 
         // --- automatic-check switch (opt out of the daily background check) -----
         React.createElement(Forms.FormDivider, { style: { margin: "16px 0" } }),

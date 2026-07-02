@@ -24,11 +24,13 @@ import { enableHardwareAcceleration } from "main";
 import { release } from "os";
 import { join } from "path";
 
+import { DOCKVIEW_SHELL_VERSION } from "../shared/dockviewVersion";
 import { IpcEvents } from "../shared/IpcEvents";
 import { setBadgeCount } from "./appBadge";
 import { autoStart } from "./autoStart";
 import { mainWin } from "./mainWindow";
 import { Settings, State } from "./settings";
+import { applyShellUpdate, getShellUpdateInfo } from "./shellUpdate";
 import { handle, handleSync } from "./utils/ipcWrappers";
 import { PopoutWindows } from "./utils/popout";
 import { isDeckGameMode, showGamePage } from "./utils/steamOS";
@@ -90,6 +92,13 @@ handle(IpcEvents.RELAUNCH, async () => {
     }
     app.exit();
 });
+
+// --- DockView app-shell update (installer-driven) ---------------------------
+// The compiled-in shell version, how the app was installed, and the apply that
+// downloads + verifies + runs the right installer. See src/main/shellUpdate.ts.
+handleSync(IpcEvents.SHELL_UPDATE_VERSION, () => DOCKVIEW_SHELL_VERSION);
+handle(IpcEvents.SHELL_UPDATE_INFO, () => getShellUpdateInfo());
+handle(IpcEvents.SHELL_UPDATE_APPLY, (_, shell: any, baseUrl: string) => applyShellUpdate(shell, baseUrl));
 
 handleSync(IpcEvents.IS_USING_CUSTOM_VENCORD_DIR, () => !!State.store.vencordDir);
 handleSync(IpcEvents.GET_VENCORD_FILES_DIR, () => VENCORD_FILES_DIR);

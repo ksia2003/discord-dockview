@@ -617,6 +617,40 @@ export const STRINGS = {
         // {version} -> the newer plugin version.
         noticeUpdate: (version: string) => `DockView ${version} is available.`,
         // The notice's action button (opens the Updates page).
-        noticeButton: "See update"
+        noticeButton: "See update",
+
+        // --- app-shell update (installer-driven) --------------------------------
+        // The plugin patches itself over the air; the app SHELL (Vesktop main/preload)
+        // updates by re-running the installer. These strings drive that row on the
+        // Updates page. Same sober, settings-page voice as the rest of this section.
+        shell: {
+            // The "Installed via: AppImage" line under the version rows. {method} ->
+            // the detected install method's human label ("AppImage", "Windows installer").
+            installedVia: (method: string) => `Installed via: ${method}`,
+            // The shell version row label.
+            shellVersion: "App shell",
+            // Verdict when the release needs a newer shell than the one running.
+            // {version} -> the required shell version.
+            updateAvailable: (version: string) =>
+                `A newer app (${version}) is available — it updates the app itself, not just the plugin.`,
+            // The button that downloads + runs the installer for this platform.
+            update: "Update app",
+            // While the installer is downloading / running.
+            updating: "Updating app…",
+            // Shown while the shell installer downloads (larger than a plugin patch).
+            downloading: "Downloading the installer…",
+            // After the installer is launched (Windows / deb / rpm) — the app will close.
+            launched: "Installer started — the app will restart to finish.",
+            // deb/rpm without pkexec, or an install method we can't drive: point the user
+            // at the download so they can install it themselves.
+            manualTitle: "Update the app manually",
+            manual:
+                "This build can't install the update for you. Download the new installer and run it — " +
+                "your settings and logins are kept.",
+            // The manual download button.
+            download: "Download installer",
+            // A shell apply failed. {raw} -> the underlying error.
+            error: (raw: string) => `Couldn't update the app: ${raw}`
+        }
     }
 } as const;
