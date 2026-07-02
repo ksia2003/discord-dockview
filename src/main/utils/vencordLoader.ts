@@ -2,10 +2,12 @@
  * Vesktop, a desktop app aiming to give you a snappier Discord Experience
  * Copyright (c) 2023 Vendicated and Vencord contributors
  * SPDX-License-Identifier: GPL-3.0-or-later
- *
- * DockView modifications (c) 2026 DockView contributors:
- *   ensureVencordFiles() now copies the Vencord+DockView dist bundled inside
- *   the app (static/vencordDist) instead of downloading from GitHub.
+ */
+
+/*
+ * DockView modification: ensureVencordFiles() now copies the Vencord+DockView
+ * dist bundled inside the app (static/vencordDist) instead of downloading it
+ * from GitHub.
  */
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "fs";

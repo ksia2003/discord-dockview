@@ -49,7 +49,7 @@ export const PROFILE_NAME_RE = /^[a-z0-9-_ ]{1,32}$/i;
  *  be convenient, and this keeps the lookup dependency-free + robust to arg order).
  *  Both "--profile=name" and "--profile name" are accepted. */
 export function getProfileArg(): string | null {
-    const argv = process.argv;
+    const { argv } = process;
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === "--profile" && i + 1 < argv.length) {
