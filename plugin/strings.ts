@@ -240,7 +240,12 @@ export const STRINGS = {
         find: "Find (Ctrl+F)",
         wrap: "Word wrap",
         copy: "Copy",
-        copied: "Copied"
+        copied: "Copied",
+        // Click a line number to select it (shift-click for a range); this button
+        // copies a "name L12" / "name L12-L20" reference to paste into chat. Stays
+        // in its slot but disabled until a line is picked (grammar rule 9).
+        copyRef: "Copy line reference",
+        copyRefEmpty: "Select a line number to copy its reference"
     },
 
     // --- markdown header controls -------------------------------------------

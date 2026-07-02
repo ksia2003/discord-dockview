@@ -48,6 +48,14 @@ export interface CMModules {
     // find decoration plumbing (built once from the modules).
     setFindEffect: any;
     findField: any;
+    // unified-diff line colouring: a StateField that reads the whole doc and paints
+    // added/removed/hunk/file-header lines. Added only for a .diff/.patch file.
+    diffField: any;
+    // persistent line selection (gutter click): an effect that carries the selected
+    // 1-based line range, and a StateField that washes those lines. Cleared with an
+    // empty range. `gutterLineClick` is the lineNumbers domEventHandlers config.
+    setSelLinesEffect: any;
+    selLinesField: any;
     // @codemirror/merge: inline colored diff vs a pristine original (edit-mode).
     unifiedMergeView: any;
     // our diff colour theme (added/changed = green, deleted = red), built once.
@@ -81,7 +89,7 @@ export function loadCM(): Promise<CMModules> {
         const mergeMod = cm.merge;
 
         const { EditorState, Compartment, StateField, StateEffect, RangeSetBuilder } = stateMod as any;
-        const { EditorView, Decoration, lineNumbers } = viewMod as any;
+        const { EditorView, Decoration, lineNumbers, GutterMarker, gutterLineClass } = viewMod as any;
         const { syntaxHighlighting, HighlightStyle } = langMod as any;
         const { SearchCursor } = searchMod as any;
         const { tags } = lezerHl as any;
@@ -120,7 +128,37 @@ export function loadCM(): Promise<CMModules> {
             },
             // find decorations (decoration-driven, not the @codemirror/search panel)
             ".cm-dockview-find": { backgroundColor: "rgba(255, 213, 0, 0.32)" },
-            ".cm-dockview-find-active": { backgroundColor: "rgba(255, 145, 0, 0.6)" }
+            ".cm-dockview-find-active": { backgroundColor: "rgba(255, 145, 0, 0.6)" },
+            // unified-diff line colours. Tints are mixed from Discord's semantic
+            // feedback vars (positive = green, critical = red) so they follow the
+            // theme rather than a hardcoded rgba. Added/removed lines get a faint
+            // wash + the matching text colour; hunk/file headers read as chrome.
+            ".cm-dockview-diff-add": {
+                backgroundColor: "color-mix(in srgb, var(--text-feedback-positive, #3fb950) 13%, transparent)",
+                color: "var(--text-feedback-positive, #3fb950)"
+            },
+            ".cm-dockview-diff-del": {
+                backgroundColor: "color-mix(in srgb, var(--text-feedback-critical, #f85149) 13%, transparent)",
+                color: "var(--text-feedback-critical, #f85149)"
+            },
+            ".cm-dockview-diff-hunk": {
+                backgroundColor: "color-mix(in srgb, var(--text-link, #6cb6ff) 10%, transparent)",
+                color: "var(--text-link, #6cb6ff)"
+            },
+            ".cm-dockview-diff-file": {
+                color: "var(--text-muted, #6b7280)",
+                fontWeight: "700"
+            },
+            // persistent gutter-click line selection (a neutral brand wash so it
+            // reads apart from find yellow and the diff green/red).
+            ".cm-dockview-selline": {
+                backgroundColor: "color-mix(in srgb, var(--brand-500, #5865f2) 22%, transparent)"
+            },
+            // the clicked line numbers themselves highlight so the gutter shows the range.
+            ".cm-dockview-selline-gutter": {
+                color: "var(--text-normal, #dbdee1)",
+                fontWeight: "700"
+            }
         }, { dark: true });
 
         // --- Highlight style tuned to the existing hljs dark theme (the same
@@ -174,6 +212,85 @@ export function loadCM(): Promise<CMModules> {
                 return deco;
             },
             provide: (f: any) => EditorView.decorations.from(f)
+        });
+
+        // --- unified-diff line colouring. A .diff/.patch file has no CM language, so
+        // instead of a parser we paint whole LINES by their leading char: `+` added,
+        // `-` removed, `@@` a hunk header, and the file preamble (`diff --git`, index,
+        // `---`/`+++` path lines, `\ No newline…`) as diff chrome. Line decorations
+        // must be added at each line's start in ascending order, so we walk the doc
+        // once. Recomputed on docChanged (harmless — a diff is read-only in practice).
+        const addLine = Decoration.line({ class: "cm-dockview-diff-add" });
+        const delLine = Decoration.line({ class: "cm-dockview-diff-del" });
+        const hunkLine = Decoration.line({ class: "cm-dockview-diff-hunk" });
+        const fileLine = Decoration.line({ class: "cm-dockview-diff-file" });
+        const buildDiffDeco = (doc: any): any => {
+            const b = new RangeSetBuilder();
+            for (let i = 1; i <= doc.lines; i++) {
+                const line = doc.line(i);
+                const s = line.text;
+                let deco: any = null;
+                if (s.startsWith("@@")) deco = hunkLine;
+                // `+`/`-` are added/removed lines, but `+++`/`---` are the file-path
+                // preamble — classify those as file headers, not added/removed.
+                else if (s.startsWith("+++") || s.startsWith("---")) deco = fileLine;
+                else if (s.startsWith("+")) deco = addLine;
+                else if (s.startsWith("-")) deco = delLine;
+                else if (s.startsWith("diff ") || s.startsWith("index ")
+                    || s.startsWith("new file") || s.startsWith("deleted file")
+                    || s.startsWith("rename ") || s.startsWith("similarity ")
+                    || s.startsWith("\\ ")) deco = fileLine;
+                if (deco) b.add(line.from, line.from, deco);
+            }
+            return b.finish();
+        };
+        const diffField = StateField.define({
+            create: (state: any) => buildDiffDeco(state.doc),
+            update(deco: any, tr: any) {
+                if (tr.docChanged) return buildDiffDeco(tr.state.doc);
+                return deco.map(tr.changes);
+            },
+            provide: (f: any) => EditorView.decorations.from(f)
+        });
+
+        // --- persistent line selection (gutter click). An effect carries the picked
+        // 1-based inclusive line range {from,to} (from>to = none); ONE field holds it
+        // and provides TWO things in step: the line-body wash (EditorView.decorations)
+        // and the gutter-number class (gutterLineClass, so the picked numbers bolden).
+        // A click sets a single line, a shift-click extends from the existing anchor,
+        // and re-clicking the sole selected line clears (all wired in CodeBody).
+        const setSelLinesEffect = StateEffect.define();
+        const selLineDeco = Decoration.line({ class: "cm-dockview-selline" });
+        const selGutterMarker = new (class extends GutterMarker {
+            elementClass = "cm-dockview-selline-gutter";
+        })();
+        const buildSelDeco = (range: { from: number; to: number }, doc: any, lineDeco: any): any => {
+            const b = new RangeSetBuilder();
+            const { from, to } = range;
+            if (from >= 1 && to >= from) {
+                const last = Math.min(to, doc.lines);
+                for (let i = from; i <= last; i++) {
+                    b.add(doc.line(i).from, doc.line(i).from, lineDeco);
+                }
+            }
+            return b.finish();
+        };
+        const selLinesField = StateField.define({
+            create: () => ({ range: { from: 0, to: -1 }, body: Decoration.none, gutter: Decoration.none }),
+            update(val: any, tr: any) {
+                let range = val.range;
+                for (const e of tr.effects) if (e.is(setSelLinesEffect)) range = e.value;
+                if (range === val.range && !tr.docChanged) return val;
+                return {
+                    range,
+                    body: buildSelDeco(range, tr.state.doc, selLineDeco),
+                    gutter: buildSelDeco(range, tr.state.doc, selGutterMarker)
+                };
+            },
+            provide: (f: any) => [
+                EditorView.decorations.from(f, (v: any) => v.body),
+                gutterLineClass.from(f, (v: any) => v.gutter)
+            ]
         });
 
         // --- language resolver. Maps the hljs language id we already derive per
@@ -253,7 +370,8 @@ export function loadCM(): Promise<CMModules> {
             EditorState, EditorView, lineNumbers, Compartment, syntaxHighlighting, HighlightStyle,
             tags, Decoration, SearchCursor, RangeSetBuilder,
             StateField, StateEffect, languageFor, theme, highlightStyle,
-            setFindEffect, findField, unifiedMergeView, mergeTheme
+            setFindEffect, findField, diffField, setSelLinesEffect, selLinesField,
+            unifiedMergeView, mergeTheme
         } as CMModules;
     })();
     return cmModulesPromise;

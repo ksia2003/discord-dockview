@@ -115,6 +115,12 @@ export interface CodeController {
     insert: (text: string) => void; // type text at the doc end (drives the buffer)
     text: () => string; // the shown document text (for copy)
     scrollTo: (top: number) => void; // re-apply a saved scroll once mounted
+    // persistent line selection (gutter click). `selLines` is the picked 1-based
+    // inclusive range (from>to = none); `clearSelLines` drops it; `selReference`
+    // formats the human-pasteable "name L12" / "name L12-L20" for the copy button.
+    selLines: { from: number; to: number };
+    clearSelLines: () => void;
+    selReference: () => string | null;
     teardown: () => void;
 }
 
@@ -214,18 +220,46 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
         if (u.docChanged) setEditBuffer(u.state.doc.toString(), win);
     });
 
+    // Clicking a line number selects that line; shift-click extends from the anchor.
+    // The forward-decl lets the gutter handler call setSelLines before the closure is
+    // assigned to the controller below. `selAnchor` is the last plain-clicked line
+    // (the fixed end a shift-drag extends from).
+    let selAnchor = 0;
+    let setSelLines: (from: number, to: number) => void = () => { /* set below */ };
+    const onGutterClick = (v: any, lineBlock: any, ev: MouseEvent): boolean => {
+        const ln = v.state.doc.lineAt(lineBlock.from).number;
+        if (ev.shiftKey && selAnchor) {
+            setSelLines(Math.min(selAnchor, ln), Math.max(selAnchor, ln));
+        } else if (ctrl.selLines.from === ln && ctrl.selLines.to === ln) {
+            // re-clicking the sole selected line clears it (an explicit deselect).
+            selAnchor = 0;
+            setSelLines(0, -1);
+        } else {
+            selAnchor = ln;
+            setSelLines(ln, ln);
+        }
+        return true; // handled — don't let CM move the text cursor into the line
+    };
+
+    // .diff/.patch: paint added/removed/hunk/file-header lines (no CM language for
+    // diff — we own the colouring via diffField, gated to this content only).
+    const isDiff = win.content.codeLang === "diff";
+
     const extensions: any[] = [
-        mods.lineNumbers(), // GitHub/VS-Code-style line-number gutter
+        mods.lineNumbers({ domEventHandlers: { mousedown: onGutterClick } }),
         editCompartment.of(editableExt(startEditable)), // read↔edit (+ diff)
         editListener, // edits -> temporary buffer
         wrapCompartment.of(wrapExt(wrapped)),
+        mods.selLinesField, // persistent gutter-click line selection
         mods.theme,
         mods.mergeTheme, // diff colours (added/changed green, deleted red)
         mods.findField
     ];
-    if (langSupport) {
+    if (isDiff) extensions.push(mods.diffField);
+    if (langSupport && !isDiff) {
         // gated ON: parser-based syntax highlighting (Lezer). The parser is the
         // SOLE long-task source on huge files, so it's only added under the gate.
+        // Skipped for a diff — the per-line diff colouring is the highlight there.
         extensions.push(langSupport, mods.syntaxHighlighting(mods.highlightStyle));
     }
 
@@ -257,7 +291,26 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
         },
         text: () => view.state.doc.toString(),
         scrollTo: (top: number) => { const sc = view.scrollDOM; if (sc) sc.scrollTop = top; },
+        selLines: { from: 0, to: -1 },
+        clearSelLines: () => { selAnchor = 0; setSelLines(0, -1); },
+        // A human-pasteable line reference: "name L12" for a single line, "name
+        // L12-L20" for a range, or null when nothing is selected. Falls back to a
+        // bare "file" when the content has no name.
+        selReference: () => {
+            const { from, to } = ctrl.selLines;
+            if (from < 1 || to < from) return null;
+            const base = win.content.name || "file";
+            return from === to ? `${base} L${from}` : `${base} L${from}-L${to}`;
+        },
         teardown: () => { /* set below */ }
+    };
+
+    // Apply a 1-based inclusive selection range (from>to = clear) to the doc + the
+    // controller, then repaint the header so the copy affordance enables/disables.
+    setSelLines = (from: number, to: number) => {
+        ctrl.selLines = { from, to };
+        view.dispatch({ effects: mods.setSelLinesEffect.of({ from, to }) });
+        requestRender();
     };
 
     const pushDeco = () => {
