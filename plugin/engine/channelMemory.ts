@@ -15,6 +15,7 @@
 import { getCurrentChannelId } from "../host/channel";
 import { settings } from "../settings";
 import { detectType } from "./detectType";
+import { invalidate as invalidateFileIndex } from "./fileIndex";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
 import { showContent } from "./showContent";
@@ -148,6 +149,12 @@ export function onChannelSelect(newId: string | null): void {
     //    (Its content cache entry survives, so a return re-shows it instantly.)
     const leaving = transientWindow();
     if (leaving) removeWindow(leaving);
+
+    // 2b. invalidate the LEAVING channel's file-browser index (built from the same
+    //     MessageStore window). Re-entering the channel rebuilds it fresh from the
+    //     store, so the browser can't show a stale list. currentChannelId still holds
+    //     the leaving channel here (step 3 reassigns it below).
+    invalidateFileIndex(currentChannelId);
 
     // 3. switch channel.
     currentChannelId = newId;

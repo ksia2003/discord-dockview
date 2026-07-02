@@ -30,6 +30,9 @@ import { preloadDecoders } from "./engine/decoderModes";
 import { fallbackCopy } from "./engine/fetch";
 import { loadLib } from "./engine/lazyLib";
 import { detectType } from "./engine/detectType";
+import {
+    canLoadOlder, clearFileIndex, getChannelFiles, invalidate as invalidateFileIndex, loadOlder as loadOlderFiles
+} from "./engine/fileIndex";
 import { requestRender } from "./engine/forceRender";
 import {
     clearChannelVisibility, dockVisible, getChannelStates, onChannelSelect, setCurrentChannelMemId
@@ -108,6 +111,10 @@ function exposeDebug(): void {
         load, retry: retryActiveLoad, clear: clearArtifact, detectType,
         onChannelSelect, getCurrentChannelId,
         get channelStates() { return getChannelStates(); },
+
+        // file browser data spine (batch 1): enumerate/page/invalidate the channel's
+        // openable attachments. The UI layer (batch 2) consumes these.
+        getChannelFiles, loadOlder: loadOlderFiles, canLoadOlder, invalidateFileIndex,
 
         // exclusivity (member list / profile sidebar) — drive + assert.
         closeNativeChannelSidebar,
@@ -339,6 +346,7 @@ export default definePlugin({
         //    re-start restores them.
         resetToClosedTransient(null);
         clearContentCache();
+        clearFileIndex();
         getChannelStates().clear();
         clearChannelVisibility();
         setCurrentChannelMemId(null);
