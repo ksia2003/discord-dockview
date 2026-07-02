@@ -1334,11 +1334,92 @@ html.dockview-open .dockview-page-inner {
     min-height: 0;
 }
 /* The grid region: a sized flex child so the inner .dockview-csv-scroll (height:100%)
-   resolves against it and scrolls within the area ABOVE the tab strip. */
-.dockview-xlsx-shell-tabbed .dockview-xlsx-grid {
+   resolves against it and scrolls within the area between the fx bar and the tab strip
+   (single-sheet workbooks have the fx bar but no tab strip). */
+.dockview-xlsx-grid {
     flex: 1 1 auto;
     min-height: 0;
     position: relative;
+}
+/* The formula (fx) readout bar: a compact strip above the grid, Excel's fx bar. A fixed
+   address slot (a monospace cell name / "fx" marker) sits left of the value slot which
+   shows the picked cell's formula or raw value. A hairline separates it from the grid.
+   All colours are semantic theme tokens so it follows the Discord/Vesktop theme. */
+.dockview-xlsx-fx {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    min-height: 28px;
+    box-sizing: border-box;
+    background: var(--background-secondary, #2b2d31);
+    border-bottom: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+    font-size: 12.5px;
+    line-height: 18px;
+}
+/* The address slot: a fixed-width cell-name box (monospace, tabular) so the grid text
+   below never shifts as different addresses appear. Before a pick it holds the "fx"
+   marker in a muted tone. */
+.dockview-xlsx-fx-addr {
+    flex: 0 0 auto;
+    min-width: 54px;
+    padding: 1px 8px;
+    border-radius: 4px;
+    background: var(--background-base-lower, #1a1a1e);
+    color: var(--text-strong, #f2f3f5);
+    font-family: Consolas, "Andale Mono WT", "Andale Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    text-align: center;
+    white-space: nowrap;
+}
+/* The value slot: the picked cell's raw value, or its formula (fx-formula tone +
+   monospace). One line, ellipsised, full text on hover (title=). */
+.dockview-xlsx-fx-val {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--text-normal, #dbdee1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dockview-xlsx-fx-formula {
+    font-family: Consolas, "Andale Mono WT", "Andale Mono", Menlo, monospace;
+    color: var(--text-feedback-positive, var(--text-positive, #3ba55c));
+}
+/* The pre-selection state: the "fx" marker + hint read quieter than a live readout. */
+.dockview-xlsx-fx-empty {
+    color: var(--text-muted, #949ba4);
+    font-weight: 500;
+}
+.dockview-xlsx-fx-addr.dockview-xlsx-fx-empty {
+    background: transparent;
+    font-style: italic;
+}
+/* A formula-bearing cell in the grid gets a subtle top-right corner mark (a small
+   triangle, Excel's "cell has a comment/note" affordance re-used for "has a formula").
+   Painted with the same positive feedback tone as the fx value; semantic var only. */
+.dockview-csv-td.dockview-csv-formula,
+.dockview-csv-th.dockview-csv-formula {
+    position: relative;
+}
+.dockview-csv-td.dockview-csv-formula::after,
+.dockview-csv-th.dockview-csv-formula::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    border-style: solid;
+    border-width: 0 5px 5px 0;
+    border-color: transparent var(--text-feedback-positive, var(--text-positive, #3ba55c)) transparent transparent;
+    opacity: 0.7;
+}
+/* The clicked cell gets an inset outline so the fx bar's readout is anchored to a
+   visible selection (like Excel's active-cell border). */
+.dockview-csv-td.dockview-csv-selected,
+.dockview-csv-th.dockview-csv-selected {
+    box-shadow: inset 0 0 0 2px var(--brand-500, #5865f2);
 }
 /* The bottom sheet-tab strip: a horizontally-scrollable row of tabs, like Excel's
    sheet bar. A solid header-tone background + a top border read it as a frozen strip

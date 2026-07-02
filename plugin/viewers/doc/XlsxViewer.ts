@@ -36,7 +36,7 @@ import { XlsxHeaderControls } from "./XlsxHeaderControls";
 function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): void {
     // Reset the live workbook BEFORE the fetch (mirrors pptx/3D): clear the previous
     // sheets and BUMP renderToken so the body drops the stale workbook.
-    ctx.content.xlsx = { names: [], csv: [], renderToken: ctx.content.xlsx.renderToken + 1 };
+    ctx.content.xlsx = { names: [], csv: [], formulas: [], renderToken: ctx.content.xlsx.renderToken + 1 };
     resetXlsxView(ctx.window);
     if (!opts.url) {
         ctx.content.loading = false;
@@ -53,7 +53,11 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
         .then(async buf => {
             const XLSX: any = await withLibLoading(ctx, STRINGS.loading.lib.xlsx, "xlsx",
                 async () => await import("xlsx"));
-            const wb = XLSX.read(new Uint8Array(buf), { type: "array" });
+            // cellFormula:true keeps each cell's .f (its formula text) so the body's
+            // formula bar can read it; without it SheetJS drops formulas and only the
+            // cached value survives. Everything else (the CSV serialisation below) is
+            // unchanged — the value view is identical.
+            const wb = XLSX.read(new Uint8Array(buf), { type: "array", cellFormula: true });
             const names: string[] = Array.isArray(wb.SheetNames) ? wb.SheetNames : [];
             // sheet_to_csv emits RFC-4180 CSV (comma delimiter, quoted as needed),
             // which the csv grid's parser reads back unchanged. One pass over every
@@ -62,23 +66,51 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
                 const sheet = wb.Sheets[n];
                 return sheet ? XLSX.utils.sheet_to_csv(sheet) : "";
             });
+            // A SPARSE formula map per sheet: "row,col" (0-based, matching the csv
+            // grid's cell coords — row 0 is the CSV's first line, which is the sheet's
+            // first row) -> the cell's formula text. Only cells that carry a formula
+            // land here, so even a huge sheet keeps a small map. A sheet with no
+            // formulas (or a csv-origin workbook) yields {}.
+            const formulas: Record<string, string>[] = names.map(n => {
+                const sheet = wb.Sheets[n];
+                const map: Record<string, string> = {};
+                const ref = sheet && sheet["!ref"];
+                if (!sheet || !ref) return map;
+                const range = XLSX.utils.decode_range(ref);
+                for (let R = range.s.r; R <= range.e.r; R++) {
+                    for (let C = range.s.c; C <= range.e.c; C++) {
+                        const cell = sheet[XLSX.utils.encode_cell({ r: R, c: C })];
+                        if (cell && typeof cell.f === "string" && cell.f.length) {
+                            // grid coords are relative to the CSV's first row/col (0-based
+                            // from the sheet's own origin), which decode_range gives via s.
+                            map[(R - range.s.r) + "," + (C - range.s.c)] = cell.f;
+                        }
+                    }
+                }
+                return map;
+            });
             // A workbook with no sheets at all is degenerate — show the empty grid
             // rather than erroring (matches the old first-sheet "" fallback).
-            return { names: names.length ? names : [""], csv: csv.length ? csv : [""] };
+            return {
+                names: names.length ? names : [""],
+                csv: csv.length ? csv : [""],
+                formulas: formulas.length ? formulas : [{}]
+            };
         })
-        .then((book: { names: string[]; csv: string[] }) => {
+        .then((book: { names: string[]; csv: string[]; formulas: Record<string, string>[] }) => {
             // Only keep the workbook on `entry` if it is STILL the cache's live entry
             // for its key (a rapid re-click could have replaced it). Plain text, no
             // teardown — no leak to guard against.
             const live = entry != null && getCacheEntry(entry.key) === entry;
             if (live) {
-                entry!.xlsxWorkbook = { names: book.names, csv: book.csv };
+                entry!.xlsxWorkbook = { names: book.names, csv: book.csv, formulas: book.formulas };
                 entry!.loading = false;
                 entry!.error = null;
             }
             if (!token.isCurrent()) return; // superseded — don't touch content
             ctx.content.xlsx.names = book.names;
             ctx.content.xlsx.csv = book.csv;
+            ctx.content.xlsx.formulas = book.formulas;
             ctx.content.xlsx.renderToken += 1; // a fresh workbook is ready
             // Fill the sheet names on the view-state now (the tab strip can render),
             // and clamp the (possibly cache-restored) selected sheet into range.

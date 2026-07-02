@@ -27,8 +27,22 @@ import { React } from "@webpack/common";
 import { clearLiveController, getLiveController, requestRender, setLiveController } from "../../engine/forceRender";
 import { getActiveWindow } from "../../engine/window";
 import { setPendingScrollTop } from "../../engine/viewState";
+import { STRINGS } from "../../strings";
 import type { DockWindow, XlsxViewState } from "../../engine/types";
 import { csvState, CsvBody } from "../csv/CsvBody";
+
+/** A1-style column label for a 0-based column index (0 -> A, 26 -> AA). */
+function colLabel(c: number): string {
+    let s = "";
+    let n = c;
+    do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
+    return s;
+}
+
+/** The A1 address of a grid cell from its 0-based row/col (row 0 = spreadsheet row 1). */
+function cellAddress(r: number, c: number): string {
+    return colLabel(c) + (r + 1);
+}
 
 // The live-controller slot name + the per-window view-state key.
 export const XLSX_CONTROLLER = "xlsx";
@@ -75,7 +89,14 @@ function feedSheet(win: DockWindow, index: number): void {
     win.content.code = wb.csv[i] ?? "";
     // SheetJS sheet_to_csv is always comma-delimited; the grid reads this off the
     // shared csv slice (CsvBody parses content.code with csvState().delimiter).
-    csvState(win).delimiter = ",";
+    const cv = csvState(win);
+    cv.delimiter = ",";
+    // Turn on the grid's cell-coord stamping (so a click reads the address) and hand
+    // it THIS sheet's formula map for the corner hints. A plain csv/tsv never sets
+    // these, so the csv viewer's grid stays coord-free.
+    cv.cellCoords = true;
+    const fmap = wb.formulas[i];
+    cv.formulaCells = fmap ? new Set(Object.keys(fmap)) : new Set();
 }
 
 /** Switch to a different sheet: re-feed its CSV, bump content.seq so the imperative
@@ -95,14 +116,82 @@ export function selectSheet(index: number): void {
     requestRender();
 }
 
-/** The xlsx body: feed the active sheet into the csv grid, render that grid, and
- *  (for a multi-sheet workbook) a bottom sheet-tab strip. */
+/** The formula readout bar — an Excel-style fx bar above the grid. A click anywhere in
+ *  the grid selects that cell: the bar shows its A1 ADDRESS + either its FORMULA (if the
+ *  cell carries one, with the fx marker) or its RAW VALUE. Nothing selected yet → a quiet
+ *  hint. The click is delegated on the shell (one listener, not per-cell) and the picked
+ *  cell gets a -selected outline, so a big sheet stays cheap. The selection resets on a
+ *  sheet switch / new file (seq + renderToken).
+ *
+ *  The bar owns its own selection state, so a click never re-renders (or re-streams) the
+ *  grid — it only repaints this small bar + toggles one class on the DOM cell. It hangs
+ *  its listener on the SHELL node (shellRef) so one handler covers the whole grid. */
+function FormulaBar({ shellRef }: { shellRef: { current: HTMLElement | null } }) {
+    const { useState, useEffect, useRef } = React;
+    const win = getActiveWindow();
+    const wb = win.content.xlsx;
+    // selection: { addr, value, formula } | null. formula is "" for a value cell.
+    const [sel, setSel] = useState(null as null | { addr: string; value: string; formula: string });
+    // Track the currently-outlined cell so a new pick clears the old outline.
+    const lastCell = useRef(null as HTMLElement | null);
+
+    useEffect(() => {
+        const shell = shellRef.current;
+        if (!shell) return;
+        // Re-read the active sheet's formula map on each (re)bind — the effect re-runs
+        // when seq/renderToken change (a sheet switch or a new workbook).
+        const fmap = win.content.xlsx.formulas[xlsxState(win).sheet] || {};
+        // A sheet switch / new file invalidates any prior selection.
+        setSel(null);
+        lastCell.current = null;
+        const onClick = (e: MouseEvent) => {
+            const t = e.target as HTMLElement | null;
+            const cell = t && t.closest ? (t.closest("[data-r]") as HTMLElement | null) : null;
+            if (!cell || !shell.contains(cell)) return;
+            const r = Number(cell.dataset.r);
+            const c = Number(cell.dataset.c);
+            if (!Number.isFinite(r) || !Number.isFinite(c)) return;
+            if (lastCell.current) lastCell.current.classList.remove("dockview-csv-selected");
+            cell.classList.add("dockview-csv-selected");
+            lastCell.current = cell;
+            setSel({ addr: cellAddress(r, c), value: cell.textContent || "", formula: fmap[r + "," + c] || "" });
+        };
+        shell.addEventListener("click", onClick);
+        return () => shell.removeEventListener("click", onClick);
+    }, [win.content.seq, wb.renderToken]);
+
+    const hasFormula = sel != null && sel.formula.length > 0;
+    return React.createElement(
+        "div",
+        { className: "dockview-xlsx-fx", role: "status", "aria-live": "polite" },
+        React.createElement(
+            "span",
+            { className: "dockview-xlsx-fx-addr" + (sel ? "" : " dockview-xlsx-fx-empty") },
+            sel ? sel.addr : STRINGS.xlsx.fxLabel
+        ),
+        React.createElement(
+            "span",
+            {
+                className: "dockview-xlsx-fx-val"
+                    + (hasFormula ? " dockview-xlsx-fx-formula" : "")
+                    + (sel ? "" : " dockview-xlsx-fx-empty"),
+                title: sel ? (hasFormula ? "=" + sel.formula : sel.value) : ""
+            },
+            sel ? (hasFormula ? "=" + sel.formula : sel.value) : STRINGS.xlsx.fxHint
+        )
+    );
+}
+
+/** The xlsx body: feed the active sheet into the csv grid, render that grid with a
+ *  formula (fx) readout bar above it, and (for a multi-sheet workbook) a bottom
+ *  sheet-tab strip. */
 export function XlsxBody() {
-    const { useEffect } = React;
+    const { useEffect, useRef } = React;
     const win = getActiveWindow();
     const seq = win.content.seq;
     const wb = win.content.xlsx;
     const vs = xlsxState(win);
+    const shellRef = useRef(null as HTMLElement | null);
 
     // Feed the active sheet's CSV into content.code BEFORE the grid mounts so CsvBody
     // (which reads content.code on mount) sees this sheet's text. This runs every
@@ -125,13 +214,16 @@ export function XlsxBody() {
     // The grid: the SAME CsvBody the csv viewer uses, keyed on seq so a sheet switch
     // (which bumps seq) remounts it fresh against the new sheet's text.
     const grid = React.createElement(CsvBody, { key: seq });
+    // The fx bar hangs its cell-click listener on the shell node (shellRef).
+    const fxBar = React.createElement(FormulaBar, { key: "fx", shellRef });
 
     if (!multi) {
-        // Single-sheet workbook → just the grid, no redundant switcher.
+        // Single-sheet workbook → the fx bar + the grid, no redundant switcher.
         return React.createElement(
             "div",
-            { className: "dockview-xlsx-shell" },
-            grid
+            { className: "dockview-xlsx-shell", ref: shellRef },
+            fxBar,
+            React.createElement("div", { className: "dockview-xlsx-grid" }, grid)
         );
     }
 
@@ -156,8 +248,10 @@ export function XlsxBody() {
 
     return React.createElement(
         "div",
-        { className: "dockview-xlsx-shell dockview-xlsx-shell-tabbed" },
-        // the grid fills the area above the strip.
+        { className: "dockview-xlsx-shell dockview-xlsx-shell-tabbed", ref: shellRef },
+        // the fx readout bar sits above the grid.
+        fxBar,
+        // the grid fills the area between the fx bar and the tab strip.
         React.createElement("div", { className: "dockview-xlsx-grid" }, grid),
         // the sheet-tab strip pinned along the bottom.
         React.createElement(

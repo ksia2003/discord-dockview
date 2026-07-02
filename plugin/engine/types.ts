@@ -93,6 +93,11 @@ export interface PptxState {
 export interface XlsxState {
     names: string[]; // ordered sheet names (workbook order)
     csv: string[]; // csv[i] = sheet names[i] serialised to RFC-4180 CSV text
+    // formulas[i] is sheet names[i]'s SPARSE formula map: "row,col" (0-based, matching
+    // the csv grid's cell coords) -> the cell's formula text ("SUM(B2:B6)"), for the
+    // cells that carry one. Empty for a value-only sheet / a csv-origin workbook. Kept
+    // parallel to names/csv so a sheet switch reads formulas[i] with no re-parse.
+    formulas: Record<string, string>[];
     renderToken: number;
 }
 
@@ -173,6 +178,13 @@ export interface CodeViewState {
 export interface CsvViewState {
     mode: "grid" | "raw";
     delimiter: string; // "," for csv, "\t" for tsv (decided at load)
+    // Set by the XLSX body only (a plain .csv/.tsv leaves both undefined): when the
+    // grid should stamp each cell with its 0-based row,col (data-r/data-c) so a click
+    // can read the address, and — for the cells in `formulaCells` — a faint corner
+    // hint marking a formula-bearing cell. `formulaCells` is the ACTIVE sheet's
+    // "row,col" key set. Undefined = a plain csv grid (no coords, no hints, no readout).
+    cellCoords?: boolean;
+    formulaCells?: Set<string>;
 }
 
 export interface TreeViewState {
@@ -337,7 +349,7 @@ export interface CacheEntry {
     // the parsed workbook (ordered sheet names + per-sheet CSV text), kept alive
     // while cached so a re-open re-renders without a re-fetch/re-parse. Plain decoded
     // text — no GPU/worker handle — so no dispose() needed.
-    xlsxWorkbook?: { names: string[]; csv: string[] } | null;
+    xlsxWorkbook?: { names: string[]; csv: string[]; formulas: Record<string, string>[] } | null;
     // A multi-page TIFF keeps its decoded source on the entry so page switches re-blob
     // a different IFD with NO re-fetch: `rasterTiff.buf` is the original TIFF bytes and
     // `rasterTiff.pages` is the IFD count. Single-page raster files (which retype to

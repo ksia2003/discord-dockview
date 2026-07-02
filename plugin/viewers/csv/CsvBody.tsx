@@ -59,8 +59,15 @@ function buildCsvController(mount: HTMLElement): CsvController {
     const win = getActiveWindow();
     // Parse the source text (read-only this phase — the P8 edit buffer rides here
     // later). The delimiter lives on the csv view-state slice already.
-    const rows = parseDelimited(win.content.code ?? "", csvState(win).delimiter);
+    const cv = csvState(win);
+    const rows = parseDelimited(win.content.code ?? "", cv.delimiter);
     const header = rows.length ? rows[0] : [];
+    // XLSX-only: stamp each cell with its 0-based row,col so a click can read the
+    // address, and mark formula-bearing cells (from the active sheet's map) with a
+    // faint corner hint. A plain csv/tsv grid leaves cv.cellCoords undefined → no
+    // extra attributes, no per-cell Set lookups (identical to the old fast path).
+    const coords = cv.cellCoords === true;
+    const formulaCells = cv.formulaCells;
     // Column count = the widest of the header / a sample of data rows, so ragged
     // rows still get enough columns; capped so a runaway row can't explode the DOM.
     let cols = header.length;
@@ -84,6 +91,10 @@ function buildCsvController(mount: HTMLElement): CsvController {
         if (v.length) th.textContent = v;
         else { th.textContent = ""; th.classList.add("dockview-csv-empty"); }
         th.title = v; // full value on hover (cells truncate with ellipsis)
+        if (coords) {
+            th.dataset.r = "0"; th.dataset.c = String(c);
+            if (formulaCells && formulaCells.has("0," + c)) th.classList.add("dockview-csv-formula");
+        }
         htr.appendChild(th);
     }
     thead.appendChild(htr);
@@ -110,11 +121,21 @@ function buildCsvController(mount: HTMLElement): CsvController {
         let s = "";
         for (let i = from; i < to; i++) {
             const r = rows[i + 1]; // +1: skip the header row
+            const fr = i + 1; // this cell's 0-based grid row (header is row 0)
             s += "<tr class=\"dockview-csv-row\">";
             for (let c = 0; c < cols; c++) {
                 const v = (r && c < r.length) ? r[c] : "";
-                // attribute-escape for the title, body-escape for the text.
-                s += "<td class=\"dockview-csv-td\" title=\"" + escapeAttr(v) + "\">" + escapeHtml(v) + "</td>";
+                // attribute-escape for the title, body-escape for the text. When
+                // coords are on (xlsx), stamp the row,col + a formula-hint class so a
+                // click reads the address and the corner mark shows a formula cell.
+                if (coords) {
+                    const cls = (formulaCells && formulaCells.has(fr + "," + c))
+                        ? "dockview-csv-td dockview-csv-formula" : "dockview-csv-td";
+                    s += "<td class=\"" + cls + "\" data-r=\"" + fr + "\" data-c=\"" + c
+                        + "\" title=\"" + escapeAttr(v) + "\">" + escapeHtml(v) + "</td>";
+                } else {
+                    s += "<td class=\"dockview-csv-td\" title=\"" + escapeAttr(v) + "\">" + escapeHtml(v) + "</td>";
+                }
             }
             s += "</tr>";
         }

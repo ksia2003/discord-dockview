@@ -221,7 +221,13 @@ export const STRINGS = {
     // header); the header keeps just a copy action for the active sheet's data.
     xlsx: {
         copyHint: "Copy sheet data",
-        sheetTab: "Sheet"
+        sheetTab: "Sheet",
+        // The formula (fx) readout bar above the grid. Before a cell is picked the
+        // address slot shows this quiet "fx" marker and the value slot a one-line hint;
+        // after a click the address slot shows the cell's A1 address (e.g. "B7") and the
+        // value slot its formula or raw value.
+        fxLabel: "fx",
+        fxHint: "Click a cell to see its value or formula"
     },
 
     // --- structured (JSON/XML) tree header controls -------------------------

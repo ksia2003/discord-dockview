@@ -42,7 +42,12 @@ import { csvDelimiterFor } from "./parse";
  *  plus decide the delimiter. The grid is parsed lazily from content.code on mount
  *  (CsvBody) so the cache stays text-only. The raw view is plaintext (no hljs lang). */
 function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): void {
-    csvState(ctx.window).mode = "grid"; // a fresh CSV always opens as a grid
+    const cv = csvState(ctx.window);
+    cv.mode = "grid"; // a fresh CSV always opens as a grid
+    // A plain .csv/.tsv has no cell addresses/formulas — clear any leftover xlsx grid
+    // flags on this reused slice so the csv grid stays coord-free.
+    cv.cellCoords = false;
+    cv.formulaCells = undefined;
     resetEditView(ctx.window); // a fresh CSV opens unedited (the raw view shares the buffer)
     if (!opts.url) {
         ctx.content.loading = false;
@@ -84,6 +89,8 @@ function resetState(vs: CsvViewState): void {
     if (!vs) return;
     vs.mode = "grid"; // a fresh CSV always opens as a grid (per-file default)
     vs.delimiter = ",";
+    vs.cellCoords = false; // csv has no cell coords/formulas (xlsx-only)
+    vs.formulaCells = undefined;
 }
 
 /** Park the grid/raw choice on the entry so a cache return reopens it as left, plus
