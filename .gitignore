@@ -4,4 +4,4 @@ node_modules
 .env
 .DS_Store
 .idea/
-.pnpm-store/
+.pnpm-store/shots/
