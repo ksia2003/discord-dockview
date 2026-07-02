@@ -49,6 +49,7 @@
  * type stays "rasterimage" and the key still matches.
  */
 
+import { settings } from "../../settings";
 import { STRINGS } from "../../strings";
 import type {
     CacheEntry, LoadOpts, LoadToken, RasterViewState, Viewer, ViewerContext
@@ -68,8 +69,20 @@ interface Decoded {
 
 /** A JPEG (lossy, far smaller) is used past this pixel count so a huge PSD/TIFF
  *  doesn't produce a multi-hundred-MB PNG data copy in the blob. Below it we keep
- *  PNG (lossless). 8 MP ≈ a 4K-ish frame. */
+ *  PNG (lossless). 8 MP ≈ a 4K-ish frame. The user can override this to ALWAYS keep
+ *  PNG via the Performance page's "large images losslessly" switch (see lossless()). */
 const JPEG_PIXEL_THRESHOLD = 8_000_000;
+
+/** Whether the user asked to keep LARGE frames lossless (PNG) instead of dropping to
+ *  JPEG past the threshold. Read live at export time; defaults to false (the JPEG path)
+ *  if settings aren't resolved yet. */
+function lossless(): boolean {
+    try {
+        return settings.store.largeImageLossless === true;
+    } catch {
+        return false;
+    }
+}
 
 /** Load utif once (lazy). The decoder is routed through the lazy-lib loader so the
  *  dock shows a labelled "Loading TIFF decoder…" while it spins up the first time. */
@@ -214,7 +227,9 @@ function rgbaToBlobUrl(d: Decoded): Promise<{ url: string; width: number; height
     const expected = d.width * d.height * 4;
     if (d.rgba.length < expected) throw new Error("Truncated pixel data");
     cx.putImageData(new ImageData(d.rgba.subarray(0, expected), d.width, d.height), 0, 0);
-    const huge = d.width * d.height > JPEG_PIXEL_THRESHOLD;
+    // Past the threshold we drop to JPEG to keep the in-memory blob small — UNLESS the
+    // user turned on lossless large images, which keeps PNG at any size (bigger blob).
+    const huge = d.width * d.height > JPEG_PIXEL_THRESHOLD && !lossless();
     return new Promise((resolve, reject) => {
         canvas.toBlob(
             blob => {

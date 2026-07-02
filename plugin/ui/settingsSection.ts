@@ -37,6 +37,7 @@ import { AboutPanel } from "./AboutPanel";
 import { DockViewIcon } from "./DockViewIcon";
 import { GallerySection } from "./GallerySection";
 import { GeneralPanel } from "./GeneralPanel";
+import { PerformancePanel } from "./PerformancePanel";
 import { STRINGS } from "../strings";
 import { UpdatePanel } from "./UpdatePanel";
 import { ViewersPanel } from "./ViewersPanel";
@@ -77,6 +78,12 @@ function buildDockViewEntries(plugin: any): any[] {
             key: "dockview_viewers",
             title: S.viewers,
             Component: ViewersPanel,
+            Icon: DockViewIcon
+        }),
+        buildEntry({
+            key: "dockview_performance",
+            title: S.performance,
+            Component: PerformancePanel,
             Icon: DockViewIcon
         }),
         buildEntry({

@@ -58,6 +58,16 @@ export const STRINGS = {
         }
     },
 
+    // --- disabled decoder notice (Performance page) -------------------------
+    // Shown when a heavy decoder set to "Disabled" on the Performance page is asked to
+    // open a matching file. Not a failure — a deliberate choice — so it reads as a plain
+    // notice, and the state card still offers Download. {label} -> the format name
+    // ("3D model", "EPS / AI", "PSD", "JPEG XL", "DICOM").
+    decoderDisabled: {
+        title: (label: string) => `${label} preview is turned off`,
+        sub: "Turn it back on under DockView settings → Performance, or download the file to open it elsewhere."
+    },
+
     // --- system messages: unsupported format --------------------------------
     // An idle dead end — one restrained light line is allowed.
     unsupported: {
@@ -361,6 +371,7 @@ export const STRINGS = {
         section: "DockView",
         general: "General",
         viewers: "Viewers",
+        performance: "Performance",
         updates: "Updates",
         examples: "Examples",
         about: "About"
@@ -425,6 +436,39 @@ export const STRINGS = {
             presentations: "Presentations",
             presentationsNote: "PowerPoint, ODP"
         }
+    },
+
+    // --- Performance settings page ------------------------------------------
+    // Heavy-decoder loading modes + the large-image quality switch. Each decoder is a
+    // niche, exotic library that ships out-of-bundle; the mode picker trades a little
+    // startup work / disk read against instant first opens or turning the format off.
+    // Changes apply to the NEXT load — a decoder already loaded this session stays
+    // loaded.
+    performance: {
+        // The heavy-decoder group.
+        decodersTitle: "Heavy decoders",
+        decodersNote:
+            "These formats need a large, optional decoder loaded on first use. Choose how each " +
+            "one loads. Changes take effect the next time such a file opens.",
+        // The three modes (the segmented control's options + their meaning).
+        modeOnDemand: "On demand",
+        modePreload: "Preload",
+        modeDisabled: "Disabled",
+        // The one-line note under each decoder row: its formats + what the current mode
+        // means. {formats} -> the covered formats.
+        decoderFormats: (formats: string) => formats,
+        // A short gloss of each mode, shown once under the group.
+        modesLegend:
+            "On demand loads the decoder the first time you open such a file. " +
+            "Preload warms it in the background after startup so the first open is instant. " +
+            "Disabled turns the format off — a matching file shows a notice instead.",
+        // The large-image quality switch.
+        losslessTitle: "Always convert large images losslessly (PNG)",
+        losslessNote:
+            "Exotic images (TIFF, PSD, HEIC, JPEG XL, JPEG 2000) are decoded and re-encoded for the " +
+            "dock. Large frames (over ~8 megapixels) default to JPEG to keep memory down. Turn this " +
+            "on to keep them lossless PNG instead — sharper, but a bigger picture uses more memory.",
+        largeImageGroup: "Image quality"
     },
 
     // --- about page ---------------------------------------------------------

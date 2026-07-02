@@ -29,6 +29,13 @@ export const ARTIFACT_RENDER_FAILURE = "dockview:artifact-render-failure";
 export function humanizeError(raw: string): { title: string; sub: string } {
     const E = STRINGS.error;
     if (raw === ARTIFACT_RENDER_FAILURE) return E.artifact;
+    // A decoder the user turned OFF on the Performance page (DecoderDisabledError, whose
+    // message is "<label> viewer is disabled in DockView settings (Performance).") reads
+    // as a deliberate NOTICE, not a load failure. Pull the label back out for the title.
+    const disabled = /^(.+?) viewer is disabled in DockView settings \(Performance\)\.$/.exec(raw);
+    if (disabled) {
+        return { title: STRINGS.decoderDisabled.title(disabled[1]), sub: STRINGS.decoderDisabled.sub };
+    }
     const status = /^(\d{3})\b/.exec(raw);
     if (status) {
         const code = status[1];

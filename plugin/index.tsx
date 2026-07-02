@@ -26,7 +26,9 @@ import managedStyle from "./style.css?managed";
 
 import { clearArtifact, load, retryActiveLoad } from "./engine/load";
 import { clearContentCache } from "./engine/cache";
+import { preloadDecoders } from "./engine/decoderModes";
 import { fallbackCopy } from "./engine/fetch";
+import { loadLib } from "./engine/lazyLib";
 import { detectType } from "./engine/detectType";
 import { requestRender } from "./engine/forceRender";
 import {
@@ -301,6 +303,15 @@ export default definePlugin({
         //    buildLayout from this same Vencord bundle (the Vesktop src/renderer
         //    bundle can't import plugin/). Idempotent + fully guarded.
         installDockViewSection();
+
+        // 10. Warm any heavy decoder the user set to "Preload" (Performance page), once,
+        //     OFF the startup critical path — requestIdleCallback when available, else a
+        //     short timeout. Each warm is a plain loadLib(chunkKey); a failure falls back
+        //     to the on-demand load. Decoders left on "On demand"/"Disabled" are skipped.
+        const warm = () => preloadDecoders(key => loadLib(key, () => Promise.reject(new Error("preload"))));
+        const ric = (window as any).requestIdleCallback;
+        if (typeof ric === "function") ric(warm, { timeout: 4000 });
+        else setTimeout(warm, 2000);
     },
 
     stop() {

@@ -110,5 +110,27 @@ export const settings = definePluginSettings({
     viewerDiagrams: { type: OptionType.BOOLEAN, description: "Diagrams", default: true },
     viewerModels3d: { type: OptionType.BOOLEAN, description: "3D models", default: true },
     viewerMedia: { type: OptionType.BOOLEAN, description: "Media", default: true },
-    viewerPresentations: { type: OptionType.BOOLEAN, description: "Presentations", default: true }
+    viewerPresentations: { type: OptionType.BOOLEAN, description: "Presentations", default: true },
+
+    // --- Performance page: heavy-decoder loading mode ------------------------
+    // Each of these picks how a heavy, exotic decoder (an out-of-bundle chunk) loads:
+    // "ondemand" (default) loads it the first time such a file opens; "preload" warms
+    // it once after startup idle so the first open is instant; "disabled" refuses to
+    // load it and shows a notice card instead. STRING keys, not booleans, holding one
+    // of those three tokens. engine/decoderModes.ts is the SSOT that maps each chunk
+    // key to one of these settings fields + reads them LIVE, so a mode change affects
+    // the NEXT load (already-loaded chunks stay loaded). See DECODER_CONTROLS there.
+    decoderModeThree: { type: OptionType.STRING, description: "3D model decoder loading", default: "ondemand" },
+    decoderModeGhostscript: { type: OptionType.STRING, description: "EPS / AI decoder loading", default: "ondemand" },
+    decoderModeAgpsd: { type: OptionType.STRING, description: "PSD decoder loading", default: "ondemand" },
+    decoderModeJxl: { type: OptionType.STRING, description: "JPEG XL decoder loading", default: "ondemand" },
+    decoderModeDicom: { type: OptionType.STRING, description: "DICOM decoder loading", default: "ondemand" },
+
+    // --- Performance page: large-image quality ------------------------------
+    // How the exotic raster path (tiff/psd/heic/jp2/jxl decode → canvas → blob) exports
+    // a LARGE frame (> 8 MP). OFF (default) = JPEG past the threshold, so a huge PSD/TIFF
+    // doesn't balloon into a multi-hundred-MB PNG copy in memory. ON = always PNG
+    // (lossless), at the cost of that larger in-memory blob. Read live by
+    // RasterImageViewer.rgbaToBlobUrl at export time.
+    largeImageLossless: { type: OptionType.BOOLEAN, description: "Always convert large images losslessly (PNG)", default: false }
 });

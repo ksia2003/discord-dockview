@@ -46,6 +46,7 @@
  */
 
 import { CHUNK_BY_KEY, type ChunkSpec } from "./chunkRegistry";
+import { DecoderDisabledError, decoderLabelFor, modeFor } from "./decoderModes";
 import type { ViewerContext } from "./types";
 
 /** Memoised module promises, keyed by a stable string a viewer chooses (usually the
@@ -136,6 +137,16 @@ async function loadChunk(spec: ChunkSpec): Promise<any> {
 export function loadLib<T = any>(key: string, importer: () => Promise<T>): Promise<T> {
     let p = libCache.get(key);
     if (!p) {
+        // Performance page gate: a user-controllable heavy decoder set to "disabled"
+        // must NOT load its chunk. Reject BEFORE caching (so flipping back to on-demand
+        // retries cleanly) with a tagged error the viewer's catch surfaces as a notice
+        // card. A decoder already loaded this session hit the cache above, so switching
+        // to "disabled" only blocks the NEXT, not-yet-loaded open (already-loaded chunks
+        // stay loaded). Non-controllable keys have no control → always on-demand.
+        const label = decoderLabelFor(key);
+        if (label && modeFor(key) === "disabled") {
+            return Promise.reject(new DecoderDisabledError(label));
+        }
         const spec = CHUNK_BY_KEY.get(key);
         const start = spec ? loadChunk(spec) : importer();
         // On failure, evict so a later open can retry (a transient init/read failure
