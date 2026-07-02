@@ -30,6 +30,8 @@ import { setPendingScrollTop } from "../../engine/viewState";
 import { STRINGS } from "../../strings";
 import type { DockWindow, XlsxViewState } from "../../engine/types";
 import { csvState, CsvBody } from "../csv/CsvBody";
+import type { ChartModel } from "./XlsxCharts";
+import { XlsxChartStrip } from "./XlsxChartCard";
 
 /** A1-style column label for a 0-based column index (0 -> A, 26 -> AA). */
 function colLabel(c: number): string {
@@ -113,6 +115,17 @@ export function selectSheet(index: number): void {
     feedSheet(win, i);
     win.content.seq += 1; // new grid identity → CsvBody remounts + re-parses
     setPendingScrollTop(null); // each sheet opens at its own top (no cross-bleed)
+    requestRender();
+}
+
+/** Toggle the per-sheet Charts strip collapsed/expanded (remembered on the view-state,
+ *  parked on the cache entry by snapshot). A plain state flip + repaint — the grid never
+ *  remounts (no seq bump), so collapsing the charts leaves the grid scroll untouched. */
+export function toggleXlsxCharts(): void {
+    const win = getActiveWindow();
+    if (win.content.type !== "xlsx") return;
+    const vs = xlsxState(win);
+    vs.chartsCollapsed = !vs.chartsCollapsed;
     requestRender();
 }
 
@@ -211,6 +224,19 @@ export function XlsxBody() {
     const names = wb.names.length ? wb.names : vs.names;
     const multi = names.length > 1;
 
+    // The active sheet's embedded charts (extracted after the grid painted; empty until
+    // then / for a chart-free sheet). A sheet with charts gets the collapsible strip
+    // above the fx bar; a sheet without gets nothing new.
+    const sheetCharts = (wb.charts[vs.sheet] as ChartModel[] | undefined) ?? [];
+    const chartStrip = sheetCharts.length
+        ? React.createElement(XlsxChartStrip, {
+            key: "charts",
+            charts: sheetCharts,
+            collapsed: vs.chartsCollapsed === true,
+            onToggle: toggleXlsxCharts
+        })
+        : null;
+
     // The grid: the SAME CsvBody the csv viewer uses, keyed on seq so a sheet switch
     // (which bumps seq) remounts it fresh against the new sheet's text.
     const grid = React.createElement(CsvBody, { key: seq });
@@ -218,10 +244,11 @@ export function XlsxBody() {
     const fxBar = React.createElement(FormulaBar, { key: "fx", shellRef });
 
     if (!multi) {
-        // Single-sheet workbook → the fx bar + the grid, no redundant switcher.
+        // Single-sheet workbook → the (optional) charts strip + fx bar + grid.
         return React.createElement(
             "div",
             { className: "dockview-xlsx-shell", ref: shellRef },
+            chartStrip,
             fxBar,
             React.createElement("div", { className: "dockview-xlsx-grid" }, grid)
         );
@@ -249,6 +276,8 @@ export function XlsxBody() {
     return React.createElement(
         "div",
         { className: "dockview-xlsx-shell dockview-xlsx-shell-tabbed", ref: shellRef },
+        // the (optional) charts strip sits at the very top, above the fx bar.
+        chartStrip,
         // the fx readout bar sits above the grid.
         fxBar,
         // the grid fills the area between the fx bar and the tab strip.

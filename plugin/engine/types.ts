@@ -98,6 +98,12 @@ export interface XlsxState {
     // cells that carry one. Empty for a value-only sheet / a csv-origin workbook. Kept
     // parallel to names/csv so a sheet switch reads formulas[i] with no re-parse.
     formulas: Record<string, string>[];
+    // charts[i] is sheet names[i]'s parsed embedded charts (bar/line/pie/…), extracted
+    // from the workbook zip AFTER the grid data is ready (SheetJS drops charts). Empty
+    // for a sheet with no charts / a workbook with none / a csv-origin workbook. Kept
+    // parallel to names/csv so a sheet switch reads charts[i] with no re-parse. `any[]`
+    // here (the parsed ChartModel shape) so this contract file never imports the parser.
+    charts: any[][];
     renderToken: number;
 }
 
@@ -231,6 +237,9 @@ export interface PptxViewState {
 export interface XlsxViewState {
     sheet: number; // 0-based selected sheet index
     names: string[]; // ordered sheet names (mirrors the workbook), for the tab strip
+    // whether the per-sheet Charts strip is collapsed (remembered like the other dock
+    // toggles). Undefined → default (expanded on first open of a chart-bearing sheet).
+    chartsCollapsed?: boolean;
 }
 
 // ── cross-cutting capability state (NOT viewer-owned) ────────────────────────
@@ -310,6 +319,8 @@ export interface CachedView {
     // the xlsx sheet (0-based index) the user was on, so a cache return reopens the
     // workbook on the same sheet.
     xlsxSheet?: number;
+    // whether the xlsx Charts strip was collapsed, so a cache return reopens it as left.
+    xlsxChartsCollapsed?: boolean;
     // the raster TIFF page (1-based) the user was on, so a cache return reopens the
     // multi-page TIFF on the same page.
     rasterPage?: number;
@@ -349,7 +360,7 @@ export interface CacheEntry {
     // the parsed workbook (ordered sheet names + per-sheet CSV text), kept alive
     // while cached so a re-open re-renders without a re-fetch/re-parse. Plain decoded
     // text — no GPU/worker handle — so no dispose() needed.
-    xlsxWorkbook?: { names: string[]; csv: string[]; formulas: Record<string, string>[] } | null;
+    xlsxWorkbook?: { names: string[]; csv: string[]; formulas: Record<string, string>[]; charts: any[][] } | null;
     // A multi-page TIFF keeps its decoded source on the entry so page switches re-blob
     // a different IFD with NO re-fetch: `rasterTiff.buf` is the original TIFF bytes and
     // `rasterTiff.pages` is the IFD count. Single-page raster files (which retype to

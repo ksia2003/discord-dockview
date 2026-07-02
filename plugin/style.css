@@ -1478,6 +1478,129 @@ html.dockview-open .dockview-page-inner {
     color: var(--text-strong, #f2f3f5);
 }
 
+/* PER-SHEET CHARTS STRIP — a collapsible band above the fx bar holding the sheet's
+   embedded charts (SheetJS drops them; we re-extract + draw them as SVG). A sheet with
+   no charts renders nothing here. The header is the collapse toggle; the row scrolls
+   horizontally for several charts. All colours are semantic theme tokens. */
+.dockview-xlsx-charts {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    background: var(--background-secondary, #2b2d31);
+    border-bottom: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+}
+/* The header/toggle: a full-width button with a caret + "Charts (N)". Reads as a quiet
+   section header, brightening on hover like the dock's other toggles. */
+.dockview-xlsx-charts-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 5px 10px;
+    border: none;
+    background: transparent;
+    color: var(--interactive-normal, #b5bac1);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    text-align: left;
+    cursor: pointer;
+    user-select: none;
+}
+.dockview-xlsx-charts-head:hover { color: var(--interactive-hover, #dbdee1); }
+.dockview-xlsx-charts-caret {
+    display: inline-block;
+    width: 12px;
+    font-size: 10px;
+    color: var(--text-muted, #949ba4);
+}
+/* The card row: horizontally scrollable, each card a fixed-ish width so several charts
+   sit side by side and scroll. Hidden entirely while collapsed. */
+.dockview-xlsx-charts-row {
+    display: flex;
+    gap: 12px;
+    padding: 4px 10px 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+}
+.dockview-xlsx-charts-row::-webkit-scrollbar { height: 6px; }
+.dockview-xlsx-charts-row::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thin-thumb, rgba(255, 255, 255, 0.12));
+    border-radius: 3px;
+}
+.dockview-xlsx-charts-row::-webkit-scrollbar-track { background: transparent; }
+/* One chart card: a bordered panel on the body tone holding a title, the SVG plot, and
+   a legend. Sized to the drawn viewBox (~460px) but shrinkable on a narrow dock. */
+.dockview-xlsx-chart-card {
+    flex: 0 0 auto;
+    width: 460px;
+    max-width: 92%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
+    border-radius: 8px;
+    background: var(--background-base-lower, #1a1a1e);
+}
+.dockview-xlsx-chart-title {
+    margin-bottom: 6px;
+    color: var(--text-strong, #f2f3f5);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dockview-xlsx-chart-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+/* The legend row under the plot: swatch + series/slice name, wrapping over lines. */
+.dockview-xlsx-chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin-top: 8px;
+}
+.dockview-xlsx-chart-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 160px;
+}
+.dockview-xlsx-chart-swatch {
+    flex: 0 0 auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+}
+.dockview-xlsx-chart-legend-name {
+    color: var(--text-muted, #949ba4);
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* A fallback card for an unsupported chart type — a quieter panel naming the type, so
+   the chart is never silently dropped and never a broken render. */
+.dockview-xlsx-chart-fallback {
+    width: 240px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 90px;
+    border-style: dashed;
+}
+.dockview-xlsx-chart-fallback-msg {
+    color: var(--text-muted, #949ba4);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
 /* STRUCTURED (JSON / XML) COLLAPSIBLE TREE — the default view for .json/.json5/.xml,
    with a header Tree/Raw toggle back to the highlighted code view. The tree is built
    imperatively into .dockview-tree-mount; rows are monospace, keys/values are

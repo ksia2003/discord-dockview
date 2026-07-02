@@ -234,7 +234,13 @@ export const STRINGS = {
         // after a click the address slot shows the cell's A1 address (e.g. "B7") and the
         // value slot its formula or raw value.
         fxLabel: "fx",
-        fxHint: "Click a cell to see its value or formula"
+        fxHint: "Click a cell to see its value or formula",
+        // The collapsible Charts strip above the grid: a sheet's embedded charts drawn
+        // from the workbook (SheetJS ignores them). {n} -> the chart count on the sheet.
+        chartsHeading: (n: number) => `Charts (${n})`,
+        // A fallback card for a chart type we recognise but don't draw (3D, radar, stock,
+        // surface, combo…). {type} -> the type name, e.g. "Radar chart".
+        chartUnsupported: (type: string) => `${type} — not supported yet`
     },
 
     // --- structured (JSON/XML) tree header controls -------------------------

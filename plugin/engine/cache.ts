@@ -169,6 +169,7 @@ export function mountFromCache(win: DockWindow, e: CacheEntry): boolean {
         names: e.xlsxWorkbook?.names ?? [],
         csv: e.xlsxWorkbook?.csv ?? [],
         formulas: e.xlsxWorkbook?.formulas ?? [],
+        charts: e.xlsxWorkbook?.charts ?? [],
         renderToken: win.content.xlsx.renderToken + 1
     };
     // re-apply the saved view-state + any per-viewer re-derivation (csv delimiter,

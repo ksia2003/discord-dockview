@@ -22,12 +22,14 @@
  */
 
 import { getCacheEntry } from "../../engine/cache";
-import { withLibLoading } from "../../engine/lazyLib";
+import { loadLib, withLibLoading } from "../../engine/lazyLib";
 import { STRINGS } from "../../strings";
 import type {
     CacheEntry, LoadOpts, LoadToken, Viewer, ViewerContext, XlsxViewState
 } from "../../engine/types";
+import { parseDelimited } from "../csv/parse";
 import { XlsxBody, resetXlsxView, xlsxState } from "./XlsxBody";
+import { extractCharts, hasCharts, type SheetCharts } from "./XlsxCharts";
 import { XlsxHeaderControls } from "./XlsxHeaderControls";
 
 /** Spreadsheet loader: fetch as ArrayBuffer → SheetJS reads the whole workbook →
@@ -36,7 +38,7 @@ import { XlsxHeaderControls } from "./XlsxHeaderControls";
 function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): void {
     // Reset the live workbook BEFORE the fetch (mirrors pptx/3D): clear the previous
     // sheets and BUMP renderToken so the body drops the stale workbook.
-    ctx.content.xlsx = { names: [], csv: [], formulas: [], renderToken: ctx.content.xlsx.renderToken + 1 };
+    ctx.content.xlsx = { names: [], csv: [], formulas: [], charts: [], renderToken: ctx.content.xlsx.renderToken + 1 };
     resetXlsxView(ctx.window);
     if (!opts.url) {
         ctx.content.loading = false;
@@ -51,13 +53,17 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             return r.arrayBuffer();
         })
         .then(async buf => {
+            // Keep the raw workbook bytes so the charts (which SheetJS drops) can be
+            // extracted from the zip AFTER the grid is up — the bytes ride on the return
+            // value and are handed to extractCharts in a follow-up microtask.
+            const bytes = new Uint8Array(buf);
             const XLSX: any = await withLibLoading(ctx, STRINGS.loading.lib.xlsx, "xlsx",
                 async () => await import("xlsx"));
             // cellFormula:true keeps each cell's .f (its formula text) so the body's
             // formula bar can read it; without it SheetJS drops formulas and only the
             // cached value survives. Everything else (the CSV serialisation below) is
             // unchanged — the value view is identical.
-            const wb = XLSX.read(new Uint8Array(buf), { type: "array", cellFormula: true });
+            const wb = XLSX.read(bytes, { type: "array", cellFormula: true });
             const names: string[] = Array.isArray(wb.SheetNames) ? wb.SheetNames : [];
             // sheet_to_csv emits RFC-4180 CSV (comma delimiter, quoted as needed),
             // which the csv grid's parser reads back unchanged. One pass over every
@@ -94,16 +100,20 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             return {
                 names: names.length ? names : [""],
                 csv: csv.length ? csv : [""],
-                formulas: formulas.length ? formulas : [{}]
+                formulas: formulas.length ? formulas : [{}],
+                bytes
             };
         })
-        .then((book: { names: string[]; csv: string[]; formulas: Record<string, string>[] }) => {
+        .then((book: { names: string[]; csv: string[]; formulas: Record<string, string>[]; bytes: Uint8Array }) => {
+            // Charts start empty; extractWorkbookCharts fills them after the grid paints
+            // (a chart-free workbook stays at []). The parallel array is sized to sheets.
+            const charts: any[][] = book.names.map(() => []);
             // Only keep the workbook on `entry` if it is STILL the cache's live entry
             // for its key (a rapid re-click could have replaced it). Plain text, no
             // teardown — no leak to guard against.
             const live = entry != null && getCacheEntry(entry.key) === entry;
             if (live) {
-                entry!.xlsxWorkbook = { names: book.names, csv: book.csv, formulas: book.formulas };
+                entry!.xlsxWorkbook = { names: book.names, csv: book.csv, formulas: book.formulas, charts };
                 entry!.loading = false;
                 entry!.error = null;
             }
@@ -111,6 +121,7 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             ctx.content.xlsx.names = book.names;
             ctx.content.xlsx.csv = book.csv;
             ctx.content.xlsx.formulas = book.formulas;
+            ctx.content.xlsx.charts = charts;
             ctx.content.xlsx.renderToken += 1; // a fresh workbook is ready
             // Fill the sheet names on the view-state now (the tab strip can render),
             // and clamp the (possibly cache-restored) selected sheet into range.
@@ -121,6 +132,10 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             ctx.content.loadingLabel = null;
             ctx.content.error = null;
             ctx.requestRender();
+            // Extract the embedded charts AFTER the grid is up so a big workbook never
+            // regresses open time. The bytes are dropped once parsed (no long-lived
+            // ArrayBuffer). Failures are swallowed — charts are additive, never fatal.
+            extractWorkbookCharts(ctx, token, entry, book.names, book.csv, book.bytes);
         })
         .catch(e => {
             if (entry) { entry.loading = false; entry.error = String(e?.message || e); }
@@ -130,6 +145,60 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             ctx.content.error = String(e?.message || e);
             ctx.requestRender();
         });
+}
+
+/**
+ * Extract the workbook's embedded charts (which SheetJS ignores) from the raw zip bytes,
+ * off the open path so a big workbook never pays for it before the grid paints. Uses
+ * fflate to unzip ONLY the small chart/drawing/rels/workbook XML parts (a filter skips
+ * decompressing the big sheet/sharedStrings data SheetJS already parsed), so a chart-free
+ * workbook pays only a central-directory scan. Parsed charts land on the live content +
+ * the cache entry; a superseded load is ignored. Never throws into the caller.
+ */
+function extractWorkbookCharts(
+    ctx: ViewerContext, token: LoadToken, entry: CacheEntry | null,
+    names: string[], csv: string[], bytes: Uint8Array
+): void {
+    // Run after the current microtask so the grid render lands first.
+    Promise.resolve().then(async () => {
+        try {
+            const fflate: any = await loadLib("fflate", async () => await import("fflate"));
+            // Only decompress the parts the chart chain needs: the workbook + its rels,
+            // every sheet + its rels, all drawings + their rels, and the chart XML. The
+            // big data parts (sharedStrings, sheetN data cells) are NOT decompressed.
+            const files: Record<string, Uint8Array> = fflate.unzipSync(bytes, {
+                filter: (file: { name: string }) => {
+                    const n = file.name;
+                    return n === "xl/workbook.xml"
+                        || n === "xl/_rels/workbook.xml.rels"
+                        || /^xl\/worksheets\/(_rels\/)?sheet\d+\.xml(\.rels)?$/.test(n)
+                        || /^xl\/drawings\/(_rels\/)?drawing\d+\.xml(\.rels)?$/.test(n)
+                        || /^xl\/charts\/chart\d+\.xml$/.test(n);
+                }
+            });
+            if (!hasCharts(files)) return; // chart-free workbook → nothing to do
+            const strFromU8: (u: Uint8Array) => string = fflate.strFromU8;
+            // Parse each sheet's CSV to a matrix so extractCharts can resolve a chart
+            // range whose embedded cache is missing (DrawingML usually writes caches, so
+            // this is a fallback). parseDelimited is cheap; only runs once per workbook.
+            const matrices: (string[][] | null)[] = csv.map(text => text != null ? parseDelimited(text, ",") : null);
+            const charts: SheetCharts[] = extractCharts(files, strFromU8, names.length, matrices, names);
+
+            const anyChart = charts.some(c => c.length);
+            if (!anyChart) return;
+
+            // Persist on the cache entry (if still live) so a re-open is instant.
+            if (entry != null && getCacheEntry(entry.key) === entry && entry.xlsxWorkbook) {
+                entry.xlsxWorkbook.charts = charts;
+            }
+            if (!token.isCurrent()) return; // superseded — don't touch content
+            ctx.content.xlsx.charts = charts;
+            ctx.content.xlsx.renderToken += 1; // signal the body to pick up the charts
+            ctx.requestRender();
+        } catch {
+            // Charts are additive; a parse failure leaves the grid untouched.
+        }
+    });
 }
 
 function createState(): XlsxViewState {
@@ -142,9 +211,11 @@ function resetState(vs: XlsxViewState): void {
     vs.names = [];
 }
 
-/** Park the selected sheet on the entry so a cache return reopens the workbook there. */
+/** Park the selected sheet + charts-strip state on the entry so a cache return reopens
+ *  the workbook where it was left. */
 function snapshot(vs: XlsxViewState, entry: CacheEntry): void {
     entry.view.xlsxSheet = vs?.sheet ?? 0;
+    entry.view.xlsxChartsCollapsed = vs?.chartsCollapsed ?? false;
 }
 
 /** Restore the saved sheet on a cache return. The sheet names are re-derived from the
@@ -156,6 +227,7 @@ function restore(vs: XlsxViewState, entry: CacheEntry): void {
     vs.names = names;
     vs.sheet = entry.view.xlsxSheet ?? 0;
     if (names.length) vs.sheet = Math.min(Math.max(0, vs.sheet), names.length - 1);
+    vs.chartsCollapsed = entry.view.xlsxChartsCollapsed ?? false;
 }
 
 export const XlsxViewer: Viewer<XlsxViewState> = {
