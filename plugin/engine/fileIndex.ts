@@ -64,13 +64,18 @@ export interface FileEntry {
 
 /** A channel's cached file list plus whether the message collection has more to
  *  page in either direction. `loading` is true while a loadOlder() fetch is in
- *  flight (so the UI can dim its spinner row and callers can no-op re-entrancy). */
+ *  flight (so the UI can dim its spinner row and callers can no-op re-entrancy).
+ *  `loadError` is true when the LAST loadOlder()'s network fetch actually failed
+ *  (as opposed to succeeding but paging in an older window that held no openable
+ *  attachments) — the UI uses it to show an honest retry row without hammering the
+ *  endpoint. Cleared at the start of the next loadOlder attempt. */
 export interface FileIndexState {
     channelId: string;
     items: FileEntry[];
     hasMoreBefore: boolean;
     hasMoreAfter: boolean;
     loading: boolean;
+    loadError: boolean;
 }
 
 /** Per-channel cache. Built lazily on the first getChannelFiles() for a channel and
@@ -134,12 +139,12 @@ function buildIndex(channelId: string): Omit<FileIndexState, "loading"> {
     return { channelId, items, hasMoreBefore, hasMoreAfter };
 }
 
-/** Rebuild `channelId`'s cached state from the store (preserving the loading flag),
- *  store it and return it. */
+/** Rebuild `channelId`'s cached state from the store (preserving the loading /
+ *  loadError flags), store it and return it. */
 function rebuild(channelId: string): FileIndexState {
     const prev = channelIndex.get(channelId);
     const built = buildIndex(channelId);
-    const state: FileIndexState = { ...built, loading: prev?.loading ?? false };
+    const state: FileIndexState = { ...built, loading: prev?.loading ?? false, loadError: prev?.loadError ?? false };
     channelIndex.set(channelId, state);
     return state;
 }
@@ -153,7 +158,7 @@ function rebuild(channelId: string): FileIndexState {
  * an empty, non-paging state.
  */
 export function getChannelFiles(channelId: string | null): FileIndexState {
-    if (!channelId) return { channelId: "", items: [], hasMoreBefore: false, hasMoreAfter: false, loading: false };
+    if (!channelId) return { channelId: "", items: [], hasMoreBefore: false, hasMoreAfter: false, loading: false, loadError: false };
     const cached = channelIndex.get(channelId);
     if (cached) return cached;
     return rebuild(channelId);
@@ -176,9 +181,10 @@ export function canLoadOlder(channelId: string | null): boolean {
  * attachments are appended (they sort oldest-first, so they land at the FRONT of the
  * oldest→newest list). Returns the refreshed state. A no-op (returns the current
  * state) when there's nothing more before, a fetch is already in flight, or the list
- * is empty. Best-effort: a fetch failure just clears the loading flag and returns the
- * unchanged list. NO search API — this is the same request volume/timing as native
- * scroll, so there is no added token/rate-limit exposure.
+ * is empty. Best-effort: a fetch failure clears the loading flag, sets loadError, and
+ * returns the unchanged list (so the UI shows an honest retry row rather than silently
+ * spinning). NO search API — this is the same request volume/timing as native scroll,
+ * so there is no added token/rate-limit exposure.
  */
 export async function loadOlder(channelId: string | null): Promise<FileIndexState> {
     if (!channelId) return getChannelFiles(channelId);
@@ -192,22 +198,28 @@ export async function loadOlder(channelId: string | null): Promise<FileIndexStat
     if (!anchor) return state;
 
     state.loading = true;
+    state.loadError = false; // a fresh attempt clears any prior failure
     let p: any;
+    let failed = false;
     try {
         p = (MessageActions as any).fetchMessages({ channelId, limit: 50, before: anchor });
     } catch {
         state.loading = false;
+        state.loadError = true;
         return state;
     }
     try {
         await Promise.resolve(p);
     } catch {
-        /* ignore fetch error — fall through to rebuild with the loading flag cleared */
+        // The network fetch itself failed — record it so the UI can offer a retry
+        // (distinct from a fetch that SUCCEEDS but pages in an older window with no
+        // openable attachments, where the list legitimately doesn't grow).
+        failed = true;
     }
-    // Re-read: the fetch widened the store's window. rebuild() preserves nothing but
-    // the loading flag (which we clear here), so re-set it false before rebuilding.
+    // Re-read: the fetch widened the store's window. rebuild() preserves the loading /
+    // loadError flags, so set them on the cached state before rebuilding.
     const cur = channelIndex.get(channelId);
-    if (cur) cur.loading = false;
+    if (cur) { cur.loading = false; cur.loadError = failed; }
     return rebuild(channelId);
 }
 

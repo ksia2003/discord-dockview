@@ -20,12 +20,14 @@
  */
 
 import definePlugin from "@utils/types";
+import { findGroupChildrenByChildId } from "@api/ContextMenu";
 import { Menu, React } from "@webpack/common";
 
 import managedStyle from "./style.css?managed";
 
 import { clearArtifact, load, retryActiveLoad } from "./engine/load";
 import { clearContentCache } from "./engine/cache";
+import { categoryOf } from "./engine/categoryMap";
 import { preloadDecoders } from "./engine/decoderModes";
 import { fallbackCopy } from "./engine/fetch";
 import { loadLib } from "./engine/lazyLib";
@@ -50,7 +52,7 @@ import {
 } from "./host/exclusivity";
 import { applyHostWidth, clampWidth } from "./host/layout";
 import { applyOpenState, ensureHost } from "./host/mount";
-import { closePanel, registerHost, startHost, stopHost, toggle } from "./host/open";
+import { closePanel, openBrowserHome, registerHost, startHost, stopHost, toggle } from "./host/open";
 import { openExternalLink } from "./external/openExternal";
 import { openInVesktopWindow, popoutArtifact, vesktopWindowHtml } from "./external/vesktopWindow";
 import { markdownHasToc, mdState } from "./viewers/doc/MarkdownViewer";
@@ -63,7 +65,7 @@ import { onNewFile } from "./edit/newFile";
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
 import { maybeRegisterMcpViewer, startMcp, stopMcp } from "./mcp";
-import { requestBrowserRefresh } from "./ui/FileBrowser";
+import { clearBrowserStates, requestBrowserRefresh, setBrowserFilter } from "./ui/FileBrowser";
 import { settings } from "./settings";
 import { STRINGS } from "./strings";
 import { scheduleAutoCheck } from "./ui/autoCheck";
@@ -116,6 +118,11 @@ function exposeDebug(): void {
         // file browser data spine (batch 1): enumerate/page/invalidate the channel's
         // openable attachments. The UI layer (batch 2) consumes these.
         getChannelFiles, loadOlder: loadOlderFiles, canLoadOlder, invalidateFileIndex,
+        // file browser HOME (batch 3): the γ entry point primitives — open the browser
+        // home for the current channel + prefilter it to a category. `browseChannelFiles`
+        // is exactly what the "message" attachment context-menu item runs.
+        openBrowserHome, setBrowserFilter,
+        browseChannelFiles: (category: any) => { setBrowserFilter(getCurrentChannelId(), category ?? null); openBrowserHome(); },
 
         // exclusivity (member list / profile sidebar) — drive + assert.
         closeNativeChannelSidebar,
@@ -236,6 +243,34 @@ export default definePlugin({
                     action: () => onNewFile(props?.channel ?? null)
                 })
             );
+        },
+        // γ ENTRY POINT (design §2.2): right-click an attachment in a message → open the
+        // channel's file BROWSER prefiltered to that file's type. The "message" menu
+        // fires for EVERY message right-click, so we act only when a clicked media item
+        // url is present (props.itemHref / itemSrc, the native fields), and only when
+        // that url is a file the dock can open. We prefilter to the file's viewer
+        // category, then open the browser home for the current channel.
+        "message": (children: any, props: any) => {
+            const src: string | undefined = props?.itemHref ?? props?.itemSrc;
+            if (!src) return;
+            const type = detectType({ url: src });
+            if (type === "unknown") return; // not a dock-openable file
+            const category = categoryOf(type);
+            const item = React.createElement(Menu.MenuItem, {
+                id: "dockview-browse-channel-files",
+                label: STRINGS.menu.browseChannelFiles,
+                action: () => {
+                    // Set the prefilter first (records it into the CURRENT channel's
+                    // browser memory), then open the home. If a browser is already up it
+                    // repaints via the filter notify; otherwise openBrowserHome shows it
+                    // and it reads the prefiltered state on mount.
+                    setBrowserFilter(getCurrentChannelId(), category);
+                    openBrowserHome();
+                }
+            });
+            // Sit next to Discord's own "Copy Link" entry; fall back to appending.
+            const group = findGroupChildrenByChildId("copy-link", children);
+            (group ?? children).push(item);
         }
     },
 
@@ -365,6 +400,7 @@ export default definePlugin({
         resetToClosedTransient(null);
         clearContentCache();
         clearFileIndex();
+        clearBrowserStates();
         getChannelStates().clear();
         clearChannelVisibility();
         setCurrentChannelMemId(null);

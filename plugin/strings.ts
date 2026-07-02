@@ -336,7 +336,10 @@ export const STRINGS = {
         // switches (the multi-window vision: the dock holds several windows you can
         // switch between, like a browser). The item flips to Unpin once pinned.
         pin: "Pin as a tab",
-        unpin: "Unpin tab"
+        unpin: "Unpin tab",
+        // Right-click an attachment in a message → open the dock's file browser for this
+        // channel, prefiltered to that file's type (the γ shortcut into the browser).
+        browseChannelFiles: "Browse channel files"
     },
 
     // --- tabs (pin-driven multi-window) -------------------------------------
@@ -370,9 +373,18 @@ export const STRINGS = {
         backHint: "Back to the channel's files",
         // The spinner row appended while older attachments page in.
         loadingMore: "Loading older files…",
+        // The row shown when paging older files failed (a network hiccup). We do NOT
+        // silently retry forever — the user taps to try the next page again.
+        loadMoreFailed: "Couldn't load older files.",
+        loadMoreRetry: "Try again",
         // The empty state — a channel with no openable attachments yet.
         emptyTitle: "No files here yet",
         emptySub: "Attachments shared in this channel will show up here.",
+        // The empty state shown when a type FILTER is active but no file in the channel
+        // matches it (distinct from the channel simply having no files). {label} -> the
+        // active category's label.
+        emptyFilterTitle: (label: string) => `No ${label.toLowerCase()} here`,
+        emptyFilterSub: "Try a different type, or pick All to see everything.",
         // {n} -> the number of files; {size} -> a human file size (already formatted).
         // The row's secondary line in list view when a size is known.
         sizeLine: (size: string) => size

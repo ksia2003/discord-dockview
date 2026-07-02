@@ -13,11 +13,17 @@
  * the click → load() that opens a file in the existing viewer.
  *
  * CHANNEL BINDING. It always reads the LIVE current channel id (getCurrentChannelId),
- * so a channel switch — which drops the empty shell and re-renders it fresh — naturally
- * shows the new channel's files. The per-channel index cache is invalidated on switch
- * by channelMemory.onChannelSelect (batch 1), so the list is never stale. A small
- * refresh tick (bumped by the flux MESSAGE_CREATE handler in index.tsx via
- * requestBrowserRefresh) invalidates + repaints when new attachments arrive live.
+ * so a channel switch — which keeps the open browser home and re-renders it fresh (the
+ * component is keyed by channel id) — naturally shows the new channel's files. The
+ * per-channel index cache is invalidated on switch by channelMemory.onChannelSelect
+ * (batch 1), so the list is never stale. A small refresh tick (bumped by the flux
+ * MESSAGE_CREATE handler in index.tsx via requestBrowserRefresh) invalidates + repaints
+ * when new attachments arrive live.
+ *
+ * PER-CHANNEL MEMORY (design §3.3). The chosen type filter, the grid/list mode, and the
+ * scroll position are remembered PER CHANNEL in our own in-memory Map (browserStates) —
+ * revisiting a channel restores how you left its browser. In-memory only, like
+ * channelMemory; cleared on plugin stop.
  *
  * FILTERING is client-side: the full enumeration is done once, then filtered by the
  * active category chip with no re-enumeration. Only the categories actually present in
@@ -46,14 +52,37 @@ import { iconPaths } from "./toolbar";
 
 const h = (...args: any[]) => (React.createElement as any)(...args);
 
-/** The browser's own view mode, remembered for the session across re-renders/channel
- *  switches (module-level so it survives the empty shell being torn down + rebuilt on
- *  a channel switch — a session-wide look preference, not per-channel state). */
 type Layout = "grid" | "list";
-let layoutMode: Layout = "grid";
-/** The active type-filter chip (null = All). Also session-wide; reset to All whenever
- *  the chosen category is absent from the entered channel (handled in the component). */
-let activeFilter: ViewerCategory | null = null;
+
+/** The browser's per-channel look state (design §3.3): the type-filter chip, the
+ *  grid/list mode, and the last scroll position. Remembered so returning to a channel
+ *  restores how you left its browser. It is our OWN in-memory Map (not an extension of
+ *  engine/channelMemory, which stores a single loaded-file descriptor); like that map
+ *  it never persists to disk — the dock is a transient view over the session. */
+interface BrowserState {
+    filter: ViewerCategory | null;
+    layout: Layout;
+    scrollTop: number;
+}
+
+const browserStates = new Map<string, BrowserState>();
+
+/** The default look for a channel we've never browsed: grid, no filter, top of list. */
+function defaultBrowserState(): BrowserState {
+    return { filter: null, layout: "grid", scrollTop: 0 };
+}
+
+/** This channel's remembered browser state (created on first visit). */
+function getBrowserState(channelId: string | null): BrowserState {
+    const key = channelId ?? "";
+    let s = browserStates.get(key);
+    if (!s) { s = defaultBrowserState(); browserStates.set(key, s); }
+    return s;
+}
+
+/** Drop EVERY channel's remembered browser state (plugin stop — paired with the other
+ *  in-memory teardowns in index.tsx). */
+export function clearBrowserStates(): void { browserStates.clear(); }
 
 /** A monotonic tick the flux MESSAGE_CREATE handler bumps (via requestBrowserRefresh)
  *  to force the mounted browser to re-enumerate. Read into state on mount so a live
@@ -68,6 +97,16 @@ let notifyRefresh: (() => void) | null = null;
 export function requestBrowserRefresh(channelId: string | null): void {
     invalidate(channelId);
     refreshTick++;
+    notifyRefresh?.();
+}
+
+/** γ ENTRY POINT support: prefilter the CURRENT channel's browser to a category, so the
+ *  "Browse channel files" context-menu item lands on that file's type. Records the
+ *  filter into the channel's remembered state and nudges a mounted browser to repaint.
+ *  The caller (index.tsx) opens the browser home first; this only sets the filter. A
+ *  null category clears the filter (show All). */
+export function setBrowserFilter(channelId: string | null, category: ViewerCategory | null): void {
+    getBrowserState(channelId).filter = category;
     notifyRefresh?.();
 }
 
@@ -111,35 +150,92 @@ export function FileBrowser() {
     const { useState, useEffect, useRef, useCallback } = React;
 
     const channelId = getCurrentChannelId();
+    const mem = getBrowserState(channelId);
     // Re-read the index whenever the refresh tick changes (live message arrival) or the
     // channel changes. getChannelFiles is cached per channel, so this is cheap.
     const [tick, setTick] = useState(refreshTick);
-    useEffect(() => {
-        notifyRefresh = () => setTick(refreshTick);
-        return () => { if (notifyRefresh) notifyRefresh = null; };
-    }, []);
 
-    // Local layout/filter state mirrors the module-level session prefs so a toggle
-    // repaints immediately; the module vars keep the choice across shell rebuilds.
-    const [layout, setLayout] = useState<Layout>(layoutMode);
-    const [filter, setFilter] = useState<ViewerCategory | null>(activeFilter);
+    // Local layout/filter state mirrors this channel's remembered browser state so a
+    // toggle repaints immediately; the Map keeps the choice across channel revisits.
+    const [layout, setLayout] = useState<Layout>(mem.layout);
+    const [filter, setFilter] = useState<ViewerCategory | null>(mem.filter);
+
+    useEffect(() => {
+        // A tick can arrive from a live message (requestBrowserRefresh) OR from the γ
+        // context menu setting mem.filter on the CURRENT channel (no remount to reseed
+        // local state) — reconcile the local filter from the Map so a prefilter applied
+        // to an already-open browser takes effect.
+        notifyRefresh = () => { setTick(refreshTick); setFilter(mem.filter); };
+        return () => { if (notifyRefresh) notifyRefresh = null; };
+    }, [mem]);
     // A bump used to repaint after loadOlder() resolves (the index mutates in place).
     const [, bump] = useState(0);
     const rerender = useCallback(() => bump(n => n + 1), []);
+    // The last loadOlder() paged nothing new (a network hiccup) → show an honest retry
+    // row instead of silently retrying forever. Cleared when a retry succeeds / re-arms.
+    const [loadFailed, setLoadFailed] = useState(false);
 
     const state = getChannelFiles(channelId);
     const cats = presentCategories(state.items);
 
-    // If the active filter isn't present in this channel, fall back to All (keeps the
-    // module pref if it reappears in another channel — we only override the render).
-    const effFilter = filter && cats.includes(filter) ? filter : null;
+    // The active filter is honoured even when its category has no chip in THIS channel
+    // (a γ prefilter can precede the file appearing in the cached window): the filtered
+    // list simply comes up empty, and the filter-empty card explains it honestly rather
+    // than silently reverting to All. `effFilter` is just the current filter (null = All).
+    const effFilter = filter;
 
     const items = effFilter ? state.items.filter(it => it.category === effFilter) : state.items;
 
+    // --- per-channel scroll restore ------------------------------------------
+    // Restore this channel's remembered scroll once the list is painted; save it on
+    // scroll (throttled to a frame). Keyed on channel + item count so a fresh channel
+    // (or a paged-in older window) re-applies the saved offset without fighting the user.
+    const scrollerRef = useRef<HTMLDivElement | null>(null);
+    const restoredRef = useRef(false);
+    useEffect(() => {
+        restoredRef.current = false;
+    }, [channelId]);
+    useEffect(() => {
+        const scroller = scrollerRef.current;
+        if (!scroller) return;
+        if (!restoredRef.current && mem.scrollTop > 0) {
+            scroller.scrollTop = mem.scrollTop;
+            restoredRef.current = true;
+        }
+        let raf = 0;
+        const onScroll = () => {
+            if (raf) return;
+            raf = requestAnimationFrame(() => {
+                raf = 0;
+                mem.scrollTop = scroller.scrollTop;
+            });
+        };
+        scroller.addEventListener("scroll", onScroll, { passive: true });
+        return () => {
+            if (raf) cancelAnimationFrame(raf);
+            scroller.removeEventListener("scroll", onScroll);
+        };
+    }, [channelId, state.items.length, effFilter, layout]);
+
     // --- infinite scroll: observe a sentinel at the list end -----------------
     const sentinelRef = useRef<HTMLDivElement | null>(null);
-    const scrollerRef = useRef<HTMLDivElement | null>(null);
     const loadingRef = useRef(false);
+    const runLoadOlder = useCallback(() => {
+        if (loadingRef.current) return;
+        if (!canLoadOlder(channelId)) return;
+        loadingRef.current = true;
+        setLoadFailed(false);
+        rerender(); // show the spinner row immediately
+        loadOlder(channelId).then(after => {
+            loadingRef.current = false;
+            // loadError is set ONLY when the network fetch itself failed — not when a
+            // fetch succeeds but pages in an older window that held no openable
+            // attachments (a legitimate no-growth result). So the retry row shows on a
+            // real hiccup, and a text-only older page just quietly reaches the end.
+            setLoadFailed(after.loadError);
+            rerender();
+        });
+    }, [channelId, rerender]);
     useEffect(() => {
         const sentinel = sentinelRef.current;
         const scroller = scrollerRef.current;
@@ -147,30 +243,26 @@ export function FileBrowser() {
         const io = new IntersectionObserver(entries => {
             for (const e of entries) {
                 if (!e.isIntersecting) continue;
-                if (loadingRef.current) return;
-                if (!canLoadOlder(channelId)) return;
-                loadingRef.current = true;
-                rerender(); // show the spinner row immediately
-                loadOlder(channelId).then(() => {
-                    loadingRef.current = false;
-                    rerender();
-                });
+                // Don't auto-page while a previous attempt is showing its retry row —
+                // the user taps Try again (no silent infinite retry on a bad network).
+                if (loadFailed) return;
+                runLoadOlder();
             }
         }, { root: scroller, rootMargin: "200px 0px", threshold: 0.01 });
         io.observe(sentinel);
         return () => io.disconnect();
         // Re-arm when the channel, the item count, or the filter changes (the sentinel
         // moves / the page boundary shifts).
-    }, [channelId, state.items.length, effFilter, tick]);
+    }, [channelId, state.items.length, effFilter, tick, loadFailed, runLoadOlder]);
 
     const onLayout = useCallback((mode: Layout) => {
-        layoutMode = mode;
+        mem.layout = mode;
         setLayout(mode);
-    }, []);
+    }, [mem]);
     const onFilter = useCallback((cat: ViewerCategory | null) => {
-        activeFilter = cat;
+        mem.filter = cat;
         setFilter(cat);
-    }, []);
+    }, [mem]);
 
     const openEntry = useCallback((entry: FileEntry) => {
         // The SAME endpoint a chip click uses: load() routes through detectType →
@@ -231,35 +323,66 @@ export function FileBrowser() {
         )
         : null;
 
+    // A centred empty-state card: the folder icon + a title + a sub-line. Reused for
+    // both the "channel has no files" and the "filter matches nothing" states.
+    const emptyCard = (title: string, sub: string) => h(
+        "div",
+        { className: "dockview-fb-empty" },
+        h(
+            "svg",
+            { className: "dockview-fb-empty-icon", width: 48, height: 48, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+            h("path", {
+                fill: "currentColor",
+                d: "M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-7-7Zm0 2.5L17.5 9H14a1 1 0 0 1-1-1V4.5ZM8 13h8v1.5H8V13Zm0 3.5h8V18H8v-1.5Z"
+            })
+        ),
+        h("div", { className: "dockview-fb-empty-title" }, title),
+        h("div", { className: "dockview-fb-empty-sub" }, sub)
+    );
+
     // --- the body: empty state OR the grid/list + spinner sentinel -----------
     let body: any;
     if (!state.items.length) {
-        body = h(
-            "div",
-            { className: "dockview-fb-empty" },
-            h(
-                "svg",
-                { className: "dockview-fb-empty-icon", width: 48, height: 48, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
-                h("path", {
-                    fill: "currentColor",
-                    d: "M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-7-7Zm0 2.5L17.5 9H14a1 1 0 0 1-1-1V4.5ZM8 13h8v1.5H8V13Zm0 3.5h8V18H8v-1.5Z"
-                })
-            ),
-            h("div", { className: "dockview-fb-empty-title" }, STRINGS.browser.emptyTitle),
-            h("div", { className: "dockview-fb-empty-sub" }, STRINGS.browser.emptySub)
-        );
+        // The channel genuinely has no openable attachments in the cached window.
+        body = emptyCard(STRINGS.browser.emptyTitle, STRINGS.browser.emptySub);
+    } else if (!items.length) {
+        // The channel HAS files, but the active type filter matches none of them — an
+        // honest "no <type> here" rather than silently showing everything.
+        const label = effFilter ? STRINGS.viewers.cat[effFilter] : STRINGS.browser.filterAll;
+        body = emptyCard(STRINGS.browser.emptyFilterTitle(label), STRINGS.browser.emptyFilterSub);
     } else {
         const cards = items.map(entry => renderCard(entry, layout, openEntry));
-        const spinner = state.loading || loadingRef.current
-            ? h(
+        // The end-of-list row: while a page is loading, a dim spinner; if the last page
+        // FAILED (a network hiccup), an honest retry row (no silent infinite retry); it
+        // never just disappears while there's more to load. When there's nothing more
+        // before, no row shows.
+        let moreRow: any = null;
+        if (state.loading || loadingRef.current) {
+            moreRow = h(
                 "div",
                 { className: "dockview-fb-more" },
                 h("div", { className: "dockview-fb-more-spinner", "aria-hidden": true }),
                 h("span", null, STRINGS.browser.loadingMore)
-            )
-            : null;
+            );
+        } else if (loadFailed) {
+            moreRow = h(
+                "div",
+                { className: "dockview-fb-more dockview-fb-more--failed" },
+                h("span", null, STRINGS.browser.loadMoreFailed),
+                h(
+                    "button",
+                    {
+                        type: "button",
+                        className: "dockview-fb-retry",
+                        onClick: () => { setLoadFailed(false); runLoadOlder(); }
+                    },
+                    STRINGS.browser.loadMoreRetry
+                )
+            );
+        }
         // The sentinel sits at the END: entering the viewport pages older files in. It
-        // stays in the DOM (dimmed by the spinner above it) so the observer keeps firing.
+        // stays in the DOM (below the spinner/retry row) so the observer keeps firing —
+        // but not while the retry row is up (the observer effect bails on loadFailed).
         const sentinel = h("div", { className: "dockview-fb-sentinel", ref: sentinelRef });
         body = h(
             "div",
@@ -272,7 +395,7 @@ export function FileBrowser() {
                 { className: layout === "grid" ? "dockview-fb-grid" : "dockview-fb-listwrap" },
                 ...cards
             ),
-            spinner,
+            moreRow,
             sentinel
         );
     }

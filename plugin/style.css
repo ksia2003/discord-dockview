@@ -2278,6 +2278,22 @@ html.dockview-open .dockview-page-inner {
     border-top-color: var(--text-muted, #949ba4);
     animation: dockview-spin 0.7s linear infinite;
 }
+/* The paging-failed row: an honest message + a Try again button (no silent retry). */
+.dockview-fb-more--failed { color: var(--text-feedback-critical, var(--text-muted, #949ba4)); }
+.dockview-fb-retry {
+    appearance: none;
+    border: none;
+    background: transparent;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    color: var(--text-link, #00a8fc);
+    transition: background-color 0.12s ease;
+}
+.dockview-fb-retry:hover { background: var(--background-modifier-hover, #3f424966); text-decoration: underline; }
+.dockview-fb-retry:focus-visible { outline: 2px solid var(--brand-500, var(--brand-experiment, #5865f2)); outline-offset: -2px; }
 .dockview-fb-sentinel { height: 1px; }
 
 /* Empty state — a channel with no openable attachments. */
