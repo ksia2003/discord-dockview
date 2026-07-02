@@ -140,5 +140,18 @@ export const settings = definePluginSettings({
     // request is ever made. ON = remote images load. The .eml path reads this live in the
     // renderer (email.ts); the .msg path plumbs it as an argument through the
     // convertAttachment IPC into main's sanitiser (main stays stateless).
-    emailRemoteImages: { type: OptionType.BOOLEAN, description: "Load remote images in email attachments", default: false }
+    emailRemoteImages: { type: OptionType.BOOLEAN, description: "Load remote images in email attachments", default: false },
+
+    // --- Updates page: automatic background check ---------------------------
+    // ON (default) = on plugin start, once per day, DockView checks GitHub for a newer
+    // build off the startup critical path (idle) and, if one is found, raises a one-time
+    // notice + highlights the Updates row. It NEVER auto-applies — the user still clicks
+    // Apply. OFF = no background check; the Updates page still checks on demand. The
+    // Updates page's "Check for updates automatically" switch drives this key.
+    autoCheckUpdates: { type: OptionType.BOOLEAN, description: "Check for updates automatically", default: true },
+    // The UNIX-ms timestamp of the last automatic check (0 = never). Persisted so the
+    // once-per-24h throttle survives restarts; not shown in any page, just bookkeeping
+    // the auto-check reads/writes. A STRING (OptionType.NUMBER coerces via the slider UI
+    // machinery, which we don't use here) holding the decimal ms — parsed on read.
+    lastAutoCheck: { type: OptionType.STRING, description: "Last automatic update check (internal)", default: "0", hidden: true }
 });

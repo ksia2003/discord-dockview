@@ -411,6 +411,37 @@ interface GhRelease {
     assets?: GhAsset[];
 }
 
+/**
+ * The result of a discovery attempt. A discriminated union so the renderer can show
+ * PRECISE copy per failure instead of collapsing everything to a silent "—":
+ *   ok:true         → a manifest was found (the panel then version-compares it).
+ *   "rateLimited"   → GitHub returned 403/429 with the rate-limit exhausted; resetAt
+ *                     is the UNIX-seconds reset time (from x-ratelimit-reset), or null.
+ *   "network"       → the request never completed (offline, DNS, timeout/abort).
+ *   "noRelease"     → GitHub answered fine but no v* release carries a manifest.json.
+ *   "malformed"     → a release + manifest asset exist but the manifest isn't valid JSON.
+ *   "httpError"     → any other non-2xx from the API/asset (httpStatus carries it).
+ */
+export type DiscoverResult =
+    | { ok: true; manifest: any; releaseTag: string; baseUrl: string }
+    | { ok: false; code: "rateLimited"; resetAt: number | null }
+    | { ok: false; code: "network" }
+    | { ok: false; code: "noRelease" }
+    | { ok: false; code: "malformed" }
+    | { ok: false; code: "httpError"; httpStatus: number };
+
+/** Read the rate-limit reset time (UNIX seconds) from a GitHub 403/429 response, or
+ *  null when the header is absent/unparseable. A 403/429 is only a RATE LIMIT when
+ *  x-ratelimit-remaining is "0" — a plain 403 (e.g. a private repo) is a normal
+ *  httpError, not a throttle, so the copy shouldn't blame rate limiting. */
+function readRateLimit(res: Response): { limited: boolean; resetAt: number | null } {
+    const remaining = res.headers.get("x-ratelimit-remaining");
+    const limited = (res.status === 403 || res.status === 429) && remaining === "0";
+    const resetRaw = res.headers.get("x-ratelimit-reset");
+    const resetAt = resetRaw && /^\d+$/.test(resetRaw) ? parseInt(resetRaw, 10) : null;
+    return { limited, resetAt };
+}
+
 /** Compare two "vX.Y.Z" tags by NUMERIC version (so 0.1.10 > 0.1.9, which a
  *  lexical compare gets wrong). Returns >0 when `a` is the newer version. Self-
  *  contained (native.ts imports only Node builtins, so no shared compare helper). */
@@ -434,8 +465,11 @@ function cmpPluginTag(a: string, b: string): number {
  * highest NUMERIC version, fetches + parses its manifest, and returns the manifest
  * together with the release tag and the asset BASE url (the manifest asset url
  * minus "/manifest.json"), which applyUpdate uses to resolve the file downloads.
- * Returns null when no such release exists or anything fails — the panel surfaces
- * that as "couldn't check".
+ *
+ * Returns a DISCRIMINATED result (DiscoverResult), not a bare null: every failure
+ * mode is distinguished — rate-limited (with the reset time), network-unreachable,
+ * a genuine no-release, a malformed manifest, and any other HTTP error — so the
+ * panel can show precise human copy instead of a silent "—".
  *
  * Network-only (the `fetch` global + the shared fetchWithTimeout); imports no new
  * module. The leading IpcMainInvokeEvent is injected by Electron and ignored.
@@ -444,59 +478,85 @@ export async function discoverManifest(
     _: IpcMainInvokeEvent,
     owner: string,
     repo: string
-): Promise<{ manifest: any; releaseTag: string; baseUrl: string } | null> {
+): Promise<DiscoverResult> {
+    // --- 1. List the releases. Distinguish a rate-limit / HTTP error / network fail. ---
+    const listUrl = `https://api.github.com/repos/${owner}/${repo}/releases?per_page=30`;
+    let releases: GhRelease[];
     try {
-        const listUrl = `https://api.github.com/repos/${owner}/${repo}/releases?per_page=30`;
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-        let releases: GhRelease[];
+        let res: Response;
         try {
-            const res = await fetch(listUrl, { signal: controller.signal, headers: GH_HEADERS });
-            if (!res.ok) return null;
-            releases = (await res.json()) as GhRelease[];
+            res = await fetch(listUrl, { signal: controller.signal, headers: GH_HEADERS });
         } finally {
             clearTimeout(timer);
         }
-        if (!Array.isArray(releases)) return null;
-
-        // The GitHub API list order is NOT reliably newest-first BY VERSION (a two-digit
-        // patch like 0.1.10 lands after 0.1.9 in the list). Keep only the non-draft "v*"
-        // releases that actually carry the plugin's manifest.json asset (the clean
-        // DockView releases also carry the installers, and an installer-only release has
-        // no manifest.json — skip it here rather than pick it then null out), then take
-        // the one with the highest NUMERIC version.
-        const candidates = releases.filter(
-            r =>
-                !r?.draft &&
-                typeof r?.tag_name === "string" &&
-                r.tag_name.startsWith(PLUGIN_TAG_PREFIX) &&
-                (r.assets ?? []).some(a => a?.name === "manifest.json")
-        );
-        if (!candidates.length) return null;
-        const release = candidates.reduce((best, r) => (cmpPluginTag(r.tag_name!, best.tag_name!) > 0 ? r : best));
-        if (!release.tag_name) return null;
-
-        const manifestAsset = (release.assets ?? []).find(a => a?.name === "manifest.json");
-        const manifestUrl = manifestAsset?.browser_download_url;
-        if (!manifestUrl) return null;
-
-        // The asset download base = the manifest url minus its "/manifest.json"
-        // tail. applyUpdate resolves each file's (relative or absolute) url on it.
-        const baseUrl = manifestUrl.replace(/\/manifest\.json$/i, "");
-
-        const manRes = await fetchWithTimeout(manifestUrl, true);
-        const text = await manRes.text();
-        let manifest: any;
-        try {
-            manifest = JSON.parse(text);
-        } catch {
-            return null;
+        if (!res.ok) {
+            const { limited, resetAt } = readRateLimit(res);
+            if (limited) return { ok: false, code: "rateLimited", resetAt };
+            return { ok: false, code: "httpError", httpStatus: res.status };
         }
-
-        return { manifest, releaseTag: release.tag_name, baseUrl };
+        const json = await res.json();
+        if (!Array.isArray(json)) return { ok: false, code: "malformed" };
+        releases = json as GhRelease[];
     } catch {
-        return null;
+        // fetch rejects on offline/DNS/abort(timeout) — the network never completed.
+        return { ok: false, code: "network" };
     }
+
+    // --- 2. Pick the newest v* release that carries a manifest.json asset. ---
+    // The GitHub API list order is NOT reliably newest-first BY VERSION (a two-digit
+    // patch like 0.1.10 lands after 0.1.9 in the list). Keep only the non-draft "v*"
+    // releases that actually carry the plugin's manifest.json asset (the clean
+    // DockView releases also carry the installers, and an installer-only release has
+    // no manifest.json — skip it here), then take the highest NUMERIC version.
+    const candidates = releases.filter(
+        r =>
+            !r?.draft &&
+            typeof r?.tag_name === "string" &&
+            r.tag_name.startsWith(PLUGIN_TAG_PREFIX) &&
+            (r.assets ?? []).some(a => a?.name === "manifest.json")
+    );
+    if (!candidates.length) return { ok: false, code: "noRelease" };
+    const release = candidates.reduce((best, r) => (cmpPluginTag(r.tag_name!, best.tag_name!) > 0 ? r : best));
+    const manifestAsset = (release.assets ?? []).find(a => a?.name === "manifest.json");
+    const manifestUrl = manifestAsset?.browser_download_url;
+    if (!release.tag_name || !manifestUrl) return { ok: false, code: "noRelease" };
+
+    // The asset download base = the manifest url minus its "/manifest.json" tail.
+    // applyUpdate resolves each file's (relative or absolute) url on it.
+    const baseUrl = manifestUrl.replace(/\/manifest\.json$/i, "");
+
+    // --- 3. Fetch + parse the manifest. A bad body is "malformed", not "no release". ---
+    let text: string;
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        let manRes: Response;
+        try {
+            manRes = await fetch(manifestUrl, { signal: controller.signal });
+        } finally {
+            clearTimeout(timer);
+        }
+        if (!manRes.ok) {
+            const { limited, resetAt } = readRateLimit(manRes);
+            if (limited) return { ok: false, code: "rateLimited", resetAt };
+            return { ok: false, code: "httpError", httpStatus: manRes.status };
+        }
+        text = await manRes.text();
+    } catch {
+        return { ok: false, code: "network" };
+    }
+
+    let manifest: any;
+    try {
+        manifest = JSON.parse(text);
+    } catch {
+        return { ok: false, code: "malformed" };
+    }
+    if (!manifest || typeof manifest !== "object") return { ok: false, code: "malformed" };
+
+    return { ok: true, manifest, releaseTag: release.tag_name, baseUrl };
 }
 
 // ════════════════════════════════════════════════════════════════════════════

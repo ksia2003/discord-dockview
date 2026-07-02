@@ -34,6 +34,7 @@
  */
 
 import { AboutPanel } from "./AboutPanel";
+import { isUpdateFlagged } from "./autoCheck";
 import { DockViewIcon } from "./DockViewIcon";
 import { GallerySection } from "./GallerySection";
 import { GeneralPanel } from "./GeneralPanel";
@@ -101,8 +102,13 @@ function buildDockViewEntries(plugin: any): any[] {
             Icon: DockViewIcon
         }),
         buildEntry({
+            // When a background check has flagged a newer build, mark the Updates row
+            // with a trailing bullet so it stands out in the sidebar (a cheap, native-
+            // looking highlight). The layout rebuilds when the settings UI (re)opens, so
+            // the mark appears on the next open after the daily check; the row's panel
+            // clears the flag once viewed. No mark in the steady state.
             key: "dockview_updates",
-            title: S.updates,
+            title: isUpdateFlagged() ? `${S.updates} •` : S.updates,
             Component: UpdatePanel,
             Icon: DockViewIcon
         }),

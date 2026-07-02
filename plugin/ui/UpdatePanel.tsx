@@ -21,65 +21,39 @@
  * back into it.
  */
 
-import { Button, Forms, React, Text } from "@webpack/common";
+import { Button, Forms, React, Switch, Text } from "@webpack/common";
 
+import { settings } from "../settings";
 import { STRINGS } from "../strings";
 import { compareDockviewVersions, DOCKVIEW_PLUGIN_VERSION, parseVersionTxt } from "../version";
-
-const OWNER = "ksia2003";
-const REPO = "discord-dockview";
+import { clearUpdateFlag } from "./autoCheck";
+import {
+    DiscoverResult, getNative, getTargetDir, OWNER, pluginStamp, REPO
+} from "./updateShared";
 
 const U = STRINGS.update;
 
-/** Wrap a bare plugin version (e.g. "0.1.1") in the canonical version.txt shape so
- *  compareDockviewVersions — which compares version.txt STRINGS — can order it. The
- *  vencordRef/gitHash slots are placeholders the comparator ignores. "" for a null
- *  input sorts as oldest (the comparator treats unparseable as legacy/oldest). */
-const pluginStamp = (plugin: string | null) => (plugin ? `dockview:${plugin} x x` : "");
-
-/** The subset of native.ts (main process) the panel calls. Reached via Vencord's
- *  pluginHelpers bridge, so every method is async (ipcRenderer.invoke). */
-interface DockViewNative {
-    discoverManifest: (
-        owner: string,
-        repo: string
-    ) => Promise<{ manifest: any; releaseTag: string; baseUrl: string } | null>;
-    readInstalledVersion: (targetDir: string) => Promise<string | null>;
-    applyUpdate: (
-        targetDir: string,
-        manifest: any,
-        baseUrl: string
-    ) => Promise<{ ok: boolean; needsRelaunch: boolean; error?: string }>;
-}
-
-/** Resolve the native updater bridge, or null if this build doesn't expose it.
- *  Mirrors the openExternal.ts guard: optional-chain to the helper, then verify
- *  each function is callable before trusting it. */
-function getNative(): DockViewNative | null {
-    try {
-        const native = (window as any).VencordNative?.pluginHelpers?.DockView;
-        if (
-            native &&
-            typeof native.discoverManifest === "function" &&
-            typeof native.readInstalledVersion === "function" &&
-            typeof native.applyUpdate === "function"
-        ) {
-            return native as DockViewNative;
+/** Turn a discovery FAILURE (never the ok case) into its precise one-line copy. Each
+ *  code maps to its own sentence so the panel never shows a silent "—" or a vague
+ *  "couldn't check". rateLimited formats the reset time in the user's LOCALE. */
+function failCopy(res: Extract<DiscoverResult, { ok: false }>): string {
+    switch (res.code) {
+        case "rateLimited": {
+            let time: string | null = null;
+            if (res.resetAt) {
+                try {
+                    time = new Date(res.resetAt * 1000).toLocaleTimeString(undefined, {
+                        hour: "numeric",
+                        minute: "2-digit"
+                    });
+                } catch { time = null; }
+            }
+            return U.fail.rateLimited(time);
         }
-    } catch {
-        /* fall through to unavailable */
-    }
-    return null;
-}
-
-/** The install directory the updater writes into (VENCORD_FILES_DIR, honouring a
- *  custom vencordDir). Read synchronously off VesktopNative; null if unavailable. */
-function getTargetDir(): string | null {
-    try {
-        const dir = (window as any).VesktopNative?.fileManager?.getVencordDir?.();
-        return typeof dir === "string" && dir ? dir : null;
-    } catch {
-        return null;
+        case "network": return U.fail.network;
+        case "httpError": return U.fail.http(res.httpStatus);
+        case "malformed": return U.fail.malformed;
+        case "noRelease": return U.fail.noRelease;
     }
 }
 
@@ -112,6 +86,9 @@ export function UpdatePanel() {
     const native = getNative();
     const targetDir = getTargetDir();
 
+    // The reactive settings store — the auto-check switch persists + re-renders through it.
+    const store = settings.use(["autoCheckUpdates"]);
+
     // On-disk version.txt (read once on mount). null until read / if unreadable.
     const [installed, setInstalled] = useState<string | null>(null);
     // The fetched latest manifest + its plugin version, after a successful Check.
@@ -120,10 +97,14 @@ export function UpdatePanel() {
     const [applying, setApplying] = useState(false);
     // A one-line status; null = show the derived verdict instead.
     const [status, setStatus] = useState<string | null>(null);
+    // True when the LAST check failed (any discovery error) → the panel offers Retry.
+    const [checkFailed, setCheckFailed] = useState(false);
     const [applied, setApplied] = useState(false);
 
-    // Read the on-disk stamp once (transient pre-render shows "—").
+    // Read the on-disk stamp once (transient pre-render shows "—"). Also clear the
+    // background-check highlight flag: opening this page means the user has seen it.
     useEffect(() => {
+        clearUpdateFlag();
         if (!native || !targetDir) return;
         let live = true;
         native
@@ -137,19 +118,24 @@ export function UpdatePanel() {
         if (!native) return;
         setChecking(true);
         setStatus(null);
+        setCheckFailed(false);
         try {
             const found = await native.discoverManifest(OWNER, REPO);
-            if (!found) {
+            if (!found.ok) {
+                // Typed failure → precise per-code copy + a Retry affordance. Never "—".
                 setLatest(null);
-                setStatus(U.noRelease);
+                setStatus(failCopy(found));
+                setCheckFailed(true);
                 return;
             }
             const pv = found.manifest?.pluginVersion;
             const version = typeof pv === "string" && pv ? pv : null;
             setLatest({ manifest: found.manifest, baseUrl: found.baseUrl, version });
         } catch (err) {
+            // The IPC bridge itself threw (should be rare — native returns a typed result).
             setLatest(null);
             setStatus(U.error((err as Error)?.message ?? String(err)));
+            setCheckFailed(true);
         } finally {
             setChecking(false);
         }
@@ -253,7 +239,9 @@ export function UpdatePanel() {
                     disabled: checking || applying,
                     onClick: onCheck
                 },
-                checking ? U.checking : U.check
+                // A failed check flips the button to "Try again" — the Retry affordance
+                // the panel always offers instead of a dead end.
+                checking ? U.checking : checkFailed ? STRINGS.actions.retry : U.check
             ),
             React.createElement(
                 Button,
@@ -265,6 +253,19 @@ export function UpdatePanel() {
                 },
                 applying ? U.applying : U.apply
             )
+        ),
+
+        // --- automatic-check switch (opt out of the daily background check) -----
+        React.createElement(Forms.FormDivider, { style: { margin: "16px 0" } }),
+        React.createElement(
+            Switch,
+            {
+                value: store.autoCheckUpdates !== false,
+                note: U.autoCheckNote,
+                hideBorder: true,
+                onChange: (v: boolean) => { store.autoCheckUpdates = v; }
+            },
+            U.autoCheckTitle
         )
     );
 }

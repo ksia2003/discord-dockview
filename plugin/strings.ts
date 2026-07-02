@@ -572,9 +572,41 @@ export const STRINGS = {
         notChecked: "Not checked yet.",
         // Check found no plugin release / couldn't reach GitHub.
         noRelease: "Couldn't find a published update.",
-        // {raw} -> the underlying error text.
+        // {raw} -> the underlying error text (from a failed apply).
         error: (raw: string) => `Couldn't check: ${raw}`,
         // The native updater bridge isn't present in this build.
-        unavailable: "Updates aren't available in this build."
+        unavailable: "Updates aren't available in this build.",
+
+        // --- typed check-failure copy (one per discoverManifest error code) ---
+        // Each check failure reads as its OWN precise line, never a silent "—", and the
+        // panel offers a Retry alongside. Lead with what happened + what the user can do.
+        fail: {
+            // GitHub throttled the check from this network. {time} -> the local reset
+            // time ("3:47 PM"), or null when unknown.
+            rateLimited: (time: string | null) =>
+                time
+                    ? `GitHub is rate-limiting update checks from this network — try again after ${time}.`
+                    : "GitHub is rate-limiting update checks from this network — try again in a little while.",
+            // The request never reached GitHub (offline / DNS / timeout).
+            network: "Couldn't reach GitHub — check your connection and try again.",
+            // GitHub answered, but a bad HTTP status. {code} -> the status number.
+            http: (code: number) => `GitHub returned an unexpected error (HTTP ${code}) — try again.`,
+            // The manifest asset was there but wasn't valid — a broken/partial release.
+            malformed: "The update information from GitHub was unreadable — try again later.",
+            // No published release carries a plugin update.
+            noRelease: "Couldn't find a published update."
+        },
+
+        // --- automatic background check (Updates page) --------------------------
+        // The "check for updates automatically" switch on the Updates page.
+        autoCheckTitle: "Check for updates automatically",
+        autoCheckNote:
+            "Once a day, DockView quietly checks GitHub for a newer build and lets you know " +
+            "when one is ready. It never installs anything on its own — you still choose when to apply.",
+        // The one-time notice shown when the daily background check finds an update.
+        // {version} -> the newer plugin version.
+        noticeUpdate: (version: string) => `DockView ${version} is available.`,
+        // The notice's action button (opens the Updates page).
+        noticeButton: "See update"
     }
 } as const;

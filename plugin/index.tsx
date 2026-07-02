@@ -62,6 +62,7 @@ import { startLatex, stopLatex } from "./latex";
 import { maybeRegisterMcpViewer, startMcp, stopMcp } from "./mcp";
 import { settings } from "./settings";
 import { STRINGS } from "./strings";
+import { scheduleAutoCheck } from "./ui/autoCheck";
 import { installDockViewSection, uninstallDockViewSection } from "./ui/settingsSection";
 
 // --- window key handlers (lifecycle-scoped, removed on stop) ----------------
@@ -312,6 +313,11 @@ export default definePlugin({
         const ric = (window as any).requestIdleCallback;
         if (typeof ric === "function") ric(warm, { timeout: 4000 });
         else setTimeout(warm, 2000);
+
+        // 11. Once-a-day background update check (opt-out via the Updates page switch),
+        //     OFF the boot critical path + throttled to 24h. On finding a newer build it
+        //     raises a one-time notice + flags the Updates row; it NEVER auto-applies.
+        scheduleAutoCheck();
     },
 
     stop() {
