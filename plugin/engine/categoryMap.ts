@@ -13,9 +13,9 @@
  * what the panel actually renders, because it keys off the very type the router uses.
  *
  * EXHAUSTIVE BY CONSTRUCTION. CATEGORY_OF maps every ContentType except "unknown"
- * (never intercepted) and "mcpapp" (the parked MCP surface, not a file viewer). The
- * `satisfies` check below makes the compiler reject the map if a NEW ContentType is
- * added without a category — so adding a format forces a category decision here.
+ * (never intercepted). The `satisfies` check below makes the compiler reject the map
+ * if a NEW ContentType is added without a category — so adding a format forces a
+ * category decision here.
  */
 
 import { settings } from "../settings";
@@ -35,8 +35,8 @@ export type ViewerCategory =
     | "presentations";
 
 /** ContentTypes that are never chip-intercepted, so they need no category: "unknown"
- *  (stock Discord already) and "mcpapp" (the parked MCP widget surface, not a file). */
-type UncategorisedType = "unknown" | "mcpapp";
+ *  (stock Discord already handles it). */
+type UncategorisedType = "unknown";
 
 /** Every rendered ContentType → its category. Representative formats per category:
  *   - documents      pdf, docx, rtf, odt, html, eml, msg, xml, md, ipynb
@@ -98,8 +98,8 @@ export const CATEGORY_OF = {
     odp: "presentations"
 } satisfies Record<Exclude<ContentType, UncategorisedType>, ViewerCategory>;
 
-/** The category a ContentType belongs to, or null for the never-intercepted types
- *  ("unknown" / "mcpapp"). */
+/** The category a ContentType belongs to, or null for the never-intercepted
+ *  "unknown". */
 export function categoryOf(type: ContentType): ViewerCategory | null {
     return (CATEGORY_OF as Record<string, ViewerCategory>)[type] ?? null;
 }
@@ -120,8 +120,8 @@ const CATEGORY_SETTING: Record<ViewerCategory, string> = {
 /** Whether the dock should intercept a chip resolving to `type`, read LIVE from the
  *  settings store so a toggle applies to the next chip click with no reload. Two gates:
  *  the MASTER switch (all interception) and the file's CATEGORY switch. An unmapped
- *  type ("unknown" never reaches here; "mcpapp" isn't a chip) is treated as enabled so
- *  a future type isn't silently swallowed before it gets a category. */
+ *  type ("unknown" never reaches here) is treated as enabled so a future type isn't
+ *  silently swallowed before it gets a category. */
 export function viewerEnabled(type: ContentType): boolean {
     try {
         if (!settings.store.viewersMaster) return false;

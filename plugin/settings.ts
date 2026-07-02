@@ -1,65 +1,26 @@
 /*
  * DockView — Vencord plugin settings.
  * ---------------------------------------------------------------------------
- * The MCP bridge connect info (enable toggle + token + port) lives in Vencord's
- * own settings store, NOT in localStorage: Discord's renderer DELETES
- * window.localStorage (it reads back `undefined`), so a localStorage-backed
- * token never survived and the bridge client could never connect on real
- * Discord. Vencord persists these through its own storage, which is available
- * in the isolated renderer context.
+ * These back the DockView settings SECTION (General + Viewers + Performance +
+ * Privacy + Updates pages, ui/settings). They persist through Vencord's own
+ * settings store, NOT localStorage: Discord's renderer DELETES window.localStorage
+ * (it reads back `undefined`), so a localStorage-backed value never survives, while
+ * Vencord's store is available in the isolated renderer context.
  *
- * This module is imported by index.tsx (which wires `settings` into the plugin
- * def). It must therefore NOT import index.tsx at module top level, or we'd create
- * an import cycle. The onChange handlers reach the bridge LAZILY via a dynamic
- * import so the cycle never forms and the call is a safe no-op while the panel
- * isn't running.
+ * Every key is read at RUNTIME through `settings.store.<key>` at the moment a
+ * behaviour runs (a chip click, a dock open, a media mount, a channel switch), so a
+ * toggle takes effect LIVE with no reload. The dock WIDTH is NOT here — it persists
+ * through DataStore (engine/persist.ts LS_WIDTH), one width store shared with the
+ * drag-resize; the General page's slider drives that same store, not a copy.
  *
- * The settings here are STORE-ONLY: there is no OptionType.COMPONENT entry, so the
- * keys never render in Vencord's plugin-settings page (the plugin is `hidden`
- * anyway). The MCP keys are PARKED — the bridge is registered only behind these
- * toggles; there is no MCP UI in the DockView settings section (it was dropped in
- * the settings-panel rework; the mcp/ code stays for a separate cleanup pass).
- *
- * The dockview.* / viewers* keys back the DockView settings SECTION (General + Viewers
- * pages, ui/settings pages). They're read at RUNTIME through `settings.store.<key>` at
- * the moment a behaviour runs (a chip click, a dock open, a media mount, a channel
- * switch), so a toggle takes effect LIVE with no reload. The dock WIDTH is NOT here —
- * it persists through DataStore (engine/persist.ts LS_WIDTH), one width store shared
- * with the drag-resize; the General page's slider drives that same store, not a copy.
+ * This module is imported by index.tsx (which wires `settings` into the plugin def),
+ * so it must NOT import index.tsx at module top level, or we'd create an import cycle.
  */
 
 import { definePluginSettings } from "@api/Settings";
 import { OptionType } from "@utils/types";
 
-// Reconnect the bridge after a setting changes. The MCP bridge is PARKED under
-// mcp/ (registered only behind these toggles), so we reach restartMcpClient LAZILY
-// via a dynamic import: that keeps mcp/ (and its transitive engine/host imports) out
-// of settings' eval-time graph — no cycle, no eager pull of the bridge into the
-// core. restartMcpClient is itself a safe no-op while the feature isn't running.
-function reconnectBridge() {
-    import("./mcp/bridge").then(m => m.restartMcpClient()).catch(() => { /* not running */ });
-}
-
 export const settings = definePluginSettings({
-    mcpBridgeEnabled: {
-        type: OptionType.BOOLEAN,
-        description: "Connect the dock to a local MCP bridge (renders AI-pushed widgets)",
-        default: false,
-        onChange: reconnectBridge
-    },
-    mcpBridgeToken: {
-        type: OptionType.STRING,
-        description: "Bridge auth token (paste the token the bridge prints on startup)",
-        default: "",
-        onChange: reconnectBridge
-    },
-    mcpBridgePort: {
-        type: OptionType.NUMBER,
-        description: "Bridge port (127.0.0.1)",
-        default: 9820,
-        onChange: reconnectBridge
-    },
-
     // --- General page -------------------------------------------------------
     // Collapse the member list / profile sidebar while the dock is open (the
     // native-thread exclusivity). ON = current behaviour. OFF = the dock opens

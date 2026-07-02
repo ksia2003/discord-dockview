@@ -94,10 +94,11 @@ export function showContent(opts: ShowOpts): "noop" | "cache" | "fetch" {
         hit.name = name; // honour the (possibly fresh) display name
         mountFromCache(win, hit);
         // The descriptor must re-PRODUCE this entry's cache key on a later restore,
-        // so it carries the key's ROUTING type — not the entry's RENDER type. They
-        // differ for a TSX `.artifact`: it's keyed/fetched as "html" (loadHtml re-
-        // detects + re-wraps the source) but RENDERS as "mcpapp". Using hit.type
-        // here would key a restore as "mcpapp|url" (miss → loadMcpApp with no html).
+        // so it carries the key's ROUTING type (what detectType returns for the url)
+        // — not the entry's RENDER type, which can differ for a decode-then-retype
+        // format (an .eps is keyed/fetched as "postscript" but ends up RENDERING as
+        // "pdf"; a .tiff keyed as "rasterimage" renders as "image"). Using hit.type
+        // here would key a restore on the render type and miss the cache.
         win.activeDescriptor = { name, url: hit.url, type: detectType({ url: hit.url, name }) };
         return "cache";
     }

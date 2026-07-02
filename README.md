@@ -175,8 +175,7 @@ The plugin is organised so each folder's name tells you what it does:
 - **`ui/`** — the dock chrome (tab strip, header controls, find bar, state cards)
   and the settings pages.
 - **`viewers/`** — one self-contained module per format.
-- **`edit/`**, **`external/`**, **`mcp/`** — in-panel editing, pop-out windows,
-  and the (parked) MCP bridge.
+- **`edit/`**, **`external/`** — in-panel editing and pop-out windows.
 
 **Adding a viewer** is one new module plus three registrations: add the module
 under `viewers/<fmt>/`, register it in `viewers/registry.ts`, map its extensions

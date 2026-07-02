@@ -423,7 +423,7 @@ export function HtmlBody() {
         // allow-same-origin inherits THIS document's origin, so a script in an
         // untrusted-authored artifact could reach the host DOM and escape the
         // sandbox. Markdown/HTML here is inert and the link bridge is postMessage
-        // (origin-agnostic), so a null origin loses nothing. Mirrors McpAppBody.
+        // (origin-agnostic), so a null origin loses nothing.
         sandbox: "allow-scripts",
         onLoad,
         onError,

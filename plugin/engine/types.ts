@@ -28,7 +28,6 @@ export type ContentType =
     | "video"
     | "unknown"
     | "csv"
-    | "mcpapp"
     | "docx"
     | "rtf"
     | "odt"
@@ -205,10 +204,6 @@ export interface TreeViewState {
  *  entry so a return reopens with the TOC as it was left. */
 export interface MarkdownViewState {
     tocOpen: boolean;
-}
-
-export interface McpAppViewState {
-    appId: string | null;
 }
 
 /** The 3D viewer's per-window view-state: the OrbitControls camera pose, so a cache
