@@ -39,6 +39,21 @@ function vesktopVersion(): string | null {
     }
 }
 
+/** Fetch the active profile name via the native profiles bridge. Returns the name,
+ *  null (default install), or undefined (bridge unavailable — hides the row). */
+async function fetchActiveProfile(): Promise<string | null | undefined> {
+    try {
+        const n = (window as any).VencordNative?.pluginHelpers?.DockView;
+        if (n && typeof n.listProfiles === "function") {
+            const l = await n.listProfiles();
+            return l?.current ?? null;
+        }
+    } catch {
+        /* fall through */
+    }
+    return undefined;
+}
+
 /** One version row: a muted label and its value (or an em-dash when unknown). */
 function versionRow(label: string, value: string | null) {
     return h(
@@ -54,6 +69,16 @@ function versionRow(label: string, value: string | null) {
 }
 
 export function AboutPanel() {
+    const { useState, useEffect } = React;
+    // undefined = not yet resolved / bridge missing (row hidden); null = Default; string = name.
+    const [profile, setProfile] = useState<string | null | undefined>(undefined);
+
+    useEffect(() => {
+        let live = true;
+        fetchActiveProfile().then(p => { if (live) setProfile(p); });
+        return () => { live = false; };
+    }, []);
+
     return h(
         "div",
         null,
@@ -67,7 +92,10 @@ export function AboutPanel() {
             "div",
             { style: { margin: "8px 0 16px" } },
             versionRow(A.dockviewVersion, DOCKVIEW_PLUGIN_VERSION),
-            versionRow(A.vesktopVersion, vesktopVersion())
+            versionRow(A.vesktopVersion, vesktopVersion()),
+            // Show the active profile only when the bridge resolved (undefined = hide).
+            profile !== undefined &&
+                versionRow(A.activeProfile, profile ?? STRINGS.profiles.defaultName)
         ),
 
         h(

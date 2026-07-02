@@ -373,6 +373,7 @@ export const STRINGS = {
         viewers: "Viewers",
         performance: "Performance",
         privacy: "Privacy",
+        profiles: "Profiles",
         updates: "Updates",
         examples: "Examples",
         about: "About"
@@ -484,6 +485,46 @@ export const STRINGS = {
             "Turn this on to load remote images in email previews."
     },
 
+    // --- Profiles settings page ---------------------------------------------
+    // Multi-account: each profile is a fully separate data dir (own login + settings)
+    // that opens as its own window/process. Sober settings-page voice; the page header
+    // ("Profiles") comes from the sidebar row's panel title, so it isn't repeated.
+    profiles: {
+        intro:
+            "Run more than one account at once. Each profile is a completely separate " +
+            "login with its own settings, and opens in its own window.",
+        // Current-profile indicator.
+        currentLabel: "Current profile",
+        // The label for the running default (unnamed) install.
+        defaultName: "Default",
+        // The small badge on the profile this window is currently running as.
+        currentBadge: "Currently running",
+        // The list group.
+        listTitle: "Profiles",
+        none: "No profiles yet. Create one below to run a second account.",
+        // Per-profile actions.
+        open: "Open",
+        delete: "Delete",
+        confirmDelete: "Confirm delete",
+        cancel: "Cancel",
+        // The new-profile group.
+        newTitle: "New profile",
+        namePlaceholder: "Profile name",
+        createOpen: "Create & open",
+        working: "Working…",
+        // The honest cost note under the create row.
+        note:
+            "Each profile is a separate Discord login and runs as its own window and process, " +
+            "so it uses additional memory. Deleting a profile removes its data on this device.",
+        // Status lines (one line under the create row). {name} -> the profile name.
+        opened: (name: string) => `Opening ${name} in a new window…`,
+        deleted: (name: string) => `Deleted ${name}.`,
+        // {raw} -> the underlying error text.
+        error: (raw: string) => raw,
+        // The native bridge isn't present in this build (e.g. plain web).
+        unavailable: "Profiles aren't available in this build."
+    },
+
     // --- about page ---------------------------------------------------------
     // A small page: the running versions, a GitHub link, and a one-line credit.
     // The page header ("About") comes from the sidebar row's panel title, so it's
@@ -494,6 +535,8 @@ export const STRINGS = {
             "code, markdown, spreadsheets, 3D models, and more, without leaving Discord.",
         dockviewVersion: "DockView version",
         vesktopVersion: "Vesktop base",
+        // The active profile row on the About page (shows "Default" or the name).
+        activeProfile: "Active profile",
         github: "GitHub",
         credits: "Built on Vesktop and Vencord. Licensed under GPL-3.0."
     },

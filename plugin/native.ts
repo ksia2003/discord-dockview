@@ -50,6 +50,13 @@ import { mkdir, readFile, rename, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 
 import { runConverter } from "./native-convert";
+import {
+    createProfileImpl,
+    deleteProfileImpl,
+    listProfilesImpl,
+    openProfileImpl,
+    type ProfilesList
+} from "./native-profiles";
 
 /**
  * Local stand-in for Electron's IpcMainInvokeEvent. We do NOT import it from
@@ -490,4 +497,44 @@ export async function discoverManifest(
     } catch {
         return null;
     }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PROFILES (multi-account) — thin IPC wrappers over native-profiles.ts.
+//  Vencord auto-registers each exported async fn here as an ipcMain handler
+//  (VencordPluginNative_DockView_<name>); the renderer reaches them via
+//  VencordNative.pluginHelpers.DockView.<name>. The leading IpcMainInvokeEvent is
+//  injected by Electron and ignored (see the module header).
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Enumerate profile dirs + report which one this instance is running as. */
+export async function listProfiles(_: IpcMainInvokeEvent): Promise<ProfilesList> {
+    return listProfilesImpl();
+}
+
+/** Create a new profile dir (validates the name, refuses duplicates). */
+export async function createProfile(
+    _: IpcMainInvokeEvent,
+    name: string
+): Promise<{ ok: boolean; name?: string; error?: string }> {
+    return createProfileImpl(name);
+}
+
+/** Spawn a new DETACHED app instance pointed at the profile (--profile=<name>).
+ *  `extraArgs` passes through extra flags (e.g. a distinct debugging port for
+ *  inspecting the spawned instance); normal callers omit it. */
+export async function openProfile(
+    _: IpcMainInvokeEvent,
+    name: string,
+    extraArgs?: string[]
+): Promise<{ ok: boolean; error?: string }> {
+    return openProfileImpl(name, Array.isArray(extraArgs) ? extraArgs : []);
+}
+
+/** Delete a profile dir (recursive). Refuses the currently-running profile. */
+export async function deleteProfile(
+    _: IpcMainInvokeEvent,
+    name: string
+): Promise<{ ok: boolean; error?: string }> {
+    return deleteProfileImpl(name);
 }

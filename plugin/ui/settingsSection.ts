@@ -39,6 +39,7 @@ import { GallerySection } from "./GallerySection";
 import { GeneralPanel } from "./GeneralPanel";
 import { PerformancePanel } from "./PerformancePanel";
 import { PrivacyPanel } from "./PrivacyPanel";
+import { ProfilesPanel } from "./ProfilesPanel";
 import { STRINGS } from "../strings";
 import { UpdatePanel } from "./UpdatePanel";
 import { ViewersPanel } from "./ViewersPanel";
@@ -91,6 +92,12 @@ function buildDockViewEntries(plugin: any): any[] {
             key: "dockview_privacy",
             title: S.privacy,
             Component: PrivacyPanel,
+            Icon: DockViewIcon
+        }),
+        buildEntry({
+            key: "dockview_profiles",
+            title: S.profiles,
+            Component: ProfilesPanel,
             Icon: DockViewIcon
         }),
         buildEntry({
