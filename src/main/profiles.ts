@@ -32,6 +32,7 @@
  */
 
 import { app } from "electron";
+import { readdirSync } from "fs";
 import { join } from "path";
 
 /** The directory that holds every named profile. A sibling of the default data
@@ -77,6 +78,21 @@ export function getActiveProfileName(): string | null {
     const name = getProfileArg();
     if (name && PROFILE_NAME_RE.test(name)) return name;
     return null;
+}
+
+/** Synchronously enumerate the named profile dirs under PROFILES_ROOT (sorted). Used by
+ *  the tray, which builds its menu synchronously. A missing root = no profiles yet (not
+ *  an error); only real directories with a valid name count. Mirrors the plugin-side
+ *  listProfilesImpl enumeration (the two independently read the same dir). */
+export function listProfileNames(): string[] {
+    try {
+        return readdirSync(PROFILES_ROOT, { withFileTypes: true })
+            .filter(e => e.isDirectory() && PROFILE_NAME_RE.test(e.name))
+            .map(e => e.name)
+            .sort((a, b) => a.localeCompare(b));
+    } catch {
+        return [];
+    }
 }
 
 /** Resolve the data dir for the active profile, or null when this is the default
