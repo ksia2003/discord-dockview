@@ -39,6 +39,7 @@ import { GallerySection } from "./GallerySection";
 import { GeneralPanel } from "./GeneralPanel";
 import { STRINGS } from "../strings";
 import { UpdatePanel } from "./UpdatePanel";
+import { ViewersPanel } from "./ViewersPanel";
 
 const SECTION_KEY = "dockview_section";
 
@@ -70,6 +71,12 @@ function buildDockViewEntries(plugin: any): any[] {
             key: "dockview_general",
             title: S.general,
             Component: GeneralPanel,
+            Icon: DockViewIcon
+        }),
+        buildEntry({
+            key: "dockview_viewers",
+            title: S.viewers,
+            Component: ViewersPanel,
             Icon: DockViewIcon
         }),
         buildEntry({

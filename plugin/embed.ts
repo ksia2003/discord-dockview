@@ -21,6 +21,7 @@
 
 import { ContextMenuApi, Menu, React } from "@webpack/common";
 
+import { viewerEnabled } from "./engine/categoryMap";
 import { detectType, IMG_EXT } from "./engine/detectType";
 import type { ContentType } from "./engine/types";
 import { load } from "./engine/load";
@@ -50,11 +51,16 @@ function panelExt(url: string | null | undefined): string | null {
     return m2 ? m2[1].toLowerCase() : null;
 }
 
-/** Is this URL a file the dock panel can render? Decided ENTIRELY by detectType —
- *  any recognised extension (≠ "unknown") is dock-handled. */
+/** Is this URL a file the dock panel can render AND is currently enabled to intercept?
+ *  Decided by detectType (any recognised type ≠ "unknown" is dock-handled) THEN the
+ *  live settings gate (viewerEnabled): the master switch + the file's category switch.
+ *  A disabled category / master-off returns false, so the chip falls back to stock
+ *  Discord (download / lightbox) — the gate sits in detection so it never half-renders. */
 function isPanelUrl(url: string | null | undefined): boolean {
     if (!url) return false;
-    return detectType({ url }) !== "unknown";
+    const type = detectType({ url });
+    if (type === "unknown") return false;
+    return viewerEnabled(type);
 }
 
 /** Derive the panel display name from the url. */
@@ -219,14 +225,18 @@ function mediaFromContainer(wrapper: HTMLElement): { url: string; name: string; 
         // the signed, playable one. fiberImageUrl can hand back a different/un-signed
         // attachment url that the dock's <video> then 403s on ("Can't play this here").
         const vurl = vid.currentSrc || vid.src || fiberImageUrl(wrapper) || null;
-        if (vurl && detectType({ url: vurl }) === "video") return { url: vurl, name: nameFromUrl(vurl), type: "video" };
+        if (vurl && detectType({ url: vurl }) === "video" && viewerEnabled("video")) return { url: vurl, name: nameFromUrl(vurl), type: "video" };
     }
     const img = wrapper.querySelector("img");
     const url = fiberImageUrl(wrapper) || (img ? img.src : null);
     if (!url) return null;
     const t = detectType({ url });
-    if (t === "video" || t === "audio") return { url, name: nameFromUrl(url), type: t };
+    // An inline video/audio → gate on the Media category; anything else is an image →
+    // gate on the Images category. A disabled category returns null so the click falls
+    // through to Discord's native lightbox / player (no dock).
+    if (t === "video" || t === "audio") return viewerEnabled(t) ? { url, name: nameFromUrl(url), type: t } : null;
     if (!isImageUrl(url) && !/\/attachments\//.test(url)) return null;
+    if (!viewerEnabled("image")) return null;
     return { url: fullResImageUrl(url), name: nameFromUrl(url), type: "image" };
 }
 
