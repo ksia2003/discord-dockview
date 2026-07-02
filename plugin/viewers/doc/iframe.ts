@@ -32,7 +32,7 @@ import { React } from "@webpack/common";
 import { escapeHtml } from "../../engine/html";
 import { getActiveWindow } from "../../engine/window";
 import { KATEX_CSS } from "../../katex-css";
-import { LoadingBody, renderErrorBody } from "../../ui/StateCards";
+import { ARTIFACT_RENDER_FAILURE, LoadingBody, renderErrorBody } from "../../ui/StateCards";
 
 // If the iframe's first `load` (or a DOM `error`) hasn't fired by this many ms we
 // assume the render hung and fall back to the shared error card.
@@ -396,8 +396,11 @@ export function HtmlBody() {
     }, []);
 
     if (phase === "failed") {
-        // Reuse the shared error card (humanized title + retry/open/download).
-        return renderErrorBody("Artifact failed to render");
+        // Reuse the shared error card (retry / open-in-browser / download). The
+        // sentinel makes humanizeError use the artifact "didn't render" copy — the
+        // file fetched fine, it just never became ready — not the generic file-load
+        // wording. Retry re-fetches (fresh document); download/open are the fallbacks.
+        return renderErrorBody(ARTIFACT_RENDER_FAILURE);
     }
 
     const onLoad = () => {

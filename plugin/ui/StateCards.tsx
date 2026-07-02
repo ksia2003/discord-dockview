@@ -22,8 +22,13 @@ import { STRINGS } from "../strings";
 /** Map a raw error string to a humane title/sub. HTTP status codes lead; a
  *  fetch reject (offline / DNS / CORS, a TypeError) and the "no source" case get
  *  their own copy; everything else falls back to the raw text. */
+/** A sentinel the artifact iframe passes when it fetched fine but never rendered, so
+ *  the error card reads "didn't render" rather than the generic "couldn't load" copy. */
+export const ARTIFACT_RENDER_FAILURE = "dockview:artifact-render-failure";
+
 export function humanizeError(raw: string): { title: string; sub: string } {
     const E = STRINGS.error;
+    if (raw === ARTIFACT_RENDER_FAILURE) return E.artifact;
     const status = /^(\d{3})\b/.exec(raw);
     if (status) {
         const code = status[1];

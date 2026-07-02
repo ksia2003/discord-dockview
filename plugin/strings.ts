@@ -44,6 +44,13 @@ export const STRINGS = {
             title: "Nothing to show",
             sub: "Couldn't find a source to load."
         },
+        // A self-contained HTML artifact that fetched fine but never became ready in
+        // the iframe (a hung/broken script, or a render that never signalled load).
+        // Distinct from a fetch failure — the file is here, it just wouldn't render.
+        artifact: {
+            title: "This artifact didn't load",
+            sub: "It didn't finish rendering — try again, or open it in your browser."
+        },
         // {raw} -> the unparsed error string, last-resort fallback.
         generic: {
             title: "This file couldn't be loaded",
