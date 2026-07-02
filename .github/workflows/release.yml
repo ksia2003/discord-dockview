@@ -117,13 +117,15 @@ jobs:
                   TAG="v$VER"
                   # Pull the plugin bundle assets (the manifest generator hashes files out
                   # of static/vencordDist) so their sha256s match the uploaded bytes exactly.
+                  # --clobber: the checkout already tracks placeholder copies of these
+                  # files, and download refuses to overwrite without it.
                   mkdir -p static/vencordDist installers
-                  gh release download "$TAG" --dir static/vencordDist \
+                  gh release download "$TAG" --dir static/vencordDist --clobber \
                       --pattern "vencordDesktop*.js" --pattern "vencordDesktopRenderer.css" \
                       --pattern "version.txt" --pattern "chunk-*.js"
                   # Pull the installer assets (both legs) so the shell block records each
                   # platform's installer sha256 + size.
-                  gh release download "$TAG" --dir installers \
+                  gh release download "$TAG" --dir installers --clobber \
                       --pattern "*.exe" --pattern "*.AppImage" --pattern "*.deb" --pattern "*.rpm" || true
                   export DOCKVIEW_RELEASE_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
                   export DOCKVIEW_INSTALLERS_DIR="$PWD/installers"
