@@ -252,16 +252,21 @@ const needsRelaunch = await detectNeedsRelaunch(pluginVersion, files);
 const shellVersion = readShellVersion();
 
 /** Classify an electron-builder output filename into a { method, arch } we can drive,
- *  or null to skip it. Arch defaults to "x64" when the name carries no arch marker
- *  (electron-builder omits the suffix for the x64 default on some targets). */
+ *  or null to skip it.
+ *  - The Windows NSIS build is ONE combined "Vesktop Setup <ver>.exe" that bundles
+ *    every arch and installs the right one itself (electron-builder's default with no
+ *    per-arch artifactName), so it's keyed arch-"all", not per-arch.
+ *  - The Linux targets (AppImage/deb/rpm) ARE built per-arch, so their arch comes off
+ *    the filename (arm64/aarch64 → arm64, otherwise x64). */
 function classifyInstaller(name) {
     const lower = name.toLowerCase();
-    const arch = /arm64|aarch64/.test(lower) ? "arm64" : "x64";
-    if (/ setup .*\.exe$/i.test(name) || (lower.endsWith(".exe") && !lower.endsWith(".blockmap")))
-        return { method: "win-nsis", arch };
-    if (lower.endsWith(".appimage")) return { method: "appimage", arch };
-    if (lower.endsWith(".deb")) return { method: "deb", arch };
-    if (lower.endsWith(".rpm")) return { method: "rpm", arch };
+    if (lower.endsWith(".blockmap")) return null; // sidecar for the exe, never an installer
+    const linuxArch = /arm64|aarch64/.test(lower) ? "arm64" : "x64";
+    if (/ setup .*\.exe$/i.test(name) || lower.endsWith(".exe"))
+        return { method: "win-nsis", arch: "all" };
+    if (lower.endsWith(".appimage")) return { method: "appimage", arch: linuxArch };
+    if (lower.endsWith(".deb")) return { method: "deb", arch: linuxArch };
+    if (lower.endsWith(".rpm")) return { method: "rpm", arch: linuxArch };
     return null;
 }
 

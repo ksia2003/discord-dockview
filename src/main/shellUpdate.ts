@@ -183,9 +183,11 @@ export async function getShellUpdateInfo(): Promise<ShellUpdateInfo> {
 function pickInstaller(shell: ShellManifest, method: InstallMethod, arch: string): ShellInstaller | null {
     const installers = shell?.installers;
     if (!installers || typeof installers !== "object") return null;
-    const exact = installers[`${method}-${arch}`];
+    // Linux installers are per-arch ("appimage-arm64"); the Windows NSIS installer is a
+    // single arch-agnostic build keyed "win-nsis-all". Try the arch-exact key, then the
+    // arch-agnostic key, then any entry with a matching method (legacy key shape).
+    const exact = installers[`${method}-${arch}`] || installers[`${method}-all`];
     if (exact) return exact;
-    // Fall back to any entry with a matching method (single-arch / legacy key shape).
     for (const entry of Object.values(installers)) {
         if (entry?.method === method) return entry;
     }
