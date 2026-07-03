@@ -25,6 +25,7 @@ import { allViewers } from "../viewers/registry";
 import { getDockWidth, seedDockWidthFromLS, setDockWidth } from "../host/layout";
 import { cacheTouch, getCacheEntry, mountFromCache, registerWindowRegistry } from "./cache";
 import { LS_OPEN, lsGet } from "./persist";
+import { snapshotActiveView } from "./viewState";
 import type { DockWindow } from "./types";
 
 let windowSeq = 0;
@@ -142,11 +143,6 @@ export function hasRealTab(): boolean {
     return getWindows().some(isRealTab);
 }
 
-/** Append a window to the collection (used by the open / channel-switch paths). */
-export function addWindow(w: DockWindow): void {
-    windows.push(w);
-}
-
 /** Remove a window from the collection by reference. Returns its old index, or -1. */
 export function removeWindow(w: DockWindow): number {
     const i = windows.indexOf(w);
@@ -177,6 +173,50 @@ export function setActiveWindow(w: DockWindow | string): void {
     if (!win) return;
     activeWindow = win;
     activeWindowId = win.id;
+}
+
+/** Acquire THE transient (un-pinned) window bound to `ownerChannelId`, ready to
+ *  take a freshly-opened / restored file. This is the SINGLE acquisition path for
+ *  the one channel-bound preview slot — the open path (chip click), the channel-
+ *  switch restore + browser-home carry, and the F9/browser-home shell all funnel
+ *  through here, so the "at most one non-pinned window" invariant is upheld BY
+ *  CONSTRUCTION rather than by every caller remembering to reuse-not-spawn.
+ *
+ *  It ENFORCES the invariant on entry: if more than one non-pinned window somehow
+ *  coexists (the class of bug where a restore/open spawned a second transient and an
+ *  orphan lingered), it collapses them to one — keeping the most sensible survivor
+ *  (the active window if it's non-pinned, else the first content-bearing one, else
+ *  the first) and dropping the rest. The kept window is rebound to `ownerChannelId`
+ *  and made active; if no non-pinned window exists a fresh one is created. The
+ *  outgoing active window's live view-state is snapshotted before the bind swap so a
+ *  pinned tab we're switching away from reopens where it was. Returns the transient.
+ *
+ *  This collapse is the enforcement itself, not a defensive fallback: it is the
+ *  reason the single-slot channel-switch drop can never leak a stranded preview into
+ *  the next channel. Callers no longer make + append a transient by hand. */
+export function acquireTransient(ownerChannelId: string | null): DockWindow {
+    ensureInit();
+    const nonPinned = windows.filter(w => !w.pinned);
+    let keep: DockWindow;
+    if (nonPinned.length === 0) {
+        // No transient slot (every window is pinned) → make one for this channel.
+        keep = makeWindow({ pinned: false, ownerChannelId });
+        windows.push(keep);
+    } else {
+        // Prefer the active non-pinned window (the one the user is looking at), else
+        // the first that carries content, else just the first. Everything else in the
+        // non-pinned set is a duplicate and is removed — collapsing to one transient.
+        keep = nonPinned.find(w => w.id === activeWindowId)
+            ?? nonPinned.find(isRealTab)
+            ?? nonPinned[0];
+        for (const w of nonPinned) if (w !== keep) removeWindow(w);
+        keep.ownerChannelId = ownerChannelId;
+    }
+    // Snapshot the outgoing active window's live view before the bind swap so a
+    // (pinned) tab we switch away from reopens where it was.
+    if (activeWindow !== keep) snapshotActiveView(activeWindow);
+    setActiveWindow(keep);
+    return keep;
 }
 
 /** Collapse the window collection back to a SINGLE closed transient bound to

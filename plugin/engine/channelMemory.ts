@@ -21,7 +21,7 @@ import { hostActions } from "./hostBridge";
 import { showContent } from "./showContent";
 import { snapshotActiveView } from "./viewState";
 import {
-    addWindow, getActiveWindow, getActiveWindowId, getWindows, hasRealTab, makeWindow,
+    acquireTransient, getActiveWindow, getActiveWindowId, getWindows, hasRealTab,
     pruneOrphanTransients, reconcileActiveFromCache, removeWindow, setActiveWindow, transientWindow
 } from "./window";
 import type { ChannelDescriptor, ChannelMemory } from "./types";
@@ -194,26 +194,14 @@ export function onChannelSelect(newId: string | null): void {
             setActiveWindow(dupe);
             if (reconcileActiveFromCache()) getActiveWindow().content.seq += 1;
         } else {
-            // REUSE the leftover content-less transient instead of spawning a new one.
-            // By this point step 2 has already dropped the leaving channel's transient,
-            // so any remaining non-pinned window is a content-less shell (the ensureInit
-            // placeholder or the F9 empty shell that was active on entry) — exactly the
-            // slot this restore wants to fill. Rebinding it to the entering channel and
-            // loading the remembered file into it keeps the "at most one non-pinned
-            // content window" invariant: a fresh makeWindow here would leave that shell
-            // behind as an orphan, which a same-channel second open would then grab as
-            // the transient (the first non-pinned) — stranding the restored window as a
-            // second content transient that leaks on the next switch. Only make a window
-            // when there is no transient to reuse. (Same idiom as the browser-home carry
-            // in step 4b below.)
-            let t = transientWindow();
-            if (!t) {
-                t = makeWindow({ pinned: false, ownerChannelId: newId });
-                addWindow(t);
-            } else {
-                t.ownerChannelId = newId;
-            }
-            setActiveWindow(t);
+            // Acquire the entering channel's transient and load the remembered file
+            // into it. acquireTransient reuses the leftover content-less shell (step 2
+            // already dropped the leaving channel's transient, so any remaining non-
+            // pinned window is that shell) rather than spawning a new one — spawning
+            // would strand the shell as an orphan that a same-channel second open then
+            // grabs, leaking a second content transient on the next switch. The primitive
+            // upholds "at most one non-pinned window" structurally.
+            acquireTransient(newId);
             restoreDescriptor(mem.descriptor);
         }
     } else if (getWindows().some(w => w.pinned)) {
@@ -243,14 +231,9 @@ export function onChannelSelect(newId: string | null): void {
     if (newId != null && leavingBrowserHome && !hasRealTab()
         && channelVisibility.get(newId) === undefined) {
         setChannelVisibility(newId, true);
-        let t = transientWindow();
-        if (!t) {
-            t = makeWindow({ pinned: false, ownerChannelId: newId });
-            addWindow(t);
-        } else {
-            t.ownerChannelId = newId;
-        }
-        setActiveWindow(t);
+        // Ensure the entered channel's content-less transient (reuse-or-make) so the
+        // browser home renders on a window owned by it. Single acquisition path.
+        acquireTransient(newId);
     }
 
     // 5. apply the entering channel's VISIBILITY (per-channel, separate from content).

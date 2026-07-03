@@ -13,9 +13,7 @@
 import { dockVisible, setChannelVisibility, setCurrentChannelMemId } from "../engine/channelMemory";
 import { requestRender } from "../engine/forceRender";
 import { registerHostActions } from "../engine/hostBridge";
-import {
-    addWindow, getActiveWindow, hasRealTab, makeWindow, setActiveWindow, transientWindow
-} from "../engine/window";
+import { acquireTransient, getActiveWindow, hasRealTab } from "../engine/window";
 import { getCurrentChannelId } from "./channel";
 import {
     closeNativeChannelSidebar, registerVacateDock, syncNativeMemberList, syncNativeProfileSidebar
@@ -72,16 +70,10 @@ export function toggle(): void {
         syncNativeProfileSidebar(false);
     } else {
         // SHOW — flip visibility on. If nothing is worth a tab here, ensure a content-
-        // less transient so the empty shell renders.
+        // less transient (reuse-or-make, single acquisition path) so the empty shell
+        // renders bound to this channel.
         setChannelVisibility(channelId, true);
-        if (!hasRealTab()) {
-            let t = transientWindow();
-            if (!t) {
-                t = makeWindow({ pinned: false, ownerChannelId: channelId });
-                addWindow(t);
-            }
-            setActiveWindow(t);
-        }
+        if (!hasRealTab()) acquireTransient(channelId);
         closeNativeChannelSidebar();
         ensureHost();
         applyOpenState();
@@ -101,14 +93,7 @@ export function toggle(): void {
 export function openBrowserHome(): void {
     const channelId = getCurrentChannelId();
     setChannelVisibility(channelId, true);
-    if (!hasRealTab()) {
-        let t = transientWindow();
-        if (!t) {
-            t = makeWindow({ pinned: false, ownerChannelId: channelId });
-            addWindow(t);
-        }
-        setActiveWindow(t);
-    }
+    if (!hasRealTab()) acquireTransient(channelId);
     closeNativeChannelSidebar();
     ensureHost();
     applyOpenState();

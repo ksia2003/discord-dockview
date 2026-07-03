@@ -20,7 +20,7 @@ import { bump } from "./loadToken";
 import { setPendingScrollTop, snapshotActiveView } from "./viewState";
 import {
     getActiveWindow, getActiveWindowId, getWindows, hasRealTab,
-    reconcileActiveFromCache, removeWindow, setActiveWindow, transientWindow
+    reconcileActiveFromCache, removeWindow, setActiveWindow
 } from "./window";
 import type { DockWindow } from "./types";
 
@@ -67,14 +67,17 @@ export function pinActiveWindow(w: DockWindow = getActiveWindow()): void {
     requestRender();
 }
 
-/** ⋯-menu unpin: unpin the active window. It becomes the channel's transient
- *  again (bound to the current channel). A channel holds at most ONE transient, so
- *  any existing transient is dropped first — the user explicitly unpinned THIS
- *  window, so we keep it as the transient. */
+/** ⋯-menu unpin: unpin the active window. It becomes the channel's transient again
+ *  (bound to the current channel). A channel holds at most ONE non-pinned window, so
+ *  any OTHER non-pinned windows are dropped — the user explicitly unpinned THIS
+ *  window, so it's the designated survivor (we can't route through acquireTransient
+ *  here: that keeps the active window, but unpin must keep `w` even when a different
+ *  transient is the active one, and must not change the active binding). Dropping the
+ *  whole other-non-pinned set (not just the first) keeps the invariant even if a stray
+ *  duplicate ever slipped in. */
 export function unpinActiveWindow(w: DockWindow = getActiveWindow()): void {
     if (!w.pinned) return;
-    const existing = transientWindow();
-    if (existing && existing !== w) removeWindow(existing);
+    for (const other of getWindows().filter(x => !x.pinned && x !== w)) removeWindow(other);
     w.pinned = false;
     w.ownerChannelId = getCurrentChannelId();
     requestRender();

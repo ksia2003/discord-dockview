@@ -21,10 +21,7 @@ import { detectType } from "./detectType";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
 import { showContent } from "./showContent";
-import { snapshotActiveView } from "./viewState";
-import {
-    addWindow, getActiveWindow, makeWindow, setActiveWindow, transientWindow
-} from "./window";
+import { acquireTransient, getActiveWindow } from "./window";
 import type { ContentType } from "./types";
 
 export interface LoadOptsPublic {
@@ -72,25 +69,11 @@ export function loadInPlace(next: { name: string; url: string; type?: ContentTyp
 
 /** Make the ACTIVE window the current channel's TRANSIENT window, ready to take a
  *  freshly-opened file (so a chip click replaces the transient content and NEVER
- *  clobbers a pinned tab). If a transient already exists it is re-bound to the
- *  current channel and focused; otherwise a new one is appended. Before swapping
- *  away from a pinned active window we snapshot its live view-state. */
+ *  clobbers a pinned tab). acquireTransient reuses the lone transient (re-bound to
+ *  the current channel) or makes one, collapsing any stray non-pinned windows to the
+ *  single slot and snapshotting the outgoing active view before the swap. */
 export function focusTransientForOpen(): void {
-    const channelId = getCurrentChannelId();
-    let t = transientWindow();
-    if (!t) {
-        // No transient slot (every window is pinned) → create one for this channel.
-        snapshotActiveView(getActiveWindow());
-        t = makeWindow({ pinned: false, ownerChannelId: channelId });
-        addWindow(t);
-    } else {
-        // Re-bind the lone transient to the channel we're opening in.
-        t.ownerChannelId = channelId;
-    }
-    if (getActiveWindow() !== t) {
-        snapshotActiveView(getActiveWindow());
-        setActiveWindow(t);
-    }
+    acquireTransient(getCurrentChannelId());
 }
 
 /** The shared "open the panel into the right slot" side-effects, run by load()
