@@ -358,14 +358,9 @@ export const STRINGS = {
     // current channel, filterable by type. Shown in the empty shell (F9 / last tab
     // closed) and reached from a viewer via the "back to files" toolbar button.
     browser: {
-        // The leading title in the browser's toolbar row.
+        // The browser's title, shown in the dock header (row 1).
         title: "Files in this channel",
-        // The grid/list layout toggle (segmented control option labels + tooltips).
-        layoutGrid: "Grid",
-        layoutList: "List",
-        layoutGridHint: "Grid view",
-        layoutListHint: "List view",
-        // The type-filter chips. `all` is the always-present first chip; the rest
+        // The type-filter pills. `all` is the always-present first pill; the rest
         // reuse the Viewers page category labels (STRINGS.viewers.cat).
         filterAll: "All",
         // The toolbar button that returns from an open viewer to the file list.

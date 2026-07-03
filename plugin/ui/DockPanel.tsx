@@ -46,7 +46,7 @@ import { getCurrentChannelId } from "../host/channel";
 import { clearArtifact } from "../engine/load";
 import { attachToolbar, isAttachBarOpen } from "../edit/attach";
 import { DockTabs } from "./DockTabs";
-import { FileBrowser } from "./FileBrowser";
+import { browserFilterRow, browserHasFilterRow, browserTitleRow, FileBrowser } from "./FileBrowser";
 import { FindBar } from "./FindBar";
 import { HeaderControls, hasViewerControls } from "./HeaderControls";
 import { LoadingBody, renderEmptyBody, renderErrorBody, renderUnsupportedBody } from "./StateCards";
@@ -252,6 +252,13 @@ export function DockPanel() {
 
     const win = getActiveWindow();
     const hasContent = win.content.name != null;
+    // The dock's HOME: an open-but-empty shell on a real channel shows the file
+    // browser. Its identity is HOISTED into the header — the title + layout toggle take
+    // the tab-strip slot (row 1, wasted before) and the type filter takes the second-row
+    // slot a viewer's controls use — so the browser and the viewer share one two-row
+    // header and the top row is never empty. Off a real channel the browser never
+    // mounts (the plain empty card shows), so this is false there too.
+    const isBrowserHome = !hasContent && getCurrentChannelId() != null;
 
     // "Back to files" — return from an open viewer to the channel's file browser. A
     // native icon button (left-arrow), shown only while a file is open (the browser is
@@ -306,7 +313,11 @@ export function DockPanel() {
     // errored body has no controls row.
     const showAttachBar = isAttachBarOpen() && hasContent;
     const showViewerRow = !showAttachBar && hasViewerControls();
-    const twoRow = showAttachBar || showViewerRow;
+    // The browser home takes the SAME second row for its type filter (only when the
+    // channel has more than one openable category — a single-category channel needs no
+    // filter), so the header grammar is identical whether a file or the browser is up.
+    const showBrowserFilterRow = isBrowserHome && browserHasFilterRow();
+    const twoRow = showAttachBar || showViewerRow || showBrowserFilterRow;
 
     return React.createElement(
         "div",
@@ -335,9 +346,10 @@ export function DockPanel() {
                             className: `${CLS.headerChildren} dockview-header-children`
                                 + " dockview-header-children--tabs"
                         },
-                        // The tab strip is ALWAYS rendered (one window or many). Each tab
-                        // carries its own icon/name/⋯/✕ in place.
-                        React.createElement(DockTabs, null)
+                        // On browser home the tab-strip slot carries the browser's title
+                        // + layout toggle (row 1, wasted before); otherwise the tab strip
+                        // (each tab carries its own icon/name/⋯/✕ in place).
+                        isBrowserHome ? browserTitleRow() : React.createElement(DockTabs, null)
                     ),
                     // The right-edge actions: "back to files" (while a file is open) +
                     // the far-right DOCK X (closes the whole dock, not a tab).
@@ -349,7 +361,9 @@ export function DockPanel() {
                     )
                 ),
                 // SECOND ROW: the attach filename bar (when open) OR the active
-                // viewer's controls strip. The attach bar overrides the controls.
+                // viewer's controls strip OR — on browser home — the type filter. The
+                // attach bar overrides the controls; the browser filter only shows when
+                // there's no file open (mutually exclusive with the viewer row).
                 showAttachBar
                     ? attachToolbar()
                     : showViewerRow
@@ -358,7 +372,13 @@ export function DockPanel() {
                             { className: "dockview-viewer-toolbar" },
                             React.createElement(HeaderControls, null)
                         )
-                        : null
+                        : showBrowserFilterRow
+                            ? React.createElement(
+                                "div",
+                                { className: "dockview-viewer-toolbar dockview-fb-toolbar" },
+                                browserFilterRow()
+                            )
+                            : null
             ),
             (() => {
                 // The find box is a floating browser-style Ctrl+F panel positioned

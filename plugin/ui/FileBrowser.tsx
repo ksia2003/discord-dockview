@@ -9,8 +9,19 @@
  * DATA comes entirely from engine/fileIndex (batch 1): getChannelFiles(channelId)
  * enumerates the client's cached message window into FileEntry[]; loadOlder() pages one
  * older window in (the same request native scroll makes — no search API). This module
- * adds only the UI: layout toggle, type-filter chips, thumbnails, infinite scroll, and
- * the click → load() that opens a file in the existing viewer.
+ * adds only the UI: type-filter pills, thumbnails, infinite scroll, and the click →
+ * load() that opens a file in the existing viewer. It renders a grid (Discord shows
+ * media grids without a layout switch).
+ *
+ * HEADER HOISTING. The browser's identity does NOT sit on its own body row — it lives
+ * in the DOCK HEADER. On browser home DockPanel renders the browser's title in header
+ * row 1 (the slot the tab strip uses when a file is open) and the type filter in header
+ * row 2 (the slot a viewer's controls use), so the browser and the viewer share one
+ * two-row header grammar and the top row is never wasted. This module exports those
+ * header pieces (browserTitleRow / browserFilterRow) alongside the body (FileBrowser).
+ * They all read the SAME per-channel state (browserStates) and a change calls
+ * requestRender(), which repaints the whole dock — header + body together — so no
+ * cross-tree React state is needed (they render in one DockPanel pass).
  *
  * CHANNEL BINDING. It always reads the LIVE current channel id (getCurrentChannelId),
  * so a channel switch — which keeps the open browser home and re-renders it fresh (the
@@ -20,20 +31,20 @@
  * MESSAGE_CREATE handler in index.tsx via requestBrowserRefresh) invalidates + repaints
  * when new attachments arrive live.
  *
- * PER-CHANNEL MEMORY (design §3.3). The chosen type filter, the grid/list mode, and the
- * scroll position are remembered PER CHANNEL in our own in-memory Map (browserStates) —
- * revisiting a channel restores how you left its browser. In-memory only, like
- * channelMemory; cleared on plugin stop.
+ * PER-CHANNEL MEMORY (design §3.3). The chosen type filter and the scroll position are
+ * remembered PER CHANNEL in our own in-memory Map (browserStates) — revisiting a channel
+ * restores how you left its browser. In-memory only, like channelMemory; cleared on
+ * plugin stop.
  *
  * FILTERING is client-side: the full enumeration is done once, then filtered by the
- * active category chip with no re-enumeration. Only the categories actually present in
- * the channel get a chip (plus the always-on "All").
+ * active category pill with no re-enumeration. Only the categories actually present in
+ * the channel get a pill (plus the always-on "All").
  *
  * THUMBNAILS. Image entries render a downscaled CDN thumb via thumbUrl() (which keeps
  * the ex/is/hm signing params) with loading="lazy" so only cards near the viewport hit
  * the CDN. Non-image entries show their ContentType glyph. A file in a category the user
  * turned OFF (viewerEnabled false) is dimmed; clicking it still works but load() will
- * fall through to the stock download path (the same gate the chip uses).
+ * fall through to the stock download path (the same gate a chip click uses).
  *
  * NO module-top React.createElement — everything is inside the component / helpers,
  * evaluated at render time (the panel.tsx rule).
@@ -41,9 +52,10 @@
 
 import { React } from "@webpack/common";
 
-import { categoryOf, viewerEnabled, type ViewerCategory } from "../engine/categoryMap";
+import { viewerEnabled, type ViewerCategory } from "../engine/categoryMap";
 import { canLoadOlder, getChannelFiles, invalidate, loadOlder, type FileEntry } from "../engine/fileIndex";
 import { load } from "../engine/load";
+import { requestRender } from "../engine/forceRender";
 import { getCurrentChannelId } from "../host/channel";
 import { thumbUrl } from "../viewers/image/url";
 import { STRINGS } from "../strings";
@@ -52,24 +64,21 @@ import { iconPaths } from "./toolbar";
 
 const h = (...args: any[]) => (React.createElement as any)(...args);
 
-type Layout = "grid" | "list";
-
-/** The browser's per-channel look state (design §3.3): the type-filter chip, the
- *  grid/list mode, and the last scroll position. Remembered so returning to a channel
- *  restores how you left its browser. It is our OWN in-memory Map (not an extension of
- *  engine/channelMemory, which stores a single loaded-file descriptor); like that map
- *  it never persists to disk — the dock is a transient view over the session. */
+/** The browser's per-channel look state (design §3.3): the type-filter selection and the
+ *  last scroll position. Remembered so returning to a channel restores how you left its
+ *  browser. It is our OWN in-memory Map (not an extension of engine/channelMemory, which
+ *  stores a single loaded-file descriptor); like that map it never persists to disk —
+ *  the dock is a transient view over the session. */
 interface BrowserState {
     filter: ViewerCategory | null;
-    layout: Layout;
     scrollTop: number;
 }
 
 const browserStates = new Map<string, BrowserState>();
 
-/** The default look for a channel we've never browsed: grid, no filter, top of list. */
+/** The default look for a channel we've never browsed: no filter, top of list. */
 function defaultBrowserState(): BrowserState {
-    return { filter: null, layout: "grid", scrollTop: 0 };
+    return { filter: null, scrollTop: 0 };
 }
 
 /** This channel's remembered browser state (created on first visit). */
@@ -98,6 +107,10 @@ export function requestBrowserRefresh(channelId: string | null): void {
     invalidate(channelId);
     refreshTick++;
     notifyRefresh?.();
+    // The header (title/filter) lives outside the body component, so also repaint the
+    // whole dock — a live message can change the present-category set (a new type
+    // appears → the filter row gains/loses options).
+    requestRender();
 }
 
 /** γ ENTRY POINT support: prefilter the CURRENT channel's browser to a category, so the
@@ -108,16 +121,7 @@ export function requestBrowserRefresh(channelId: string | null): void {
 export function setBrowserFilter(channelId: string | null, category: ViewerCategory | null): void {
     getBrowserState(channelId).filter = category;
     notifyRefresh?.();
-}
-
-// Human byte size — the same rhythm as the image header ("812 KB", "2.3 MB").
-function formatBytes(n: number): string {
-    if (n < 1024) return `${n} B`;
-    const kb = n / 1024;
-    if (kb < 1024) return `${Math.round(kb)} KB`;
-    const mb = kb / 1024;
-    if (mb < 1024) return `${mb.toFixed(1)} MB`;
-    return `${(mb / 1024).toFixed(1)} GB`;
+    requestRender();
 }
 
 // A short format label from the filename extension (PNG, PDF, GLB…), upper-cased.
@@ -146,6 +150,75 @@ function isThumbnailable(entry: FileEntry): boolean {
     return entry.category === "images";
 }
 
+// --- shared filter mutator (drives the whole dock, header + body) -------------
+// The filter strip (browserFilterRow) lives OUTSIDE the FileBrowser body tree, so a
+// click there can't call a local setState — it writes the per-channel state and
+// requestRender()s the whole dock, which re-renders header + body from the Map in
+// one pass. (Inside the body, useState still drives the immediate list repaint; the two
+// stay in lock-step because both read the same BrowserState.)
+function setFilter(channelId: string | null, cat: ViewerCategory | null): void {
+    getBrowserState(channelId).filter = cat;
+    requestRender();
+}
+
+/** Header ROW 1 content for browser home: the title in the tab-strip slot. DockPanel
+ *  renders this in place of the (empty) tab strip when the dock is on its file-browser
+ *  home. The browser is grid-only (Discord shows media grids without a layout switch),
+ *  so the title stands alone. */
+export function browserTitleRow() {
+    return h(
+        "div",
+        { className: "dockview-fb-headline" },
+        h("div", { className: "dockview-fb-title" }, STRINGS.browser.title)
+    );
+}
+
+/** True when the browser home wants a SECOND header row: the type filter, shown only
+ *  when the current channel has more than one openable category (a single-category
+ *  channel needs no filter). DockPanel reads this to decide the two-row header. */
+export function browserHasFilterRow(): boolean {
+    const channelId = getCurrentChannelId();
+    return presentCategories(getChannelFiles(channelId).items).length > 1;
+}
+
+/** Header ROW 2 content for browser home: the type filter as rounded PILLS (the
+ *  Discord forum tag-pill grammar): each type is a small pill with its category glyph
+ *  + label; the ACTIVE pill fills with the selected-surface tint + brighter text (the
+ *  native forum "selected tag" look). "All" first, then one pill per PRESENT category.
+ *  DockPanel renders this in the second-row slot a viewer's controls use, so the
+ *  browser and the viewer share one two-row header. Null when there's nothing to
+ *  filter. */
+export function browserFilterRow() {
+    const channelId = getCurrentChannelId();
+    const state = getBrowserState(channelId);
+    const cats = presentCategories(getChannelFiles(channelId).items);
+    if (cats.length <= 1) return null;
+    const active = state.filter;
+    const pill = (cat: ViewerCategory | null, label: string, glyph: any[] | null) => {
+        const on = active === cat;
+        return h(
+            "button",
+            {
+                key: cat ?? "all",
+                type: "button",
+                className: "dockview-fb-pill" + (on ? " dockview-fb-pill--active" : ""),
+                "aria-pressed": on,
+                onClick: () => setFilter(channelId, cat)
+            },
+            glyph
+                ? h("svg", { className: "dockview-fb-pill-icon", width: 16, height: 16, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true }, ...glyph)
+                : null,
+            h("span", null, label)
+        );
+    };
+    return h(
+        "div",
+        { className: "dockview-fb-pills", role: "group", "aria-label": STRINGS.browser.filterAll },
+        pill(null, STRINGS.browser.filterAll, null),
+        ...cats.map(c => pill(c, STRINGS.viewers.cat[c], categoryGlyphPaths(c)))
+    );
+}
+
 export function FileBrowser() {
     const { useState, useEffect, useRef, useCallback } = React;
 
@@ -155,17 +228,16 @@ export function FileBrowser() {
     // channel changes. getChannelFiles is cached per channel, so this is cheap.
     const [tick, setTick] = useState(refreshTick);
 
-    // Local layout/filter state mirrors this channel's remembered browser state so a
-    // toggle repaints immediately; the Map keeps the choice across channel revisits.
-    const [layout, setLayout] = useState<Layout>(mem.layout);
-    const [filter, setFilter] = useState<ViewerCategory | null>(mem.filter);
+    // The filter lives in the per-channel Map and is toggled from the hoisted header
+    // (browserFilterRow), which requestRender()s the whole dock. The body reads it
+    // straight off the Map on each render — no local mirror to drift.
+    const filter = mem.filter;
 
     useEffect(() => {
         // A tick can arrive from a live message (requestBrowserRefresh) OR from the γ
-        // context menu setting mem.filter on the CURRENT channel (no remount to reseed
-        // local state) — reconcile the local filter from the Map so a prefilter applied
-        // to an already-open browser takes effect.
-        notifyRefresh = () => { setTick(refreshTick); setFilter(mem.filter); };
+        // context menu setting mem.filter on the CURRENT channel — reconcile by pulling
+        // the fresh tick so the body re-reads the index + the Map's filter.
+        notifyRefresh = () => { setTick(refreshTick); };
         return () => { if (notifyRefresh) notifyRefresh = null; };
     }, [mem]);
     // A bump used to repaint after loadOlder() resolves (the index mutates in place).
@@ -176,9 +248,8 @@ export function FileBrowser() {
     const [loadFailed, setLoadFailed] = useState(false);
 
     const state = getChannelFiles(channelId);
-    const cats = presentCategories(state.items);
 
-    // The active filter is honoured even when its category has no chip in THIS channel
+    // The active filter is honoured even when its category has no pill in THIS channel
     // (a γ prefilter can precede the file appearing in the cached window): the filtered
     // list simply comes up empty, and the filter-empty card explains it honestly rather
     // than silently reverting to All. `effFilter` is just the current filter (null = All).
@@ -215,7 +286,7 @@ export function FileBrowser() {
             if (raf) cancelAnimationFrame(raf);
             scroller.removeEventListener("scroll", onScroll);
         };
-    }, [channelId, state.items.length, effFilter, layout]);
+    }, [channelId, state.items.length, effFilter]);
 
     // --- infinite scroll: observe a sentinel at the list end -----------------
     const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -255,15 +326,6 @@ export function FileBrowser() {
         // moves / the page boundary shifts).
     }, [channelId, state.items.length, effFilter, tick, loadFailed, runLoadOlder]);
 
-    const onLayout = useCallback((mode: Layout) => {
-        mem.layout = mode;
-        setLayout(mode);
-    }, [mem]);
-    const onFilter = useCallback((cat: ViewerCategory | null) => {
-        mem.filter = cat;
-        setFilter(cat);
-    }, [mem]);
-
     const openEntry = useCallback((entry: FileEntry) => {
         // The SAME endpoint a chip click uses: load() routes through detectType →
         // showContent → the registered viewer. A file in an OFF category still calls
@@ -271,57 +333,6 @@ export function FileBrowser() {
         // consistent with the chip behaviour.
         load({ name: entry.filename, url: entry.url });
     }, []);
-
-    // --- toolbar row: title + layout toggle ----------------------------------
-    const segBtn = (mode: Layout, label: string, hint: string, first: boolean, last: boolean) =>
-        h("button", {
-            key: mode,
-            type: "button",
-            className: "dockview-fb-seg" + (layout === mode ? " dockview-fb-seg--active" : "")
-                + (first ? " dockview-fb-seg--first" : "") + (last ? " dockview-fb-seg--last" : ""),
-            "aria-pressed": layout === mode,
-            title: hint,
-            onClick: () => onLayout(mode)
-        }, label);
-
-    const toolbar = h(
-        "div",
-        { className: "dockview-fb-toolbar" },
-        h("div", { className: "dockview-fb-title" }, STRINGS.browser.title),
-        h(
-            "div",
-            { className: "dockview-fb-seg-group", role: "group", "aria-label": STRINGS.browser.title },
-            segBtn("grid", STRINGS.browser.layoutGrid, STRINGS.browser.layoutGridHint, true, false),
-            segBtn("list", STRINGS.browser.layoutList, STRINGS.browser.layoutListHint, false, true)
-        )
-    );
-
-    // --- filter chips row (only when there's more than one category present) --
-    const chip = (cat: ViewerCategory | null, label: string, glyph: any[] | null) => {
-        const active = effFilter === cat;
-        return h(
-            "button",
-            {
-                key: cat ?? "all",
-                type: "button",
-                className: "dockview-fb-chip" + (active ? " dockview-fb-chip--active" : ""),
-                "aria-pressed": active,
-                onClick: () => onFilter(cat)
-            },
-            glyph
-                ? h("svg", { className: "dockview-fb-chip-icon", width: 16, height: 16, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true }, ...glyph)
-                : null,
-            h("span", null, label)
-        );
-    };
-    const chipsRow = cats.length > 1
-        ? h(
-            "div",
-            { className: "dockview-fb-chips", role: "group", "aria-label": STRINGS.browser.filterAll },
-            chip(null, STRINGS.browser.filterAll, null),
-            ...cats.map(c => chip(c, STRINGS.viewers.cat[c], categoryGlyphPaths(c)))
-        )
-        : null;
 
     // A centred empty-state card: the folder icon + a title + a sub-line. Reused for
     // both the "channel has no files" and the "filter matches nothing" states.
@@ -351,7 +362,7 @@ export function FileBrowser() {
         const label = effFilter ? STRINGS.viewers.cat[effFilter] : STRINGS.browser.filterAll;
         body = emptyCard(STRINGS.browser.emptyFilterTitle(label), STRINGS.browser.emptyFilterSub);
     } else {
-        const cards = items.map(entry => renderCard(entry, layout, openEntry));
+        const cards = items.map(entry => renderCard(entry, openEntry));
         // The end-of-list row: while a page is loading, a dim spinner; if the last page
         // FAILED (a network hiccup), an honest retry row (no silent infinite retry); it
         // never just disappears while there's more to load. When there's nothing more
@@ -392,7 +403,7 @@ export function FileBrowser() {
             },
             h(
                 "div",
-                { className: layout === "grid" ? "dockview-fb-grid" : "dockview-fb-listwrap" },
+                { className: "dockview-fb-grid" },
                 ...cards
             ),
             moreRow,
@@ -400,32 +411,30 @@ export function FileBrowser() {
         );
     }
 
+    // The body is PURE content now — the title + type filter live in the dock header
+    // (browserTitleRow / browserFilterRow), rendered by DockPanel.
     return h(
         "div",
         { className: "dockview-fb", key: channelId ?? "nochannel" },
-        toolbar,
-        chipsRow,
         body
     );
 }
 
-/** One file card/row. Grid = a thumbnail/glyph tile with the name under it; list = a
- *  glyph/thumb + name + meta row. Off-category entries are dimmed. */
-function renderCard(entry: FileEntry, layout: Layout, open: (e: FileEntry) => void) {
+/** One file card: a thumbnail/glyph tile with the name under it. Off-category entries
+ *  are dimmed. */
+function renderCard(entry: FileEntry, open: (e: FileEntry) => void) {
     const enabled = viewerEnabled(entry.type);
     const dim = enabled ? "" : " dockview-fb-card--off";
     const ext = extLabel(entry.filename);
-    const sizeStr = typeof entry.size === "number" ? formatBytes(entry.size) : "";
 
     // The visual: an image thumbnail (lazy) or the type glyph.
     let media: any;
     if (isThumbnailable(entry)) {
         // Downscaled CDN thumb — signing params preserved by thumbUrl. loading="lazy"
         // defers the request until the card nears the viewport.
-        const w = layout === "grid" ? 150 : 40;
         media = h("img", {
             className: "dockview-fb-thumb",
-            src: thumbUrl(entry.url, w, w),
+            src: thumbUrl(entry.url, 150, 150),
             loading: "lazy",
             decoding: "async",
             alt: "",
@@ -449,24 +458,6 @@ function renderCard(entry: FileEntry, layout: Layout, open: (e: FileEntry) => vo
         onKeyDown: (e: any) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(entry); } }
     };
 
-    if (layout === "list") {
-        return h(
-            "div",
-            { key: entry.messageId + entry.url, className: "dockview-fb-row" + dim, ...common },
-            h("div", { className: "dockview-fb-row-media" }, media),
-            h(
-                "div",
-                { className: "dockview-fb-row-main" },
-                h("div", { className: "dockview-fb-row-name" }, entry.filename),
-                h(
-                    "div",
-                    { className: "dockview-fb-row-meta" },
-                    ext ? h("span", { className: "dockview-fb-badge" }, ext) : null,
-                    sizeStr ? h("span", null, sizeStr) : null
-                )
-            )
-        );
-    }
     // Grid tile.
     return h(
         "div",

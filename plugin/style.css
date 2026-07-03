@@ -2050,78 +2050,70 @@ html.dockview-open .dockview-page-inner {
     box-sizing: border-box;
 }
 
-/* Toolbar row: title + grid/list segmented toggle. */
-.dockview-fb-toolbar {
+/* HEADER ROW 1 (hoisted): the browser's title in the tab-strip slot, sitting where a
+   tab's name would (the dock actions — the far-right X — stay in their own slot). */
+.dockview-fb-headline {
+    flex: 1 1 auto;
+    min-width: 0;
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 10px;
-    padding: 12px 14px 8px;
-    flex: 0 0 auto;
 }
 .dockview-fb-title {
-    color: var(--header-primary, #f2f3f5);
-    font-size: 14px;
+    /* Match the native thread/search-results header title: text-md/medium weight on the
+       "strong" text token (Discord's search-results "N Results" heading). */
+    color: var(--text-strong, var(--header-primary, #f2f3f5));
+    font-size: 16px;
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.dockview-fb-seg-group {
-    display: inline-flex;
-    flex: 0 0 auto;
-}
-.dockview-fb-seg {
-    appearance: none;
-    border: 1px solid var(--background-modifier-accent, #4f545c66);
-    border-right: none;
-    background: var(--background-secondary, #2b2d31);
-    color: var(--text-muted, #949ba4);
-    font-size: 12px;
-    font-weight: 500;
-    padding: 5px 12px;
-    cursor: pointer;
-    transition: background-color 0.12s ease, color 0.12s ease;
-}
-.dockview-fb-seg--first { border-radius: 4px 0 0 4px; }
-.dockview-fb-seg--last { border-radius: 0 4px 4px 0; border-right: 1px solid var(--background-modifier-accent, #4f545c66); }
-.dockview-fb-seg:hover { color: var(--text-default, #dbdee1); }
-.dockview-fb-seg--active {
-    background: var(--brand-500, var(--brand-experiment, #5865f2));
-    color: var(--white-500, #fff);
-    font-weight: 600;
-    border-color: var(--brand-500, var(--brand-experiment, #5865f2));
-}
 
-/* Type-filter chips. */
-.dockview-fb-chips {
+/* HEADER ROW 2 (filters) — candidate B: ROUNDED PILLS (Discord forum tag-pill
+   grammar): each type is a small rounded pill with its category glyph + label, on a
+   muted resting surface; the ACTIVE pill lifts to the selected-surface tint + brighter
+   text (the native forum "selected tag" look). Reuses the second-row container
+   (.dockview-viewer-toolbar) for the divider/padding; this strip lays the pills out. */
+.dockview-fb-pills {
     display: flex;
-    flex-wrap: wrap;
+    align-items: center;
     gap: 6px;
-    padding: 0 14px 10px;
-    flex: 0 0 auto;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    padding-bottom: 1px;
 }
-.dockview-fb-chip {
+.dockview-fb-pills::-webkit-scrollbar { height: 0; width: 0; }
+.dockview-fb-pill {
+    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     gap: 5px;
     appearance: none;
     border: none;
-    border-radius: 14px;
-    padding: 4px 10px;
-    font-size: 12px;
+    border-radius: 12px;
+    padding: 3px 10px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    color: var(--text-default, #dbdee1);
-    background: var(--background-modifier-hover, #3f424966);
+    white-space: nowrap;
+    color: var(--interactive-normal, #b5bac1);
+    background: var(--background-modifier-hover, rgba(78, 80, 88, 0.3));
     transition: background-color 0.12s ease, color 0.12s ease;
 }
-.dockview-fb-chip:hover { background: var(--background-modifier-active, #4e505899); }
-.dockview-fb-chip--active {
-    background: var(--brand-500, var(--brand-experiment, #5865f2));
-    color: var(--white-500, #fff);
+.dockview-fb-pill:hover { background: var(--background-modifier-active, rgba(78, 80, 88, 0.48)); color: var(--interactive-hover, #dbdee1); }
+.dockview-fb-pill--active {
+    background: var(--background-modifier-selected, rgba(151, 151, 159, 0.24));
+    color: var(--text-strong, #f2f3f5);
+    font-weight: 600;
 }
-.dockview-fb-chip-icon { flex: 0 0 auto; opacity: 0.9; }
+.dockview-fb-pill-icon { flex: 0 0 auto; opacity: 0.9; }
+
+/* The second-row container reused for the filter strip drops the default toolbar gap
+   (the filter strip lays out its own children). */
+.dockview-viewer-toolbar.dockview-fb-toolbar { gap: 0; }
 
 /* Scroller: the file list area. */
 .dockview-fb-scroller {
@@ -2132,7 +2124,7 @@ html.dockview-open .dockview-page-inner {
     padding: 0 14px 14px;
 }
 
-/* Grid layout. */
+/* Grid. */
 .dockview-fb-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
@@ -2187,65 +2179,6 @@ html.dockview-open .dockview-page-inner {
     word-break: break-word;
 }
 
-/* List layout. */
-.dockview-fb-listwrap {
-    display: flex;
-    flex-direction: column;
-}
-.dockview-fb-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 7px 6px;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: background-color 0.12s ease;
-}
-.dockview-fb-row:hover { background: var(--background-modifier-hover, #3f424966); }
-.dockview-fb-row:focus-visible { outline: 2px solid var(--brand-500, var(--brand-experiment, #5865f2)); outline-offset: -2px; }
-.dockview-fb-row-media {
-    flex: 0 0 auto;
-    width: 36px;
-    height: 36px;
-    border-radius: 4px;
-    overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--background-secondary, #2b2d31);
-    color: var(--text-muted, #949ba4);
-}
-.dockview-fb-row-main {
-    flex: 1 1 auto;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-.dockview-fb-row-name {
-    font-size: 13px;
-    color: var(--text-default, #dbdee1);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.dockview-fb-row-meta {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: var(--text-muted, #949ba4);
-}
-.dockview-fb-badge {
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    padding: 1px 4px;
-    border-radius: 3px;
-    background: var(--background-modifier-active, #4e505899);
-    color: var(--text-default, #dbdee1);
-}
-
 /* The thumbnail image + the type glyph fill their media box. */
 .dockview-fb-thumb {
     width: 100%;
@@ -2257,8 +2190,7 @@ html.dockview-open .dockview-page-inner {
 
 /* OFF-category entries are dimmed (still clickable → stock download). */
 .dockview-fb-card--off,
-.dockview-fb-tile.dockview-fb-card--off,
-.dockview-fb-row.dockview-fb-card--off { opacity: 0.45; }
+.dockview-fb-tile.dockview-fb-card--off { opacity: 0.45; }
 
 /* The "loading older files" row + its spinner (dim, never disappearing). */
 .dockview-fb-more {
