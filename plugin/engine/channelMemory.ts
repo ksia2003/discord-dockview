@@ -194,8 +194,25 @@ export function onChannelSelect(newId: string | null): void {
             setActiveWindow(dupe);
             if (reconcileActiveFromCache()) getActiveWindow().content.seq += 1;
         } else {
-            const t = makeWindow({ pinned: false, ownerChannelId: newId });
-            addWindow(t);
+            // REUSE the leftover content-less transient instead of spawning a new one.
+            // By this point step 2 has already dropped the leaving channel's transient,
+            // so any remaining non-pinned window is a content-less shell (the ensureInit
+            // placeholder or the F9 empty shell that was active on entry) — exactly the
+            // slot this restore wants to fill. Rebinding it to the entering channel and
+            // loading the remembered file into it keeps the "at most one non-pinned
+            // content window" invariant: a fresh makeWindow here would leave that shell
+            // behind as an orphan, which a same-channel second open would then grab as
+            // the transient (the first non-pinned) — stranding the restored window as a
+            // second content transient that leaks on the next switch. Only make a window
+            // when there is no transient to reuse. (Same idiom as the browser-home carry
+            // in step 4b below.)
+            let t = transientWindow();
+            if (!t) {
+                t = makeWindow({ pinned: false, ownerChannelId: newId });
+                addWindow(t);
+            } else {
+                t.ownerChannelId = newId;
+            }
             setActiveWindow(t);
             restoreDescriptor(mem.descriptor);
         }
