@@ -13,9 +13,10 @@
  *   2. Image quality — the "always lossless PNG for large images" switch, backing
  *      RasterImageViewer's export threshold (settings.store.largeImageLossless).
  *
- * The decoder control is a SEGMENTED control (three inline buttons, the active one
- * highlighted) — the Discord state-colour grammar the csv/tree raw toggles use — chosen
- * over a dropdown so all three modes read at a glance and the page stays native-plain.
+ * The decoder control is a native Discord SELECT (the filled dropdown Discord's own
+ * settings use, and Vesktop's screen-share picker) — three options per row. Discord never
+ * uses a segmented side-by-side toggle for a state choice, so the dropdown is the native
+ * grammar for a compact per-row choice.
  *
  * GRAMMAR — mirrors GeneralPanel/ViewersPanel: deferred `h` (no module-top webpack),
  * @webpack/common primitives, FormTitle h3 sub-groups, semantic CSS variables only. The
@@ -24,7 +25,7 @@
  * re-renders.
  */
 
-import { Forms, React, Switch } from "@webpack/common";
+import { Forms, React, Select, Switch } from "@webpack/common";
 
 import { DECODER_CONTROLS, type DecoderMode } from "../engine/decoderModes";
 import { settings } from "../settings";
@@ -34,45 +35,15 @@ const h = (...args: any[]) => (React.createElement as any)(...args);
 
 const P = STRINGS.performance;
 
-/** The three modes in display order, with their labels. */
-const MODES: Array<{ value: DecoderMode; label: string; }> = [
+/** The three modes in display order, as native Select options (value + label). */
+const MODE_OPTIONS: Array<{ value: DecoderMode; label: string; }> = [
     { value: "ondemand", label: P.modeOnDemand },
     { value: "preload", label: P.modePreload },
     { value: "disabled", label: P.modeDisabled }
 ];
 
-/** One segmented button. Highlighted (brand fill) when it is the active mode; otherwise a
- *  quiet neutral surface. Uses semantic vars so it themes with Discord. */
-function segButton(active: boolean, label: string, first: boolean, last: boolean, onClick: () => void) {
-    return h(
-        "button",
-        {
-            type: "button",
-            onClick,
-            "aria-pressed": active,
-            style: {
-                flex: "1 1 0",
-                padding: "6px 10px",
-                fontSize: "13px",
-                fontWeight: active ? 600 : 500,
-                cursor: "pointer",
-                border: "1px solid var(--input-border, var(--background-modifier-accent))",
-                borderRight: last ? undefined : "none",
-                borderTopLeftRadius: first ? "4px" : undefined,
-                borderBottomLeftRadius: first ? "4px" : undefined,
-                borderTopRightRadius: last ? "4px" : undefined,
-                borderBottomRightRadius: last ? "4px" : undefined,
-                background: active ? "var(--brand-500, var(--brand-experiment))" : "var(--input-background, var(--background-secondary))",
-                color: active ? "var(--white-500, #fff)" : "var(--text-default, var(--header-primary))",
-                transition: "background 120ms ease, color 120ms ease"
-            }
-        },
-        label
-    );
-}
-
-/** One decoder row: the format label + its formats note, and the 3-way segmented control
- *  bound to the decoder's settings-store STRING field. */
+/** One decoder row: the format label + its formats note, and the native Select bound to
+ *  the decoder's settings-store STRING field. */
 function decoderRow(store: any, settingKey: string, label: string, formats: string) {
     const current: DecoderMode =
         store[settingKey] === "preload" || store[settingKey] === "disabled" ? store[settingKey] : "ondemand";
@@ -90,16 +61,15 @@ function decoderRow(store: any, settingKey: string, label: string, formats: stri
             ),
             h(
                 "div",
-                { style: { display: "flex", flex: "0 0 auto", minWidth: "260px" } },
-                ...MODES.map((m, i) =>
-                    segButton(
-                        current === m.value,
-                        m.label,
-                        i === 0,
-                        i === MODES.length - 1,
-                        () => { store[settingKey] = m.value; }
-                    )
-                )
+                { style: { flex: "0 0 auto", minWidth: "180px" } },
+                h(Select, {
+                    options: MODE_OPTIONS,
+                    isSelected: (v: DecoderMode) => v === current,
+                    select: (v: DecoderMode) => { store[settingKey] = v; },
+                    serialize: String,
+                    closeOnSelect: true,
+                    "aria-label": label
+                })
             )
         )
     );

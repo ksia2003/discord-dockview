@@ -487,7 +487,7 @@ export const STRINGS = {
         decodersNote:
             "These formats need a large, optional decoder loaded on first use. Choose how each " +
             "one loads. Changes take effect the next time such a file opens.",
-        // The three modes (the segmented control's options + their meaning).
+        // The three modes (the decoder Select's options + their meaning).
         modeOnDemand: "On demand",
         modePreload: "Preload",
         modeDisabled: "Disabled",
