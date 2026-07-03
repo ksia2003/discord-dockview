@@ -35,12 +35,12 @@
 
 import { AboutPanel } from "./AboutPanel";
 import { isUpdateFlagged } from "./autoCheck";
-import { DockViewIcon } from "./DockViewIcon";
 import { GallerySection } from "./GallerySection";
 import { GeneralPanel } from "./GeneralPanel";
 import { PerformancePanel } from "./PerformancePanel";
 import { PrivacyPanel } from "./PrivacyPanel";
 import { ProfilesPanel } from "./ProfilesPanel";
+import { ROW_ICONS } from "./SettingsRowIcons";
 import { STRINGS } from "../strings";
 import { UpdatePanel } from "./UpdatePanel";
 import { ViewersPanel } from "./ViewersPanel";
@@ -75,31 +75,31 @@ function buildDockViewEntries(plugin: any): any[] {
             key: "dockview_general",
             title: S.general,
             Component: GeneralPanel,
-            Icon: DockViewIcon
+            Icon: ROW_ICONS.general
         }),
         buildEntry({
             key: "dockview_viewers",
             title: S.viewers,
             Component: ViewersPanel,
-            Icon: DockViewIcon
+            Icon: ROW_ICONS.viewers
         }),
         buildEntry({
             key: "dockview_performance",
             title: S.performance,
             Component: PerformancePanel,
-            Icon: DockViewIcon
+            Icon: ROW_ICONS.performance
         }),
         buildEntry({
             key: "dockview_privacy",
             title: S.privacy,
             Component: PrivacyPanel,
-            Icon: DockViewIcon
+            Icon: ROW_ICONS.privacy
         }),
         buildEntry({
             key: "dockview_profiles",
             title: S.profiles,
             Component: ProfilesPanel,
-            Icon: DockViewIcon
+            Icon: ROW_ICONS.profiles
         }),
         buildEntry({
             // When a background check has flagged a newer build, mark the Updates row
@@ -110,19 +110,19 @@ function buildDockViewEntries(plugin: any): any[] {
             key: "dockview_updates",
             title: isUpdateFlagged() ? `${S.updates} •` : S.updates,
             Component: UpdatePanel,
-            Icon: DockViewIcon
+            Icon: ROW_ICONS.updates
         }),
         buildEntry({
             key: "dockview_examples",
             title: S.examples,
             Component: GallerySection,
-            Icon: DockViewIcon
+            Icon: ROW_ICONS.examples
         }),
         buildEntry({
             key: "dockview_about",
             title: S.about,
             Component: AboutPanel,
-            Icon: DockViewIcon
+            Icon: ROW_ICONS.about
         })
     ];
 }
