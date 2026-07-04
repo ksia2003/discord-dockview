@@ -30,9 +30,6 @@ import { preloadDecoders } from "./engine/decoderModes";
 import { fallbackCopy } from "./engine/fetch";
 import { loadLib } from "./engine/lazyLib";
 import { detectType } from "./engine/detectType";
-import {
-    canLoadOlder, clearFileIndex, getChannelFiles, invalidate as invalidateFileIndex, loadOlder as loadOlderFiles
-} from "./engine/fileIndex";
 import { requestRender } from "./engine/forceRender";
 import {
     clearChannelVisibility, dockVisible, getChannelStates, onChannelSelect, setCurrentChannelMemId
@@ -50,7 +47,7 @@ import {
 } from "./host/exclusivity";
 import { applyHostWidth, clampWidth } from "./host/layout";
 import { applyOpenState, ensureHost } from "./host/mount";
-import { closePanel, openBrowserHome, registerHost, startHost, stopHost, toggle } from "./host/open";
+import { closePanel, registerHost, startHost, stopHost, toggle } from "./host/open";
 import { openExternalLink } from "./external/openExternal";
 import { openInVesktopWindow, popoutArtifact, vesktopWindowHtml } from "./external/vesktopWindow";
 import { markdownHasToc, mdState } from "./viewers/doc/MarkdownViewer";
@@ -62,7 +59,6 @@ import { editBufferText, toggleEditMode } from "./edit/editMode";
 import { onNewFile } from "./edit/newFile";
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
-import { clearBrowserStates, requestBrowserRefresh } from "./ui/FileBrowser";
 import { settings } from "./settings";
 import { STRINGS } from "./strings";
 import { scheduleAutoCheck } from "./ui/autoCheck";
@@ -111,12 +107,6 @@ function exposeDebug(): void {
         load, retry: retryActiveLoad, clear: clearArtifact, detectType,
         onChannelSelect, getCurrentChannelId,
         get channelStates() { return getChannelStates(); },
-
-        // file browser data spine (batch 1): enumerate/page/invalidate the channel's
-        // openable attachments. The UI layer (batch 2) consumes these.
-        getChannelFiles, loadOlder: loadOlderFiles, canLoadOlder, invalidateFileIndex,
-        // file browser HOME (batch 3): open the browser home for the current channel.
-        openBrowserHome,
 
         // exclusivity (member list / profile sidebar) — drive + assert.
         closeNativeChannelSidebar,
@@ -199,23 +189,6 @@ export default definePlugin({
         },
         USER_PROFILE_SIDEBAR_TOGGLE_SECTION() {
             onUserProfileSidebarToggle();
-        },
-        // A message landing in / leaving the CURRENT channel changes the file browser's
-        // list. Invalidate that channel's cached index + repaint the browser home, but
-        // ONLY when the dock is showing it (visible, no file open) — otherwise it's a
-        // no-op we don't want to pay on every message in a busy channel. requestBrowser-
-        // Refresh drops the index unconditionally (cheap) and nudges a mounted browser.
-        MESSAGE_CREATE({ channelId }: { channelId?: string | null; }) {
-            if (channelId && channelId === getCurrentChannelId() && dockVisible()
-                && getActiveWindow().content.name == null) {
-                requestBrowserRefresh(channelId);
-            }
-        },
-        MESSAGE_DELETE({ channelId }: { channelId?: string | null; }) {
-            if (channelId && channelId === getCurrentChannelId() && dockVisible()
-                && getActiveWindow().content.name == null) {
-                requestBrowserRefresh(channelId);
-            }
         }
     },
 
@@ -350,8 +323,6 @@ export default definePlugin({
         //    re-start restores them.
         resetToClosedTransient(null);
         clearContentCache();
-        clearFileIndex();
-        clearBrowserStates();
         getChannelStates().clear();
         clearChannelVisibility();
         setCurrentChannelMemId(null);

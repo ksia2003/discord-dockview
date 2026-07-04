@@ -42,11 +42,8 @@ import { applyOpenState } from "../host/mount";
 import { toggle } from "../host/open";
 import { getViewer } from "../viewers/registry";
 import type { ViewerContext } from "../engine/types";
-import { getCurrentChannelId } from "../host/channel";
-import { clearArtifact } from "../engine/load";
 import { attachToolbar, isAttachBarOpen } from "../edit/attach";
 import { DockTabs } from "./DockTabs";
-import { browserFilterRow, browserHasFilterRow, browserTitleRow, FileBrowser } from "./FileBrowser";
 import { FindBar } from "./FindBar";
 import { HeaderControls, hasViewerControls } from "./HeaderControls";
 import { LoadingBody, renderEmptyBody, renderErrorBody, renderUnsupportedBody } from "./StateCards";
@@ -107,14 +104,7 @@ const CLS = {
  *  error, then loading, then viewer/unsupported — matches the old renderBody. */
 function renderBody() {
     const win = getActiveWindow();
-    if (win.content.name == null) {
-        // The dock's HOME: an open-but-empty shell (F9, or the last tab closed) shows
-        // the CURRENT channel's file browser instead of a bare "open a file" card. The
-        // browser reads the live channel itself, so a channel switch (which rebuilds
-        // this shell) shows the new channel's files. Off a real channel — the dock
-        // never mounts there, but guard anyway — fall back to the plain empty card.
-        return getCurrentChannelId() ? React.createElement(FileBrowser, null) : renderEmptyBody();
-    }
+    if (win.content.name == null) return renderEmptyBody();
     if (win.content.error != null) return renderErrorBody(win.content.error);
     if (win.content.loading) return React.createElement(LoadingBody, null);
     const viewer = getViewer(win.content.type);
@@ -242,48 +232,8 @@ export function DockPanel() {
         toggle();
     }, []);
 
-    const backToFiles = useCallback(() => {
-        // Return from an open viewer to the channel's file browser: clearArtifact()
-        // detaches the body (content.name → null), which makes renderBody() show the
-        // FileBrowser home. The file stays cached, so reopening it from the browser is
-        // instant. Only meaningful while a file is shown (the button hides otherwise).
-        clearArtifact();
-    }, []);
-
     const win = getActiveWindow();
     const hasContent = win.content.name != null;
-    // The dock's HOME: an open-but-empty shell on a real channel shows the file
-    // browser. Its identity is HOISTED into the header — the title + layout toggle take
-    // the tab-strip slot (row 1, wasted before) and the type filter takes the second-row
-    // slot a viewer's controls use — so the browser and the viewer share one two-row
-    // header and the top row is never empty. Off a real channel the browser never
-    // mounts (the plain empty card shows), so this is false there too.
-    const isBrowserHome = !hasContent && getCurrentChannelId() != null;
-
-    // "Back to files" — return from an open viewer to the channel's file browser. A
-    // native icon button (left-arrow), shown only while a file is open (the browser is
-    // already the empty-shell body). Sits left of the dock-close X in the actions area.
-    const backBtn = hasContent
-        ? React.createElement(
-            "div",
-            {
-                className: `${CLS.iconWrapper} ${CLS.clickable} dockview-back-to-files`,
-                role: "button",
-                tabIndex: 0,
-                "aria-label": STRINGS.browser.back,
-                title: STRINGS.browser.backHint,
-                onClick: backToFiles
-            },
-            React.createElement(
-                "svg",
-                { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
-                React.createElement("path", {
-                    fill: "currentColor",
-                    d: "M20 11H7.83l4.88-4.88a1 1 0 1 0-1.42-1.41l-6.58 6.58a1 1 0 0 0 0 1.42l6.58 6.58a1 1 0 0 0 1.42-1.41L7.83 13H20a1 1 0 0 0 0-2Z"
-                })
-            )
-        )
-        : null;
 
     // The dock-level close (the far-right X). A plain icon button in Discord's
     // native iconWrapper/clickable grammar, parked at the header's right edge.
@@ -313,11 +263,7 @@ export function DockPanel() {
     // errored body has no controls row.
     const showAttachBar = isAttachBarOpen() && hasContent;
     const showViewerRow = !showAttachBar && hasViewerControls();
-    // The browser home takes the SAME second row for its type filter (only when the
-    // channel has more than one openable category — a single-category channel needs no
-    // filter), so the header grammar is identical whether a file or the browser is up.
-    const showBrowserFilterRow = isBrowserHome && browserHasFilterRow();
-    const twoRow = showAttachBar || showViewerRow || showBrowserFilterRow;
+    const twoRow = showAttachBar || showViewerRow;
 
     return React.createElement(
         "div",
@@ -346,24 +292,19 @@ export function DockPanel() {
                             className: `${CLS.headerChildren} dockview-header-children`
                                 + " dockview-header-children--tabs"
                         },
-                        // On browser home the tab-strip slot carries the browser's title
-                        // + layout toggle (row 1, wasted before); otherwise the tab strip
-                        // (each tab carries its own icon/name/⋯/✕ in place).
-                        isBrowserHome ? browserTitleRow() : React.createElement(DockTabs, null)
+                        // The tab strip is ALWAYS rendered (one window or many). Each tab
+                        // carries its own icon/name/⋯/✕ in place.
+                        React.createElement(DockTabs, null)
                     ),
-                    // The right-edge actions: "back to files" (while a file is open) +
-                    // the far-right DOCK X (closes the whole dock, not a tab).
+                    // The far-right DOCK X (closes the whole dock, not a tab).
                     React.createElement(
                         "div",
                         { className: `${CLS.toolbar} dockview-header-actions` },
-                        backBtn,
                         closeBtn
                     )
                 ),
                 // SECOND ROW: the attach filename bar (when open) OR the active
-                // viewer's controls strip OR — on browser home — the type filter. The
-                // attach bar overrides the controls; the browser filter only shows when
-                // there's no file open (mutually exclusive with the viewer row).
+                // viewer's controls strip. The attach bar overrides the controls.
                 showAttachBar
                     ? attachToolbar()
                     : showViewerRow
@@ -372,13 +313,7 @@ export function DockPanel() {
                             { className: "dockview-viewer-toolbar" },
                             React.createElement(HeaderControls, null)
                         )
-                        : showBrowserFilterRow
-                            ? React.createElement(
-                                "div",
-                                { className: "dockview-viewer-toolbar dockview-fb-toolbar" },
-                                browserFilterRow()
-                            )
-                            : null
+                        : null
             ),
             (() => {
                 // The find box is a floating browser-style Ctrl+F panel positioned

@@ -15,7 +15,6 @@
 import { getCurrentChannelId } from "../host/channel";
 import { settings } from "../settings";
 import { detectType } from "./detectType";
-import { invalidate as invalidateFileIndex } from "./fileIndex";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
 import { showContent } from "./showContent";
@@ -134,19 +133,14 @@ export function onChannelSelect(newId: string | null): void {
     snapshotActiveView(getActiveWindow());
     saveCurrentChannelState();
 
-    // 1b. Is the dock leaving this channel as the file-browser HOME? — the dock is shown
-    //     (channelVisibility === true) with NO real tab (no pinned, no preview). That is
-    //     the browser home, and the home TRAVELS with you: the entered channel opens to
-    //     ITS browser too (dock stays open, contents reset). We capture the flag here
-    //     (before currentChannelId is reassigned) and apply it to the entered channel in
-    //     step 4b. The leaving channel's own visibility is then cleared — it was only the
-    //     ephemeral empty-open state, and it now lives on the entered channel instead, so
-    //     a later return re-derives it from hasRealTab() (false) = closed, exactly as
-    //     before this feature EXCEPT that the open state now follows you forward. An
-    //     explicit hide (=== false) and content/pinned-backed visibility are untouched.
-    const leavingBrowserHome =
-        currentChannelId != null && channelVisibility.get(currentChannelId) === true && !hasRealTab();
-    if (leavingBrowserHome && currentChannelId != null) {
+    // 1b. An EMPTY F9 shell — the dock explicitly shown (channelVisibility === true)
+    //     with NO real tab (no pinned, no preview) — is ephemeral: forget its
+    //     visibility on leave so it does NOT reappear when the user returns to this
+    //     channel. dockVisible() then falls back to hasRealTab() (false) and the dock
+    //     comes back closed. Content/pinned-backed visibility (hasRealTab === true) and
+    //     an explicit hide (=== false) are left untouched — only the bare empty-open
+    //     state is dropped.
+    if (currentChannelId != null && channelVisibility.get(currentChannelId) === true && !hasRealTab()) {
         channelVisibility.delete(currentChannelId);
     }
 
@@ -154,12 +148,6 @@ export function onChannelSelect(newId: string | null): void {
     //    (Its content cache entry survives, so a return re-shows it instantly.)
     const leaving = transientWindow();
     if (leaving) removeWindow(leaving);
-
-    // 2b. invalidate the LEAVING channel's file-browser index (built from the same
-    //     MessageStore window). Re-entering the channel rebuilds it fresh from the
-    //     store, so the browser can't show a stale list. currentChannelId still holds
-    //     the leaving channel here (step 3 reassigns it below).
-    invalidateFileIndex(currentChannelId);
 
     // 3. switch channel.
     currentChannelId = newId;
@@ -218,22 +206,6 @@ export function onChannelSelect(newId: string | null): void {
             const fallback = getWindows()[getWindows().length - 1];
             if (fallback) setActiveWindow(fallback);
         }
-    }
-
-    // 4b. Carry the file-browser HOME forward. If we left the previous channel showing
-    //     the browser home (step 1b) and the entered channel has NO real tab of its own
-    //     and no explicit hide, open ITS browser home: mark the entered channel visible
-    //     and ensure a content-less transient bound to it so the home renders on a window
-    //     owned by this channel (the FileBrowser is keyed by channel id → it repaints
-    //     with the new channel's files). Mirrors toggle()'s SHOW branch. We do NOT
-    //     override a channel the user explicitly HID (=== false) or one that has its own
-    //     real tab (a remembered preview / pinned) — those keep their own state.
-    if (newId != null && leavingBrowserHome && !hasRealTab()
-        && channelVisibility.get(newId) === undefined) {
-        setChannelVisibility(newId, true);
-        // Ensure the entered channel's content-less transient (reuse-or-make) so the
-        // browser home renders on a window owned by it. Single acquisition path.
-        acquireTransient(newId);
     }
 
     // 5. apply the entering channel's VISIBILITY (per-channel, separate from content).

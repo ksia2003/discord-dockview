@@ -83,25 +83,6 @@ export function toggle(): void {
     requestRender();
 }
 
-/** SHOW the dock's file-browser HOME for the current channel — an idempotent open (it
- *  never hides, unlike toggle()). Ensures a content-less transient so the empty shell
- *  (= the FileBrowser home) renders, exactly like toggle()'s SHOW branch. Used by the γ
- *  "Browse channel files" context-menu entry point, which then sets the browser's type
- *  prefilter. If a real file is already open here it stays — the browser home is the
- *  empty-shell body, so the caller's prefilter still lands on the next return to files.
- *  When the dock is ALREADY visible this is a cheap no-op re-affirm (windows untouched). */
-export function openBrowserHome(): void {
-    const channelId = getCurrentChannelId();
-    setChannelVisibility(channelId, true);
-    if (!hasRealTab()) acquireTransient(channelId);
-    closeNativeChannelSidebar();
-    ensureHost();
-    applyOpenState();
-    syncNativeMemberList(true);
-    syncNativeProfileSidebar(true);
-    requestRender();
-}
-
 /** Register the host with the engine bridge + the exclusivity vacate slot, and seed
  *  the channel-memory id. Called once from index.tsx start() after the host starts.
  *  After this the engine's open/close/channel/tab paths drive the real DOM. */
