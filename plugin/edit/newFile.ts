@@ -20,9 +20,9 @@ import { ChannelStore, SelectedChannelStore } from "@webpack/common";
 
 import { requestRender } from "../engine/forceRender";
 import { bump } from "../engine/loadToken";
-import { focusTransientForOpen, openPanelChrome } from "../engine/load";
+import { openPanelChrome } from "../engine/load";
 import { setPendingScrollTop, snapshotActiveView } from "../engine/viewState";
-import { getActiveWindow } from "../engine/window";
+import { getActiveWindow, openTab } from "../engine/window";
 import { STRINGS } from "../strings";
 
 /** Resolve the channel a brand-new file should attach to: the menu's channel (if
@@ -40,9 +40,9 @@ function resolveTargetChannel(channel: any | null): any {
  *  diff — there is no original baseline) and the attach filename defaults to
  *  `message.md`. */
 export function onNewFile(channel: any | null): void {
-    // A new file is a TRANSIENT open: it lands in the current channel's transient
-    // window (created if none) and never clobbers a pinned tab.
-    focusTransientForOpen();
+    // A new file OPENS A NEW channel-owned tab in the current channel. It has no url so
+    // it never dedups (openTab appends a fresh tab) and never clobbers a pinned tab.
+    openTab(null, "markdown");
     const win = getActiveWindow();
     // Leaving whatever was docked: snapshot its view-state so a later re-open of that
     // file is unaffected (mirrors showContent's switch-away bookkeeping).

@@ -13,7 +13,7 @@
 import { dockVisible, setChannelVisibility, setCurrentChannelMemId } from "../engine/channelMemory";
 import { requestRender } from "../engine/forceRender";
 import { registerHostActions } from "../engine/hostBridge";
-import { acquireTransient, getActiveWindow, hasRealTab } from "../engine/window";
+import { focusEmptyShell, getActiveWindow, hasRealTab } from "../engine/window";
 import { getCurrentChannelId } from "./channel";
 import {
     closeNativeChannelSidebar, registerVacateDock, syncNativeMemberList, syncNativeProfileSidebar
@@ -54,12 +54,13 @@ function closeForExclusiveTakeover(): void {
 }
 
 /** The dock toggle (F9 keybind + the far-right dock X): a PURE per-channel SHOW/HIDE.
- *  It flips this channel's visibility and NEVER destroys windows — pinned + preview
+ *  It flips this channel's visibility and NEVER destroys windows — pinned + channel
  *  tabs persist across a hide, so re-showing brings them all back (the fix for "F9 is
- *  a special action / it nukes my tabs"). Showing an empty channel ensures a content-
- *  less transient so the "Open a file…" empty shell renders (DockTabs gives it no
- *  tab). Mirrors the open-side exclusivity (collapse member list like a thread) and
- *  the close-side restore via the per-channel owed-restore set. */
+ *  a special action / it nukes my tabs"). Showing an empty channel (empty strip) just
+ *  flips visibility on — the empty "Open a file…" shell is DERIVED (empty strip + dock
+ *  visible), so we focus a fresh content-less active window for the empty card to read
+ *  but add NO tab. Mirrors the open-side exclusivity (collapse member list like a
+ *  thread) and the close-side restore via the per-channel owed-restore set. */
 export function toggle(): void {
     const channelId = getCurrentChannelId();
     if (dockVisible()) {
@@ -69,11 +70,11 @@ export function toggle(): void {
         syncNativeMemberList(false);
         syncNativeProfileSidebar(false);
     } else {
-        // SHOW — flip visibility on. If nothing is worth a tab here, ensure a content-
-        // less transient (reuse-or-make, single acquisition path) so the empty shell
-        // renders bound to this channel.
+        // SHOW — flip visibility on. If nothing is worth a tab here, focus a fresh
+        // content-less window (NOT a tab) so the empty shell body renders; the empty
+        // shell is purely a visibility state (empty strip + dock visible).
         setChannelVisibility(channelId, true);
-        if (!hasRealTab()) acquireTransient(channelId);
+        if (!hasRealTab()) focusEmptyShell();
         closeNativeChannelSidebar();
         ensureHost();
         applyOpenState();

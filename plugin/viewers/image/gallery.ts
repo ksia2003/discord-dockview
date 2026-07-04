@@ -117,10 +117,10 @@ export function ensureGallery(): number {
 }
 
 /** Load a gallery neighbour into the ACTIVE window IN PLACE. Gallery prev/next
- *  must advance the SAME tab you're stepping in — NOT acquire/spawn the transient
- *  window. The generic load() routes through focusTransientForOpen(), so on a
- *  PINNED image tab it would load the next image into the transient and leave the
- *  pinned tab unchanged (a silent jump to another window). Since the gallery state
+ *  must advance the SAME tab you're stepping in — NOT open/focus another tab. The
+ *  generic load() routes through openTab (dedup-or-append), so on a PINNED image tab
+ *  it would open the next image as a separate tab and leave the pinned tab unchanged
+ *  (a silent jump to another window). Since the gallery state
  *  is per-window and we only step the window that owns it (the active one), we use
  *  the engine's loadInPlace primitive: it replaces the active window's content in
  *  place, preserving the pinned tab, and only renders (the panel is already open). */

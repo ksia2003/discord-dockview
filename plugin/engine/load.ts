@@ -2,26 +2,26 @@
  * Public orchestration — the open-a-file entry points.
  *
  * load() is the content-type router's front door (chip click / programmatic
- * open): it focuses the channel's transient window, ends any new-file session,
- * routes the descriptor through showContent, opens the panel chrome, and repaints.
- * retryActiveLoad re-fetches the shown file bypassing both caches; clearArtifact
- * detaches the body to the placeholder; loadInPlace is the gallery primitive that
- * advances the SAME tab without spawning a transient.
+ * open): it opens the file as a tab in the current channel (dedup-or-append), ends
+ * any new-file session, routes the descriptor through showContent, opens the panel
+ * chrome, and repaints. retryActiveLoad re-fetches the shown file bypassing both
+ * caches; clearArtifact detaches the body to the placeholder; loadInPlace is the
+ * gallery primitive that advances the SAME tab without opening a new one.
  *
  * The per-format parsing is NOT here — it's in the viewers (showContent dispatches
- * to them). This module is pure orchestration + the open/transient bookkeeping.
+ * to them). This module is pure orchestration + the open/tab bookkeeping.
  *
  * (onNewFile — the empty editable markdown surface — is a cross-cutting edit/
  * concern and lands in P8; only a thin note is left here.)
  */
 
 import { getCurrentChannelId } from "../host/channel";
-import { saveCurrentChannelState, setChannelVisibility } from "./channelMemory";
+import { setChannelVisibility } from "./channelMemory";
 import { detectType } from "./detectType";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
 import { showContent } from "./showContent";
-import { acquireTransient, getActiveWindow } from "./window";
+import { getActiveWindow, openTab } from "./window";
 import type { ContentType } from "./types";
 
 export interface LoadOptsPublic {
@@ -38,15 +38,19 @@ export interface LoadOptsPublic {
  *  no-op; clicking a different seen file restores it from cache; only a genuinely
  *  new file fetches. The leaving file's view-state is snapshotted first. */
 export function load(opts: LoadOptsPublic): void {
-    // Opening a file always lands in the TRANSIENT window of the current channel
-    // (created if none) and never overwrites a pinned tab — pin-driven tabs.
-    focusTransientForOpen();
+    // Opening a file OPENS A TAB in the current channel: dedup (if the file is already
+    // a tab in the strip — pinned or channel-owned — that tab is focused, the strip
+    // doesn't grow) else a new channel-owned tab is appended. A pinned tab is never
+    // overwritten. The dedup identity is url + routing type (matching the descriptor
+    // showContent writes). Inline html (no url) can't dedup, so it always appends.
+    const type = detectType(opts);
+    openTab(opts.url ?? null, type);
     // Viewing a real file ends any new-file session (the empty editable surface),
     // so the loaded file gets a fresh original baseline + the merge diff.
     getActiveWindow().isNewFile = false;
     const result = showContent({
         name: opts.name, html: opts.html, url: opts.url,
-        type: detectType(opts), noCache: opts.noCache, id: opts.id
+        type, noCache: opts.noCache, id: opts.id
     });
 
     // Open FIRST, then persist — so the saved per-channel state records open:true.
@@ -56,38 +60,27 @@ export function load(opts: LoadOptsPublic): void {
 }
 
 /** The gallery's in-place advance: replace the ACTIVE window's content with the
- *  next/prev file WITHOUT acquiring/spawning the transient — so stepping a PINNED
- *  image tab advances THAT tab (the generic load() would route through
- *  focusTransientForOpen and silently jump to another window). The panel is
- *  already open during gallery nav, so we only render (no openPanelChrome). The
- *  image gallery (P4) calls this; exposed here as the engine primitive. */
+ *  next/prev file WITHOUT opening a new tab — so stepping a PINNED image tab advances
+ *  THAT tab (the generic load() would open/focus another tab). The panel is already
+ *  open during gallery nav, so we only render (no openPanelChrome). The image gallery
+ *  (P4) calls this; exposed here as the engine primitive. */
 export function loadInPlace(next: { name: string; url: string; type?: ContentType }): void {
     getActiveWindow().isNewFile = false;
     const result = showContent({ name: next.name, url: next.url, type: next.type ?? "image" });
     if (result !== "noop") requestRender();
 }
 
-/** Make the ACTIVE window the current channel's TRANSIENT window, ready to take a
- *  freshly-opened file (so a chip click replaces the transient content and NEVER
- *  clobbers a pinned tab). acquireTransient reuses the lone transient (re-bound to
- *  the current channel) or makes one, collapsing any stray non-pinned windows to the
- *  single slot and snapshotting the outgoing active view before the swap. */
-export function focusTransientForOpen(): void {
-    acquireTransient(getCurrentChannelId());
-}
-
 /** The shared "open the panel into the right slot" side-effects, run by load()
- *  (chip click) and onNewFile() (P8). Opens FIRST then persists, so the per-
- *  channel save records open:true; collapses the native thread/channel sidebar +
- *  member list / profile sidebar so the dock holds the exclusive right slot like
- *  a real thread. Does NOT render — the caller decides if the body changed. */
+ *  (chip click) and onNewFile() (P8). Flips this channel's visibility on, then
+ *  collapses the native thread/channel sidebar + member list / profile sidebar so the
+ *  dock holds the exclusive right slot like a real thread. Does NOT render — the
+ *  caller decides if the body changed. */
 export function openPanelChrome(): void {
     const host = hostActions();
     host.closeNativeChannelSidebar();
     // Opening a file = an explicit "show the dock here" for this channel.
     setChannelVisibility(getCurrentChannelId(), true);
     getActiveWindow().state.open = true; // vestigial per-window flag; harmless to set
-    saveCurrentChannelState();
     host.ensureHost();
     host.applyOpenState();
     host.syncNativeMemberList(true); // collapse the member list like a thread
@@ -127,7 +120,6 @@ export function clearArtifact(): void {
     win.editView.editBuffer = null;
     win.activeCacheKey = null;
     win.activeDescriptor = null;
-    saveCurrentChannelState();
     requestRender();
 }
 

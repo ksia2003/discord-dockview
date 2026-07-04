@@ -398,10 +398,7 @@ export const STRINGS = {
         autoplayTitle: "Autoplay media when opened",
         autoplayNote:
             "Start playback when an audio or video file opens. Autoplaying media starts " +
-            "muted — unmute it with the player controls.",
-        // Per-channel memory switch.
-        memoryTitle: "Remember the open file per channel",
-        memoryNote: "Reopen the file the dock had open in each channel as you switch between them."
+            "muted — unmute it with the player controls."
     },
 
     // --- Viewers settings page ----------------------------------------------

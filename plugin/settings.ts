@@ -39,14 +39,6 @@ export const settings = definePluginSettings({
         description: "Autoplay media when opened",
         default: false
     },
-    // Remember the open file per channel. ON (default) = switching channels re-shows
-    // the file the dock had open in each channel (engine/channelMemory). OFF = a
-    // channel switch does NOT reopen the previous file; the dock state doesn't stick.
-    dockPerChannelMemory: {
-        type: OptionType.BOOLEAN,
-        description: "Remember the open file per channel",
-        default: true
-    },
 
     // --- Viewers page: master switch ----------------------------------------
     // Open attachments in the dock. ON (default) = the chip interception is live.

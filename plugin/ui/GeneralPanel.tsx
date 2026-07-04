@@ -99,8 +99,7 @@ export function GeneralPanel() {
     // assignments below persist AND fire the option listeners, and a change re-renders.
     const store = settings.use([
         "dockExclusivity",
-        "dockMediaAutoplay",
-        "dockPerChannelMemory"
+        "dockMediaAutoplay"
     ]);
 
     return h(
@@ -114,7 +113,6 @@ export function GeneralPanel() {
 
         // --- Behaviour switches --------------------------------------------
         switchRow(store, "dockExclusivity", G.exclusivityTitle, G.exclusivityNote),
-        switchRow(store, "dockMediaAutoplay", G.autoplayTitle, G.autoplayNote),
-        switchRow(store, "dockPerChannelMemory", G.memoryTitle, G.memoryNote)
+        switchRow(store, "dockMediaAutoplay", G.autoplayTitle, G.autoplayNote)
     );
 }

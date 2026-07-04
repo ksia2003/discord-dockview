@@ -32,12 +32,13 @@ import { loadLib } from "./engine/lazyLib";
 import { detectType } from "./engine/detectType";
 import { requestRender } from "./engine/forceRender";
 import {
-    clearChannelVisibility, dockVisible, getChannelStates, onChannelSelect, setCurrentChannelMemId
+    clearChannelVisibility, dockVisible, onChannelSelect, setCurrentChannelMemId
 } from "./engine/channelMemory";
 import { loadPersistedState } from "./engine/persist";
 import { closeTab, pinActiveWindow, switchToWindow, unpinActiveWindow } from "./engine/tabs";
 import {
-    getActiveWindow, getActiveWindowId, getWindows, resetToClosedTransient, transientWindow
+    getActiveWindow, getActiveWindowId, getChannelTabs, getPinnedWindows, getWindows, reorderTab,
+    resetCollection
 } from "./engine/window";
 import { getCurrentChannelId } from "./host/channel";
 import {
@@ -103,10 +104,9 @@ function exposeDebug(): void {
         toggle, ensureHost, applyOpenState, closePanel,
         get dockOpen() { return dockVisible(); },
 
-        // content router + channel memory.
+        // content router + channel switch.
         load, retry: retryActiveLoad, clear: clearArtifact, detectType,
         onChannelSelect, getCurrentChannelId,
-        get channelStates() { return getChannelStates(); },
 
         // exclusivity (member list / profile sidebar) — drive + assert.
         closeNativeChannelSidebar,
@@ -118,10 +118,14 @@ function exposeDebug(): void {
         get selfMemberToggle() { return getSelfMemberToggle(); },
         get selfProfileToggle() { return getSelfProfileToggle(); },
 
-        // multi-window (pin-driven tabs): the collection + the tab verbs.
+        // browser-like tabs: the derived current-channel strip + the per-store views +
+        // the tab verbs. `windows` is the CURRENT channel's strip (pinned ∪ its own
+        // tabs); `pinned` + `channelTabs(id)` expose the raw stores for the rig.
         get windows() { return getWindows(); },
         get activeWindowId() { return getActiveWindowId(); },
-        switchToWindow, pinActiveWindow, unpinActiveWindow, closeTab, transientWindow,
+        get pinned() { return getPinnedWindows(); },
+        channelTabs: (id: string) => getChannelTabs(id),
+        switchToWindow, pinActiveWindow, unpinActiveWindow, closeTab, reorderTab,
 
         // edit-mode (the cross-cutting capability): drive the view↔edit toggle +
         // assert the temporary buffer / re-render loop.
@@ -316,14 +320,12 @@ export default definePlugin({
         // 2. tear down the host (heartbeat/observer/React unmount + triple sweep +
         //    native-sidebar restore). Marks inactive first so no callback re-injects.
         stopHost();
-        // 3. collapse the window collection back to a single closed transient (so a
-        //    re-start begins from the clean single-window state) + drop the content
-        //    cache + per-channel memory (in-memory only). We do NOT persist a closed
-        //    flag — the user's last open/closed choice + width stay in DataStore so a
-        //    re-start restores them.
-        resetToClosedTransient(null);
+        // 3. clear the whole tab collection (all three stores) so a re-start begins from
+        //    a clean empty state + drop the content cache + per-channel visibility
+        //    (in-memory only). We do NOT persist tabs — the collection is session-only
+        //    by design; only the dock width stays in DataStore so a re-start restores it.
+        resetCollection();
         clearContentCache();
-        getChannelStates().clear();
         clearChannelVisibility();
         setCurrentChannelMemId(null);
         // 4. chat-side KaTeX teardown + remove the debug handle.

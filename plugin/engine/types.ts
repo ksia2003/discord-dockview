@@ -371,17 +371,14 @@ export interface CacheEntry {
     view: CachedView;
 }
 
-// ── per-channel memory ───────────────────────────────────────────────────────
+// ── file descriptor ──────────────────────────────────────────────────────────
 
+/** A window's active file identity (name + url + routing type). Reproduces the cache
+ *  key on a later restore + drives dedup-on-open (url + type). */
 export interface ChannelDescriptor {
     name: string;
     url: string;
     type: ContentType;
-}
-
-export interface ChannelMemory {
-    open: boolean;
-    descriptor: ChannelDescriptor | null;
 }
 
 // ── find ─────────────────────────────────────────────────────────────────────
