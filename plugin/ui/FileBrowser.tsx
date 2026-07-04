@@ -113,17 +113,6 @@ export function requestBrowserRefresh(channelId: string | null): void {
     requestRender();
 }
 
-/** γ ENTRY POINT support: prefilter the CURRENT channel's browser to a category, so the
- *  "Browse channel files" context-menu item lands on that file's type. Records the
- *  filter into the channel's remembered state and nudges a mounted browser to repaint.
- *  The caller (index.tsx) opens the browser home first; this only sets the filter. A
- *  null category clears the filter (show All). */
-export function setBrowserFilter(channelId: string | null, category: ViewerCategory | null): void {
-    getBrowserState(channelId).filter = category;
-    notifyRefresh?.();
-    requestRender();
-}
-
 // A short format label from the filename extension (PNG, PDF, GLB…), upper-cased.
 function extLabel(name: string): string {
     const m = /\.([a-z0-9]+)(?:\?|#|$)/i.exec(name);

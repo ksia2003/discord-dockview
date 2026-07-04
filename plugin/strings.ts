@@ -336,10 +336,7 @@ export const STRINGS = {
         // switches (the multi-window vision: the dock holds several windows you can
         // switch between, like a browser). The item flips to Unpin once pinned.
         pin: "Pin as a tab",
-        unpin: "Unpin tab",
-        // Right-click an attachment in a message → open the dock's file browser for this
-        // channel, prefiltered to that file's type (the γ shortcut into the browser).
-        browseChannelFiles: "Browse channel files"
+        unpin: "Unpin tab"
     },
 
     // --- tabs (pin-driven multi-window) -------------------------------------
@@ -354,9 +351,10 @@ export const STRINGS = {
     },
 
     // --- file browser panel -------------------------------------------------
-    // The dock's home screen: a grid/list of every openable attachment in the
-    // current channel, filterable by type. Shown in the empty shell (F9 / last tab
-    // closed) and reached from a viewer via the "back to files" toolbar button.
+    // The dock's home screen: a grid of every openable attachment in the current
+    // channel, filterable by type (grid-only — there is no list mode). Shown in the
+    // empty shell (F9 / last tab closed) and reached from a viewer via the "back to
+    // files" toolbar button.
     browser: {
         // The browser's title, shown in the dock header (row 1).
         title: "Files in this channel",
@@ -379,10 +377,7 @@ export const STRINGS = {
         // matches it (distinct from the channel simply having no files). {label} -> the
         // active category's label.
         emptyFilterTitle: (label: string) => `No ${label.toLowerCase()} here`,
-        emptyFilterSub: "Try a different type, or pick All to see everything.",
-        // {n} -> the number of files; {size} -> a human file size (already formatted).
-        // The row's secondary line in list view when a size is known.
-        sizeLine: (size: string) => size
+        emptyFilterSub: "Try a different type, or pick All to see everything."
     },
 
     // --- attach (after edit) filename input ---------------------------------
