@@ -65,8 +65,8 @@ export function DockMoreMenu({ win }: { win?: DockWindow } = {}) {
         }));
     }
 
-    // Pin / Unpin: promote THIS window to a persistent TAB (survives channel
-    // switches), or demote a pinned window back to the channel-bound transient.
+    // Pin / Unpin: promote THIS window to a global TAB (survives channel switches,
+    // shown in every channel), or demote a pinned window back to a channel-owned tab.
     items.push(React.createElement(Menu.MenuItem, {
         id: "dockview-more-pin",
         label: w.pinned ? STRINGS.menu.unpin : STRINGS.menu.pin,

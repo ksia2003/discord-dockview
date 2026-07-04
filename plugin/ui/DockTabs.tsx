@@ -16,8 +16,9 @@
 
 import { ContextMenuApi, React } from "@webpack/common";
 
+import { requestRender } from "../engine/forceRender";
 import { closeTab, switchToWindow } from "../engine/tabs";
-import { getActiveWindowId, getWindows, isRealTab } from "../engine/window";
+import { getActiveWindowId, getWindows, isRealTab, reorderTab } from "../engine/window";
 import { STRINGS } from "../strings";
 import type { ContentType } from "../engine/types";
 import { DockMoreMenu } from "./DockMoreMenu";
@@ -58,10 +59,19 @@ function tabCtrlBtn(opts: { key: string; cls: string; label: string; path: strin
     );
 }
 
+// The id of the tab currently being dragged (module-scoped: one strip is visible at a
+// time, and HTML5 dnd is a single active gesture). Cleared on drop / dragend.
+let dragId: string | null = null;
+
 /** Tabs row. Every tab carries its OWN persistent ⋯ + ✕ acting on THAT window. A
  *  tab's ✕ always closes THAT window via closeTab (active or not); closing the last
- *  tab closes the dock. A content-less transient yields NO tab (empty strip + the
- *  empty-state body) — the tab-less empty shell is only ever the F9-open path. */
+ *  tab closes the dock. A content-less window yields NO tab (empty strip + the
+ *  empty-state body) — the tab-less empty shell is only ever the F9-open path.
+ *
+ *  DRAG-TO-REORDER: each tab is draggable; dropping it onto another tab reorders it
+ *  (via reorderTab) within its partition (pinned among pinned, channel among channel)
+ *  so pinned-first is preserved, and the new order persists in the channel/pinned
+ *  store. Reuses the flat tab CSS — no new visual styling here. */
 export function DockTabs() {
     const activeId = getActiveWindowId();
     return React.createElement(
@@ -80,7 +90,21 @@ export function DockTabs() {
                     role: "tab",
                     "aria-selected": isActive,
                     title: label,
-                    onClick: () => switchToWindow(w.id)
+                    draggable: true,
+                    onClick: () => switchToWindow(w.id),
+                    onDragStart: (e: any) => {
+                        dragId = w.id;
+                        try { e.dataTransfer.effectAllowed = "move"; } catch { /* */ }
+                    },
+                    onDragOver: (e: any) => {
+                        if (dragId && dragId !== w.id) { e.preventDefault(); try { e.dataTransfer.dropEffect = "move"; } catch { /* */ } }
+                    },
+                    onDrop: (e: any) => {
+                        e.preventDefault();
+                        if (dragId && dragId !== w.id && reorderTab(dragId, w.id)) requestRender();
+                        dragId = null;
+                    },
+                    onDragEnd: () => { dragId = null; }
                 },
                 tabIcon(w.content.type),
                 React.createElement("span", { className: "dockview-tab-name" }, label),
