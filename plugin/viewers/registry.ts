@@ -174,7 +174,7 @@ registerViewer(PsViewer);
 
 // web/ — a web page opened as a dock tab (the browsing pillar). It rides the tab model
 // like a file (channel-scoped, accumulates, pin-global, dedup on url, session-only) with
-// no new lifecycle; the plugin fetches nothing (the real page render is an isolated
-// main-side <webview>). The current Body is a placeholder card showing the page host.
+// no new lifecycle; the plugin fetches nothing. The Body embeds a real <webview> on a
+// session partition isolated from Discord; the HeaderControls are the minimal chrome.
 import { WebViewer } from "./web/WebViewer";
 registerViewer(WebViewer);

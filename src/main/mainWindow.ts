@@ -331,6 +331,10 @@ function buildBrowserWindowOptions(): BrowserWindowConstructorOptions {
             devTools: true,
             preload: join(__dirname, "preload.js"),
             spellcheck: true,
+            // enable <webview> so the dock can embed a web page in an isolated session
+            // (the browsing pillar). The guest's own webPreferences are still forced to a
+            // safe, node-free profile in the will-attach-webview handler below.
+            webviewTag: true,
             // disable renderer backgrounding to prevent the app from unloading when in the background
             backgroundThrottling: false
         },
@@ -399,6 +403,19 @@ function createMainWindow() {
     initWindowBoundsListeners(win);
     if (!isDeckGameMode && (Settings.store.tray ?? true) && process.platform !== "darwin")
         initTray(win, q => (isQuitting = q));
+
+    // Harden every <webview> guest the dock embeds: force a node-free, preload-free,
+    // context-isolated profile regardless of the attributes the renderer requested, so an
+    // embedded web page can never reach Node / Electron. (The renderer sets its own
+    // partition="persist:dockview-web" — a session with no Discord cookies — but the
+    // security-critical node/preload stripping is enforced here in the main process.)
+    win.webContents.on("will-attach-webview", (_event, webPreferences, params) => {
+        delete (webPreferences as Record<string, unknown>).preload;
+        webPreferences.nodeIntegration = false;
+        webPreferences.contextIsolation = true;
+        delete (params as Record<string, unknown>).nodeintegration;
+        delete (params as Record<string, unknown>).nodeintegrationinsubframes;
+    });
 
     initMenuBar(win);
     makeLinksOpenExternally(win);

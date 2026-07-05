@@ -93,12 +93,16 @@ export const STRINGS = {
     },
 
     // --- web (a page opened as a dock tab) ----------------------------------
-    // Placeholder body shown while the in-dock <webview> render is not yet wired
-    // (the actual page render is a separate main-side change). The title is neutral;
-    // the sub echoes the page host so the tab is identifiable.
+    // The web page renders inside an isolated <webview>. These label the minimal chrome
+    // (back / reload / open-external + the read-only url readout) and the load-failure card.
     web: {
-        title: "Opens as a web tab",
-        // {host} -> the page's host (e.g. "example.com"), or the raw url if unparseable.
+        back: "Back",
+        reload: "Reload",
+        openExternal: "Open in browser",
+        url: "Current page",
+        // The honest card shown when the embedded page fails to load.
+        failTitle: "Couldn't load this page",
+        // {host} -> the page's host; shown on the failure card + as the tab's placeholder sub.
         sub: (host: string) => host
     },
 
