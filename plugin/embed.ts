@@ -60,6 +60,10 @@ function isPanelUrl(url: string | null | undefined): boolean {
     if (!url) return false;
     const type = detectType({ url });
     if (type === "unknown") return false;
+    // A "web" url is not an attachment/file chip — it's a plain message link handled by
+    // the dedicated web-link path (resolveWebLinkClick), NOT the chip route. Exclude it
+    // here so the file-chip resolver only ever matches real dock-openable FILES.
+    if (type === "web") return false;
     return viewerEnabled(type);
 }
 
@@ -79,6 +83,16 @@ function nameFromUrl(url: string): string {
     }
     if (/\.artifact$/i.test(base)) return base.replace(/\.artifact$/i, "") || "artifact";
     return base || "file";
+}
+
+/** A web tab's display name: the page HOST (e.g. "example.com"), which reads better in
+ *  the tab strip than a long path-tail. Falls back to the raw url if it won't parse. */
+function webNameFor(url: string): string {
+    try {
+        return new URL(url, location.href).host || url;
+    } catch {
+        return url;
+    }
 }
 
 /**
@@ -168,6 +182,39 @@ function resolvePanelClick(target: EventTarget | null): { url: string; anchor: H
             for (const a of Array.from(anchors)) {
                 if (isPanelUrl(a.href)) return { url: a.href, anchor: a };
             }
+        }
+        el = el.parentElement;
+    }
+    return null;
+}
+
+// --- web-link interception (A1) ---------------------------------------------
+// A left-click on a real http(s) web-page link in a chat message opens the page as a
+// dock WEB tab (the browsing pillar) instead of the external browser. Discord IN-APP
+// links (discord.com/channels/…, invites) are NOT web pages per detectType — they stay
+// "unknown" here and pass through to native navigation, untouched. File/media links are
+// handled by the chip path above (isPanelUrl excludes "web"), so this only ever matches
+// a plain page link. Modifier/middle clicks are already excluded by onDocClickCapture,
+// so ctrl/cmd/middle-click keep their native behaviour.
+
+/** Is `href` a real external http(s) web page (→ a dock web tab)? Decided by detectType
+ *  returning "web" (which already excludes Discord in-app nav links + non-http urls). */
+function isWebLink(href: string | null | undefined): boolean {
+    if (!href) return false;
+    return detectType({ url: href }) === "web";
+}
+
+/** Resolve a click to the nearest ancestor <a> that is a real web-page link, or null.
+ *  Only genuine message-content anchors reach here as "web" (discord-internal + file
+ *  links are excluded by detectType / isPanelUrl), so no message-container scoping is
+ *  needed — a discord.com/channels link simply isn't a web link. */
+function resolveWebLinkClick(target: EventTarget | null): string | null {
+    let el = target as HTMLElement | null;
+    for (let i = 0; i < 12 && el; i++) {
+        if (el.tagName === "A") {
+            const a = el as HTMLAnchorElement;
+            const href = a.href || a.getAttribute("href");
+            if (isWebLink(href)) return a.href || (href as string);
         }
         el = el.parentElement;
     }
@@ -289,11 +336,27 @@ function onDocClickCapture(e: MouseEvent) {
         return;
     }
     const hit = resolvePanelClick(e.target);
-    if (!hit) return;
+    if (hit) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        openInPanel(hit.url, nameFromUrl(hit.url));
+        return;
+    }
+    // A real web-page link in a message -> open it as a dock web tab (dedup on re-click
+    // via the engine), instead of the external browser. Runs LAST so file/media chips
+    // keep their route and a discord.com/channels link (not a web link) is never caught.
+    const webUrl = resolveWebLinkClick(e.target);
+    if (!webUrl) return;
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
-    openInPanel(hit.url, nameFromUrl(hit.url));
+    try {
+        load({ name: webNameFor(webUrl), url: webUrl, type: "web" });
+    } catch {
+        // Panel mount refused (home/friends page) — fall back to the external browser.
+        openExternalLink(webUrl);
+    }
 }
 
 function onDocContextCapture(e: MouseEvent) {

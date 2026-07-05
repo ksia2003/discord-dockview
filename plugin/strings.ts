@@ -92,6 +92,16 @@ export const STRINGS = {
         sub: (name: string) => `${name} — download it to play in another app.`
     },
 
+    // --- web (a page opened as a dock tab) ----------------------------------
+    // Placeholder body shown while the in-dock <webview> render is not yet wired
+    // (the actual page render is a separate main-side change). The title is neutral;
+    // the sub echoes the page host so the tab is identifiable.
+    web: {
+        title: "Opens as a web tab",
+        // {host} -> the page's host (e.g. "example.com"), or the raw url if unparseable.
+        sub: (host: string) => host
+    },
+
     // --- dicom (medical image) honest gaps ----------------------------------
     // The dicom viewer decodes UNCOMPRESSED transfer syntaxes (+ RLE) client-side. A
     // COMPRESSED DICOM (JPEG / JPEG 2000 / JPEG-LS) would need a heavy codec we don't

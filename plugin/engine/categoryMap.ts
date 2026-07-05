@@ -34,9 +34,13 @@ export type ViewerCategory =
     | "media"
     | "presentations";
 
-/** ContentTypes that are never chip-intercepted, so they need no category: "unknown"
- *  (stock Discord already handles it). */
-type UncategorisedType = "unknown";
+/** ContentTypes that are never chip-intercepted, so they need no category:
+ *   - "unknown"  stock Discord already handles it.
+ *   - "web"      not a file format / attachment chip at all — a web page opened as a
+ *                dock tab from a chat-message link (see embed.ts link interception). It
+ *                rides the tab model but has no Viewers-page switch (it's the browsing
+ *                pillar, gated at the link path, not the per-category file switches). */
+type UncategorisedType = "unknown" | "web";
 
 /** Every rendered ContentType → its category. Representative formats per category:
  *   - documents      pdf, docx, rtf, odt, html, eml, msg, xml, md, ipynb

@@ -45,7 +45,8 @@ export type ContentType =
     | "msg"
     | "raw"
     | "dicom"
-    | "postscript";
+    | "postscript"
+    | "web";
 
 // ── panel content ───────────────────────────────────────────────────────────
 

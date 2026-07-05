@@ -168,6 +168,51 @@ export const AUDIO_EXT = new Set(["mp3", "wav", "m4a", "aac", "ogg", "oga", "opu
 // TypeScript in a dev context, not an MPEG transport stream). ".mov" usually plays.
 export const VIDEO_EXT = new Set(["mp4", "m4v", "webm", "ogv", "mov"]);
 
+// Hosts whose links are Discord's OWN in-app navigation (a channel/message/server
+// route). A left-click on one of these must stay NATIVE (React-router navigation),
+// so the link path never intercepts it into a web tab. Matched on the URL host, and
+// only for the app's navigation paths (/channels, /invite, …) — a link to a Discord
+// CDN attachment (cdn.discordapp.com / media.discordapp.net) is a real file/media URL
+// and is handled by the file-extension branches above, not here.
+const DISCORD_NAV_HOSTS = new Set([
+    "discord.com", "discordapp.com", "canary.discord.com", "ptb.discord.com",
+    "www.discord.com", "discord.gg"
+]);
+
+/** Is `url` a Discord IN-APP navigation link (a channel/message/server/invite route)
+ *  that must stay native, NOT open as a web tab? True only for the app-nav paths on a
+ *  Discord host; a Discord CDN file url (already caught by the extension branches) is
+ *  not one of these. */
+function isDiscordInternalLink(url: string): boolean {
+    let u: URL;
+    try {
+        u = new URL(url, location.href);
+    } catch {
+        return false;
+    }
+    const host = u.hostname.toLowerCase();
+    if (host === "discord.gg") return true; // invite short links
+    if (!DISCORD_NAV_HOSTS.has(host)) return false;
+    // On a discord.com host, only the app-router paths are internal navigation.
+    return /^\/(channels|invite|guild-discovery|store|library|application-directory|servers|users)(\/|$)/i.test(u.pathname);
+}
+
+/** Is `url` a real EXTERNAL http(s) web page — the target for a dock web tab? True when
+ *  the url is http(s) and is NOT a Discord in-app navigation link. Callers reach this
+ *  only after the file-extension branches have declined, so a dock-openable file/media
+ *  url never counts as "web". */
+function isWebPageUrl(url: string | null | undefined): boolean {
+    if (!url) return false;
+    let u: URL;
+    try {
+        u = new URL(url, location.href);
+    } catch {
+        return false;
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    return !isDiscordInternalLink(url);
+}
+
 /** Decide the content type from an explicit hint or the url/name extension. */
 export function detectType(opts: { type?: ContentType; url?: string | null; name?: string | null }): ContentType {
     if (opts.type) return opts.type;
@@ -260,6 +305,12 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     if (ext === "artifact") return "code";
     if (ext === "html" || ext === "htm") return "html";
     if (ext && ext in CODE_LANG) return "code";
+    // No dock-openable file/media extension matched. A real EXTERNAL http(s) web page
+    // (not a Discord in-app navigation link, which stays native) opens as a web tab —
+    // the browsing pillar. This is LAST so a file/media url is never mistaken for a
+    // page. A non-http url (mailto:, blob:, data:, …) or a discord.com/channels route
+    // stays "unknown" (untouched by the link path).
+    if (isWebPageUrl(opts.url)) return "web";
     return "unknown";
 }
 

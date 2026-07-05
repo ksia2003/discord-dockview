@@ -2055,6 +2055,45 @@ html.dockview-open .dockview-page-inner {
     word-break: keep-all;
 }
 
+/* web tab placeholder (a page opened as a dock tab, before the <webview> render) —
+ * a centred card with the page favicon + host, mirroring the media fallback card. */
+.dockview-web-wrap {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    padding: 24px 20px;
+    overflow: hidden;
+    background: var(--background-gradient-chat, var(--background-base-lower));
+}
+.dockview-web-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    text-align: center;
+}
+.dockview-web-favicon {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    object-fit: contain;
+}
+.dockview-web-title {
+    color: var(--header-primary, #f2f3f5);
+    font-size: 16px;
+    font-weight: 600;
+}
+.dockview-web-sub {
+    color: var(--text-muted, #949ba4);
+    font-size: 13px;
+    max-width: 320px;
+    line-height: 1.4;
+    word-break: break-all;
+}
+
 /* --- 3D model (three.js WebGLRenderer canvas) ------------------------------
  * The container fills the dock body (absolute inset:0) and is the sizing root the
  * effect measures (clientWidth/Height) for the camera aspect + renderer size; the
