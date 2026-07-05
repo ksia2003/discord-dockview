@@ -22,7 +22,7 @@
  */
 
 /** The compiled/running plugin patch version. Bump this per patch release. */
-export const DOCKVIEW_PLUGIN_VERSION = "0.1.27";
+export const DOCKVIEW_PLUGIN_VERSION = "0.1.28";
 
 export interface ParsedVersionTxt {
     plugin: string | null;
