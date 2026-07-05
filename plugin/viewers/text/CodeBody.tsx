@@ -171,7 +171,7 @@ function buildCmController(host: HTMLElement, mods: CMModules): CodeController {
     // gutter inside .cm-gutters, ~3px wide. It only exists in EDIT mode (and only
     // when there's an original to diff against), so without compensation the divider
     // line between the line-number gutter and the code body would JUMP RIGHT by ~3px
-    // when toggling read→edit (선인: "그 흰 줄이 움직여"). To keep the divider
+    // when toggling read→edit (the divider line visibly shifts). To keep the divider
     // PERFECTLY still, RESERVE the change-gutter's footprint as right-padding on
     // .cm-gutters whenever the real change-gutter is ABSENT (read mode, or a new
     // file's edit mode with no original). Padding sits inside the border-right, so

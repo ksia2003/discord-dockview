@@ -1934,7 +1934,7 @@ html.dockview-open .dockview-page-inner {
 }
 
 /* ----------------------------------------------------------------------------
-   NARROW-WIDTH COLLAPSE (spec §2.1 "결정 필요 5": collapse controls, never the
+   NARROW-WIDTH COLLAPSE (collapse controls, never the
    filename). The SECOND row (.dockview-viewer-toolbar) is a CSS CONTAINER keyed on
    the PANEL width; as the panel narrows (min 360px) the lowest-priority control
    affordances drop out FIRST, purely in CSS so it reflows live during a resize

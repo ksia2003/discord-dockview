@@ -1,7 +1,7 @@
 /*
  * Attach — stage the file CURRENTLY shown in the dock as a pending upload on the
  * channel composer (the native attachment chip → review-before-send). When the
- * editable buffer has edits, the EDITED buffer is staged ("편집한거까지 해서 첨부")
+ * editable buffer has edits, the EDITED buffer is staged (edits included)
  * — the original Discord message is never touched.
  *
  * Three pieces live here (the cross-cutting attach surface):
