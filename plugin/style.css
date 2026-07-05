@@ -587,10 +587,12 @@ html.dockview-open .dockview-page-inner {
    painted edge-to-edge in --scrollbar-thin-thumb (no border, no padding-box clip), a
    transparent track, and the same fade-on-hover behaviour — anchored to the STABLE
    theme variables --scrollbar-thin-thumb/-track (NOT Discord's hashed scroller_/thin_
-   classes, which change every build). Only our own scrollers (.dockview-body = shared
-   vertical scroll for PDF/MD; .dockview-cm .cm-scroller = the CodeMirror code/CSV-raw
-   scroller; .dockview-csv-scroll = the CSV grid) are targeted — Discord's scrollers are
-   untouched. (The markdown
+   classes, which change every build). ONE shared rule covers EVERY dock scroller so they
+   are identical: .dockview-body (shared vertical scroll for PDF/MD/pptx), .dockview-cm
+   .cm-scroller (CodeMirror code/CSV-raw), .dockview-csv-scroll (CSV/xlsx grid),
+   .dockview-tree-scroll (JSON/XML tree), and the two xlsx horizontal strips
+   (.dockview-xlsx-tabs sheet bar + .dockview-xlsx-charts-row) — Discord's own scrollers
+   are untouched. (The markdown
    viewer renders inside a sandboxed srcdoc iframe with its own stylesheet, so ITS
    scrollers are styled separately in MD_STYLE in panel.tsx — these main-document
    selectors can't reach into the frame.) Fallback colours kept for the rare theme
@@ -598,20 +600,26 @@ html.dockview-open .dockview-page-inner {
 .dockview-body::-webkit-scrollbar,
 .dockview-cm .cm-scroller::-webkit-scrollbar,
 .dockview-csv-scroll::-webkit-scrollbar,
-.dockview-tree-scroll::-webkit-scrollbar {
+.dockview-tree-scroll::-webkit-scrollbar,
+.dockview-xlsx-tabs::-webkit-scrollbar,
+.dockview-xlsx-charts-row::-webkit-scrollbar {
     width: 8px;
     height: 8px;
 }
 .dockview-body::-webkit-scrollbar-track,
 .dockview-cm .cm-scroller::-webkit-scrollbar-track,
 .dockview-csv-scroll::-webkit-scrollbar-track,
-.dockview-tree-scroll::-webkit-scrollbar-track {
+.dockview-tree-scroll::-webkit-scrollbar-track,
+.dockview-xlsx-tabs::-webkit-scrollbar-track,
+.dockview-xlsx-charts-row::-webkit-scrollbar-track {
     background-color: var(--scrollbar-thin-track, transparent);
 }
 .dockview-body::-webkit-scrollbar-thumb,
 .dockview-cm .cm-scroller::-webkit-scrollbar-thumb,
 .dockview-csv-scroll::-webkit-scrollbar-thumb,
-.dockview-tree-scroll::-webkit-scrollbar-thumb {
+.dockview-tree-scroll::-webkit-scrollbar-thumb,
+.dockview-xlsx-tabs::-webkit-scrollbar-thumb,
+.dockview-xlsx-charts-row::-webkit-scrollbar-thumb {
     background-color: var(--scrollbar-thin-thumb, #1a1b1e);
     border-radius: 4px;
     min-height: 40px;
@@ -619,7 +627,9 @@ html.dockview-open .dockview-page-inner {
 .dockview-body::-webkit-scrollbar-corner,
 .dockview-cm .cm-scroller::-webkit-scrollbar-corner,
 .dockview-csv-scroll::-webkit-scrollbar-corner,
-.dockview-tree-scroll::-webkit-scrollbar-corner {
+.dockview-tree-scroll::-webkit-scrollbar-corner,
+.dockview-xlsx-tabs::-webkit-scrollbar-corner,
+.dockview-xlsx-charts-row::-webkit-scrollbar-corner {
     background-color: transparent;
 }
 /* Fade-on-hover, exactly like Discord's .fade scrollers: the thumb/track stay
@@ -632,7 +642,11 @@ html.dockview-open .dockview-page-inner {
 .dockview-csv-scroll::-webkit-scrollbar-thumb,
 .dockview-csv-scroll::-webkit-scrollbar-track,
 .dockview-tree-scroll::-webkit-scrollbar-thumb,
-.dockview-tree-scroll::-webkit-scrollbar-track {
+.dockview-tree-scroll::-webkit-scrollbar-track,
+.dockview-xlsx-tabs::-webkit-scrollbar-thumb,
+.dockview-xlsx-tabs::-webkit-scrollbar-track,
+.dockview-xlsx-charts-row::-webkit-scrollbar-thumb,
+.dockview-xlsx-charts-row::-webkit-scrollbar-track {
     visibility: hidden;
 }
 .dockview-body:hover::-webkit-scrollbar-thumb,
@@ -650,7 +664,15 @@ html.dockview-open .dockview-page-inner {
 .dockview-tree-scroll:hover::-webkit-scrollbar-thumb,
 .dockview-tree-scroll:hover::-webkit-scrollbar-track,
 .dockview-tree-scroll:focus-within::-webkit-scrollbar-thumb,
-.dockview-tree-scroll:focus-within::-webkit-scrollbar-track {
+.dockview-tree-scroll:focus-within::-webkit-scrollbar-track,
+.dockview-xlsx-tabs:hover::-webkit-scrollbar-thumb,
+.dockview-xlsx-tabs:hover::-webkit-scrollbar-track,
+.dockview-xlsx-tabs:focus-within::-webkit-scrollbar-thumb,
+.dockview-xlsx-tabs:focus-within::-webkit-scrollbar-track,
+.dockview-xlsx-charts-row:hover::-webkit-scrollbar-thumb,
+.dockview-xlsx-charts-row:hover::-webkit-scrollbar-track,
+.dockview-xlsx-charts-row:focus-within::-webkit-scrollbar-thumb,
+.dockview-xlsx-charts-row:focus-within::-webkit-scrollbar-track {
     visibility: visible;
 }
 
@@ -1357,7 +1379,7 @@ html.dockview-open .dockview-page-inner {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     font-size: 13px;
     font-variant-numeric: tabular-nums;
-    color: #dbdee1;
+    color: var(--text-default, #dbdee1);
 }
 .dockview-csv-mount { display: block; }
 .dockview-csv-table {
@@ -1535,14 +1557,9 @@ html.dockview-open .dockview-page-inner {
     overflow-y: hidden;
     background: var(--background-secondary, #2b2d31);
     border-top: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
-    scrollbar-width: thin;
+    /* Scrollbar styled by the shared Discord thin-scrollbar rule above (this class is
+       one of its selectors), so the sheet strip's bar matches every other dock scroller. */
 }
-.dockview-xlsx-tabs::-webkit-scrollbar { height: 6px; }
-.dockview-xlsx-tabs::-webkit-scrollbar-thumb {
-    background: var(--scrollbar-thin-thumb, rgba(255, 255, 255, 0.12));
-    border-radius: 3px;
-}
-.dockview-xlsx-tabs::-webkit-scrollbar-track { background: transparent; }
 /* A sheet tab: a compact pill button. Inactive = muted text on transparent; hover
    lifts the background; active = brighter text on the body tone with a top accent
    bar (Excel's "selected sheet" affordance), matching the dock's state-colour grammar. */
@@ -1625,14 +1642,9 @@ html.dockview-open .dockview-page-inner {
     padding: 4px 10px 12px;
     overflow-x: auto;
     overflow-y: hidden;
-    scrollbar-width: thin;
+    /* Scrollbar styled by the shared Discord thin-scrollbar rule above (this class is
+       one of its selectors), so the charts strip's bar matches every other dock scroller. */
 }
-.dockview-xlsx-charts-row::-webkit-scrollbar { height: 6px; }
-.dockview-xlsx-charts-row::-webkit-scrollbar-thumb {
-    background: var(--scrollbar-thin-thumb, rgba(255, 255, 255, 0.12));
-    border-radius: 3px;
-}
-.dockview-xlsx-charts-row::-webkit-scrollbar-track { background: transparent; }
 /* One chart card: a bordered panel on the body tone holding a title, the SVG plot, and
    a legend. Sized to the drawn viewBox (~460px) but shrinkable on a narrow dock. */
 .dockview-xlsx-chart-card {
@@ -1718,7 +1730,7 @@ html.dockview-open .dockview-page-inner {
     font-family: Consolas, "Andale Mono WT", "Andale Mono", Menlo, monospace;
     font-size: 12.5px;
     line-height: 1.55;
-    color: #dbdee1;
+    color: var(--text-default, #dbdee1);
 }
 .dockview-tree-mount {
     display: block;
@@ -2062,7 +2074,12 @@ html.dockview-open .dockview-page-inner {
     inset: 0;
     display: flex;
     overflow: hidden;
-    background: var(--background-primary, #313338);
+    /* Behind the webview: the SAME dock chat surface every other viewer body uses
+       (--background-base-lower), so a blank/transparent moment during a page load
+       reads as the dock, not a divergent brighter shade. --background-primary is
+       empty on current Discord builds (it would fall through to the raw #313338),
+       so use the base token the dock body/card actually paint. */
+    background: var(--background-gradient-chat, var(--background-base-lower, #1a1a1e));
 }
 .dockview-web-frame {
     flex: 1 1 auto;
@@ -2085,7 +2102,8 @@ html.dockview-open .dockview-page-inner {
     text-align: center;
     padding: 24px 20px;
     box-sizing: border-box;
-    background: var(--background-primary, #313338);
+    /* Same dock chat surface as the other viewer bodies (see .dockview-web-wrap). */
+    background: var(--background-gradient-chat, var(--background-base-lower, #1a1a1e));
 }
 .dockview-web-fail-title {
     color: var(--header-primary, #f2f3f5);
