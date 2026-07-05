@@ -2,12 +2,31 @@
  * DockView — self-update settings panel (renderer).
  * ---------------------------------------------------------------------------
  * The React surface for the "DockView updates" section in Vencord's plugin
- * settings (wired in via settings.ts's OptionType.COMPONENT entry). It reports
- * three versions — RUNNING (the compiled DOCKVIEW_PLUGIN_VERSION), ON-DISK (the
- * version.txt in VENCORD_FILES_DIR, which an OTA patch may have already written),
- * and LATEST (the newest DockView v* release on GitHub that carries the plugin
- * bundle) — derives a one line verdict, and drives the native updater with
- * Check / Apply buttons.
+ * settings (wired in via settings.ts's OptionType.COMPONENT entry). It shows the
+ * user TWO versions — the DockView version RUNNING now (the compiled
+ * DOCKVIEW_PLUGIN_VERSION) and the LATEST one available (the newest DockView v*
+ * release on GitHub that carries the plugin bundle) — derives a one line verdict,
+ * and drives the native updater with Check / Apply buttons. The on-disk version.txt
+ * marker and the raw app-shell version stay INTERNAL: they still feed the update
+ * branching (updateAvailable / patchPending / shellUpdateNeeded) but are not shown,
+ * and a shell update is conveyed by the verdict's "(updates the app)" wording.
+ *
+ * ONE UNIFIED FLOW. A DockView release can carry a newer PLUGIN (a renderer bundle
+ * we hot-swap over the air) and/or a newer app SHELL (the Vesktop main/preload,
+ * which only an installer can replace). Those are two DIFFERENT apply mechanisms,
+ * but the USER never chooses between them: there is ONE "Check for updates" and ONE
+ * "Apply update". The single Apply routes internally —
+ *   - shell is newer  → run the installer (applyShellUpdate). The new shell ships
+ *                        its bundled plugin too, so this ONE step covers both; we do
+ *                        NOT also run a separate plugin apply. If the install method
+ *                        can't be driven here (unknown method / no pkexec, or the
+ *                        apply comes back { manual }), Apply becomes an honest
+ *                        "Download installer" action with the reinstall guidance.
+ *   - only the plugin is newer → apply the OTA plugin swap (applyUpdate) + reload.
+ * All the internal logic (discoverManifest, applyUpdate, applyShellUpdate, the
+ * needsRelaunch handling, install-method detection, the manual-install fallback) is
+ * preserved verbatim — only the UI/branching is merged so one action does the right
+ * thing.
  *
  * IMPORTANT — no import cycle. This module imports ONLY ../version, @webpack/common,
  * and ../strings. It does NOT import settings.ts, index.tsx, or panel.tsx; the two
@@ -26,7 +45,7 @@ import { Button, Forms, React, Switch, Text } from "@webpack/common";
 import { downloadUrl } from "../external/openExternal";
 import { settings } from "../settings";
 import { STRINGS } from "../strings";
-import { compareDockviewVersions, DOCKVIEW_PLUGIN_VERSION, parseVersionTxt } from "../version";
+import { compareDockviewVersions, DOCKVIEW_PLUGIN_VERSION } from "../version";
 import { clearUpdateFlag } from "./autoCheck";
 import {
     DiscoverResult, getNative, getShellNative, getShellVersion, getTargetDir, OWNER, pluginStamp, REPO,
@@ -249,14 +268,40 @@ export function UpdatePanel() {
         typeof latest?.manifest?.shellVersion === "string" ? latest.manifest.shellVersion : null;
     const shellUpdateNeeded = shellIsNewer(requiredShell, shellVersion);
 
-    // Derive the verdict line shown when there's no transient status set.
+    // The UNIFIED "is there anything to apply?" signal: a newer shell OR a newer plugin.
+    // The user sees ONE state; the branch (installer vs OTA swap) is decided at Apply time.
+    const anyUpdateAvailable = shellUpdateNeeded || updateAvailable;
+
+    // The version shown in the single verdict line. When the shell is newer we lead with
+    // the shell version (the update that will actually run); otherwise the plugin version.
+    const availableVersion =
+        shellUpdateNeeded && requiredShell ? requiredShell : latestVer;
+
+    // Can we drive the shell installer here? When the shell is the thing that's newer but
+    // the install method is one we can't drive (unknown / no auto-update, or a prior apply
+    // came back manual), the single Apply becomes a "Download installer" action instead of
+    // a silent dead end — the honest manual-install fallback, kept as part of the one flow.
+    const shellManualOnly =
+        shellUpdateNeeded && (!!shellManualUrl || (!!shellInfo && !shellInfo.canAutoUpdate) || !shellNative);
+
+    // Whichever apply is in flight (plugin OTA or shell installer) disables the one button.
+    const busyApplying = applying || shellApplying;
+
+    // Derive the verdict line shown when there's no transient status set. A shell update
+    // and a plugin update collapse into ONE "update available" line (the app-update wording
+    // when a shell update will run, so the single Apply reads honestly).
     let verdict: string;
     if (applied) {
         verdict = status ?? U.appliedNeedsReload;
+    } else if (shellStatus && shellUpdateNeeded) {
+        // A shell apply reported (launched / error) — surface it in the single line.
+        verdict = shellStatus;
     } else if (status) {
         verdict = status;
     } else if (latest === null) {
         verdict = patchPending ? U.appliedNeedsReload : U.notChecked;
+    } else if (shellUpdateNeeded && availableVersion) {
+        verdict = U.appUpdateAvailable(availableVersion);
     } else if (updateAvailable && latestVer) {
         verdict = U.updateAvailable(latestVer);
     } else if (patchPending) {
@@ -264,6 +309,32 @@ export function UpdatePanel() {
     } else {
         verdict = U.upToDate;
     }
+
+    // The ONE Apply action. Routes to the shell installer when the shell is newer (that
+    // update also carries the bundled plugin, so no separate plugin apply is needed), the
+    // manual download when we can't drive the installer, or the OTA plugin swap otherwise.
+    // A plain closure (not a hook) — it runs only on click and sits below the early
+    // no-native return, so it must not be a useCallback.
+    const onApplyUnified = () => {
+        if (shellUpdateNeeded) {
+            if (shellManualOnly) {
+                if (shellManualUrl) downloadUrl(shellManualUrl);
+                else void onShellApply(); // no url yet → run apply, which returns { manual, url }
+            } else {
+                void onShellApply();
+            }
+        } else {
+            void onApply();
+        }
+    };
+
+    // The single Apply button's label reflects what it will do right now, without ever
+    // presenting two update TYPES to choose between.
+    const applyLabel = busyApplying
+        ? (shellApplying ? SH.updating : U.applying)
+        : shellManualOnly
+            ? SH.download
+            : U.apply;
 
     return React.createElement(
         "div",
@@ -277,12 +348,12 @@ export function UpdatePanel() {
         React.createElement(
             "div",
             { style: { margin: "8px 0" } },
+            // Two user-meaningful rows only: the DockView version running now and the
+            // latest available. The on-disk version.txt base marker and the raw app-shell
+            // version stay INTERNAL (they still drive the branching below); the single
+            // verdict line conveys a shell update via its "(updates the app)" wording.
             versionRow(U.current, current),
-            versionRow(U.onDisk, parseVersionTxt(installed ?? "").plugin ?? installed),
-            versionRow(U.latest, latestVer),
-            // The app-shell version row only appears when the shell bridge is present
-            // (an older shell without shellUpdate simply omits it).
-            shellVersion ? versionRow(SH.shellVersion, shellVersion) : null
+            versionRow(U.latest, latestVer)
         ),
         // "Installed via: AppImage" — how the app is installed, shown once detected.
         shellInfo
@@ -305,7 +376,7 @@ export function UpdatePanel() {
                 {
                     size: Button.Sizes.SMALL,
                     color: Button.Colors.PRIMARY,
-                    disabled: checking || applying,
+                    disabled: checking || busyApplying,
                     onClick: onCheck
                 },
                 // A failed check flips the button to "Try again" — the Retry affordance
@@ -316,66 +387,34 @@ export function UpdatePanel() {
                 Button,
                 {
                     size: Button.Sizes.SMALL,
-                    color: Button.Colors.BRAND,
-                    disabled: applying || checking || !updateAvailable || !targetDir,
-                    onClick: onApply
+                    // A manual-only shell update is a "download the installer" action, so
+                    // it reads as a secondary (PRIMARY) button, not the BRAND apply.
+                    color: shellManualOnly ? Button.Colors.PRIMARY : Button.Colors.BRAND,
+                    // ONE Apply, enabled whenever a Check found anything to apply. For a
+                    // plugin OTA swap we still need the target dir; the shell installer path
+                    // doesn't (it writes via the app's own install), so only gate on
+                    // targetDir when the plugin branch will run.
+                    disabled:
+                        busyApplying ||
+                        checking ||
+                        !anyUpdateAvailable ||
+                        (!shellUpdateNeeded && !targetDir),
+                    onClick: onApplyUnified
                 },
-                applying ? U.applying : U.apply
+                applyLabel
             )
         ),
 
-        // --- app-shell update (only when a fetched release needs a newer shell) -----
-        // Surfaced after a Check reveals the release requires a shell newer than the one
-        // running. A driveable install method gets an "Update app" button; a method we
-        // can't drive (or a shell apply that returned manual) gets a download card. The
-        // shell status line (launched / error) shows under either.
-        shellUpdateNeeded && shellNative
+        // --- manual-install guidance (only when the single Apply is a download) -----
+        // When the update is a shell update we can't drive here, the one Apply became a
+        // "Download installer" action; this line explains the honest manual finish
+        // (reinstall the installer; settings + logins are kept). It is the SAME fallback
+        // the old separate shell card carried, now framed as part of the single flow.
+        shellManualOnly
             ? React.createElement(
-                "div",
-                { style: { marginTop: "14px", paddingTop: "12px", borderTop: "1px solid var(--background-modifier-accent)" } },
-                React.createElement(
-                    Text,
-                    { variant: "text-sm/normal", style: { display: "block", marginBottom: "8px" } },
-                    SH.updateAvailable(requiredShell!)
-                ),
-                // Manual card: no driveable method, or a prior apply came back manual.
-                shellManualUrl || (shellInfo && !shellInfo.canAutoUpdate)
-                    ? React.createElement(
-                        "div",
-                        null,
-                        React.createElement(
-                            Text,
-                            { variant: "text-sm/normal", style: { display: "block", marginBottom: "8px", color: "var(--text-muted)" } },
-                            SH.manual
-                        ),
-                        React.createElement(
-                            Button,
-                            {
-                                size: Button.Sizes.SMALL,
-                                color: Button.Colors.PRIMARY,
-                                disabled: !shellManualUrl,
-                                onClick: () => shellManualUrl && downloadUrl(shellManualUrl)
-                            },
-                            SH.download
-                        )
-                    )
-                    : React.createElement(
-                        Button,
-                        {
-                            size: Button.Sizes.SMALL,
-                            color: Button.Colors.BRAND,
-                            disabled: shellApplying,
-                            onClick: onShellApply
-                        },
-                        shellApplying ? SH.updating : SH.update
-                    ),
-                shellStatus
-                    ? React.createElement(
-                        Text,
-                        { variant: "text-sm/normal", style: { display: "block", marginTop: "8px", color: "var(--text-muted)" } },
-                        shellStatus
-                    )
-                    : null
+                Text,
+                { variant: "text-sm/normal", style: { display: "block", marginTop: "8px", color: "var(--text-muted)" } },
+                SH.manual
             )
             : null,
 

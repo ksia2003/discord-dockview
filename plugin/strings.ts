@@ -563,16 +563,20 @@ export const STRINGS = {
     },
 
     // --- self-update panel (settings section) -------------------------------
-    // The DockView update section in Vencord's plugin settings: three version
-    // lines (running / on-disk / latest), a one-line status verdict, and the
-    // Check / Apply buttons that drive the native updater. Sober, settings-page
-    // voice — these report state, not idle dead-ends, so no jokes.
+    // The DockView update section in Vencord's plugin settings: two user-facing
+    // version lines (the running DockView version + the latest available), a
+    // one-line status verdict, and the Check / Apply buttons that drive the native
+    // updater. Sober, settings-page voice — these report state, not idle dead-ends,
+    // so no jokes.
     update: {
         sectionTitle: "DockView updates",
         // The blurb under the title — what this section does.
         intro: "DockView patches itself from GitHub. Check for a new build, then apply it.",
-        // Version row labels.
-        current: "Running",
+        // Version row labels. Only two rows are shown to the user: the DockView version
+        // running now and the latest available. (The on-disk version.txt marker and the
+        // raw app-shell version are internal-only — kept out of the UI; onDisk's label is
+        // retained here for any non-UI reference but is no longer rendered.)
+        current: "Version",
         onDisk: "On disk",
         latest: "Latest",
         // Buttons.
@@ -584,6 +588,11 @@ export const STRINGS = {
         upToDate: "You're on the latest build.",
         // {version} -> the latest plugin version available.
         updateAvailable: (version: string) => `Update available: ${version}.`,
+        // A newer build is available whose update replaces the app itself (not just the
+        // plugin). Shown instead of the plain updateAvailable line when the release needs
+        // a newer shell, so the single Apply reads honestly (the app will restart to
+        // finish). {version} -> the version shown in the Latest row.
+        appUpdateAvailable: (version: string) => `Update available: ${version} (updates the app).`,
         // A patch was written to disk but the running code is still older — a
         // reload picks it up.
         appliedNeedsReload: "Update applied — reload to run it.",
