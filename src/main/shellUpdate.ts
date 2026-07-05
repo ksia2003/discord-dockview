@@ -312,12 +312,15 @@ export async function applyShellUpdate(shell: ShellManifest, baseUrl: string): P
 
 /**
  * Windows: run the one-click NSIS Setup exe silently (/S), detached so it outlives us,
- * then quit. electron-builder's one-click installer replaces the install and relaunches
- * the app itself when it finishes, so we do NOT relaunch here (a relaunch would race the
- * installer over locked files). We give the spawn a beat, then app.quit().
+ * then quit. A silent (/S) install does NOT relaunch the app on its own — the installer
+ * only re-runs the app afterwards when passed --force-run (the same flag electron-updater
+ * uses to resume after a silent update). Without it the app just closes and the user has
+ * to reopen it, so we pass --force-run and quit shortly after so the running exe isn't
+ * holding files the installer replaces; the installer then launches the freshly installed
+ * app itself.
  */
 async function applyWindows(setupExe: string): Promise<ShellApplyResult> {
-    const child = spawn(setupExe, ["/S"], { detached: true, stdio: "ignore" });
+    const child = spawn(setupExe, ["/S", "--force-run"], { detached: true, stdio: "ignore" });
     child.unref();
     // Quit shortly after so the running exe isn't holding files the installer replaces.
     setTimeout(() => app.quit(), 1500);
