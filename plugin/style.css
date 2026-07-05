@@ -241,19 +241,24 @@ html.dockview-open .dockview-page-inner {
     overflow: hidden;
 }
 .dockview-tab {
-    /* Inactive tabs are the flexible ones: they shrink FIRST (a high flex-shrink) as
-       the strip fills, so everything fits without a scroll. A min-width keeps the icon
-       visible even when fully squeezed (the label ellipsises away inside; the ✕ is
-       hover-only + absolutely positioned so it never takes layout width) — small enough
-       that a busy strip still fits the panel. The ACTIVE tab overrides this to shrink
-       LAST (a far lower flex-shrink), so it keeps its full length until the inactive
-       tabs have all bottomed out (below). */
-    flex: 1 8 auto;
+    /* WIDTH MODEL (browser-style, UNIFORM inactive): inactive tabs are all the SAME width,
+       NOT content-sized. Every inactive tab takes a FIXED flex-basis (150px) with flex-grow
+       0 and flex-shrink shared — so regardless of filename length they render EQUAL to each
+       other, the label ellipsising to fit; they never grow to fill the strip, so a few tabs
+       sit left-aligned with empty strip after (never a full-width bar). They only SHRINK
+       when the tabs' total width EXCEEDS the strip: with identical basis + identical shrink
+       factor the inactive tabs shrink UNIFORMLY (staying equal to each other), their labels
+       ellipsising earlier, down to a min width that always keeps the icon visible (the ✕ is
+       hover-only + absolutely positioned so it never takes layout width). The ACTIVE tab
+       overrides this to be WIDER (content-sized up to a larger cap) and to shrink LAST (a far
+       lower flex-shrink + a floor equal to the inactive width), so it keeps its full length
+       until the inactive tabs have all bottomed out (below). */
+    flex: 0 8 150px;
     min-width: 30px;
     display: flex;
     align-items: center;
     gap: 6px;
-    max-width: 200px;
+    max-width: 150px;
     height: 100%; /* full header-row height — content not inset into a sub-row box */
     padding: 0 6px 0 10px;
     position: relative; /* anchors the active underline bar */
@@ -272,16 +277,22 @@ html.dockview-open .dockview-page-inner {
 @media (prefers-reduced-motion: reduce) {
     .dockview-tab { transition: color 0.12s ease !important; }
 }
-/* The ACTIVE tab keeps its FULL length while inactive tabs shrink around it. Its
-   flex-shrink is far lower than an inactive tab's (1 vs 8), so the inactive tabs shrink
-   to their icon-only floor FIRST and the active tab only gives ground once they have all
-   bottomed out — a last resort on a very busy strip, so it stays the widest tab yet the
-   strip never scrolls. max-width lifted so a lone active tab shows its whole filename.
-   Pure width behaviour: the active highlight (brighter text + lit icon + the
-   --interactive-active underline bar) is unchanged. */
+/* The ACTIVE tab is WIDER than the uniform inactive tabs and keeps its full length while
+   they shrink around it. Unlike the inactive tabs (fixed 150px basis), the active tab is
+   CONTENT-SIZED (flex-basis:auto) so it fits its OWN filename up to a larger cap (240px),
+   and its min-width equals the inactive width (150px) so it is ALWAYS ≥ an inactive tab —
+   a short active name sits near the inactive width but never narrower, standing out by
+   being wider. Since NO tab grows to fill (flex-grow:0 everywhere), a lone/active tab is
+   capped at its content up to 240px with empty strip after, NOT a full-width bar. "Active
+   shrinks last" is pure shrink RESISTANCE: its flex-shrink is far lower than an inactive
+   tab's (1 vs 8), so on overflow the inactive tabs shrink to their icon-only floor FIRST
+   and the active tab only gives ground once they have all bottomed out — it stays the
+   widest tab yet the strip never scrolls. Pure width behaviour: the active highlight
+   (brighter text + lit icon + the --interactive-active underline bar) is unchanged. */
 .dockview-tab-active {
-    flex: 1 1 auto;
-    max-width: none;
+    flex: 0 1 auto;
+    min-width: 150px;
+    max-width: 240px;
 }
 /* PINNED tab = treated IDENTICALLY to a regular tab (leftmost, global). It carries the
    SAME icon + name + ✕ and the SAME flex/width/min-width/shrink rules (it inherits the
