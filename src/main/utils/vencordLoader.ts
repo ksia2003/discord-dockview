@@ -10,8 +10,10 @@
  * from GitHub.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "fs";
 import { access, constants as FsConstants, writeFile } from "fs/promises";
+import { BASE_DATA_DIR } from "main/constants";
+import { PROFILES_ROOT } from "main/profiles";
 import { VENCORD_FILES_DIR } from "main/vencordFilesDir";
 import { join } from "path";
 import { compareDockviewVersions, parseVersionTxt } from "shared/dockviewVersion";
@@ -20,9 +22,10 @@ import { STATIC_DIR } from "shared/paths";
 // Directory holding the Vencord (+ DockView plugin) dist bundled with the app.
 // Populated at build time by scripts/prepare-vencord.mjs and shipped via
 // package.json -> build.files -> "static".
+const VERSION_FILE_NAME = "version.txt";
 const BUNDLED_VENCORD_DIR = join(STATIC_DIR, "vencordDist");
-const BUNDLED_VERSION_FILE = join(BUNDLED_VENCORD_DIR, "version.txt");
-const INSTALLED_VERSION_FILE = join(VENCORD_FILES_DIR, "version.txt");
+const BUNDLED_VERSION_FILE = join(BUNDLED_VENCORD_DIR, VERSION_FILE_NAME);
+const INSTALLED_VERSION_FILE = join(VENCORD_FILES_DIR, VERSION_FILE_NAME);
 
 export const FILES_TO_DOWNLOAD = [
     "vencordDesktopMain.js",
@@ -91,7 +94,78 @@ export async function downloadVencordFiles() {
     copyBundledVencordFiles();
 }
 
+/**
+ * One-time, best-effort migration for the shared plugin-files dir.
+ *
+ * The plugin files used to live PER PROFILE (<profile>/sessionData/vencordFiles);
+ * they now live in a single profile-independent dir (VENCORD_FILES_DIR under
+ * BASE_DATA_DIR) so one in-app OTA update covers every account. For a fresh or
+ * single-account install this is a no-op — the default install's old dir IS the
+ * shared dir (same path). The only loss case is a multi-account user who had OTA'd
+ * a NAMED profile to a version newer than both the bundled build and the shared dir:
+ * that OTA lived in the profile's own vencordFiles and would otherwise be ignored.
+ *
+ * So: scan the named profile dirs for the newest previously-installed version.txt
+ * and, if it is newer than what the shared dir currently holds, seed the shared dir
+ * from it. This runs BEFORE the version-guarded bundled copy below, so the guard
+ * then sees the migrated (newer) version and preserves it. Any error is swallowed —
+ * a failed migration just falls back to the bundled copy (worst case: that user
+ * re-runs the OTA once).
+ */
+function migrateSharedVencordFiles() {
+    // A custom vencordDir opts out of the shared-base layout entirely.
+    if (VENCORD_FILES_DIR !== join(BASE_DATA_DIR, "sessionData", "vencordFiles")) return;
+
+    try {
+        const sharedVersion = readVersion(INSTALLED_VERSION_FILE); // string | null
+
+        // Collect candidate per-profile installs: <PROFILES_ROOT>/<name>/sessionData/vencordFiles.
+        let best: { dir: string; version: string } | null = null;
+        let profileNames: string[] = [];
+        try {
+            profileNames = readdirSync(PROFILES_ROOT, { withFileTypes: true })
+                .filter(e => e.isDirectory())
+                .map(e => e.name);
+        } catch {
+            return; // no profiles root → nothing to migrate
+        }
+
+        for (const name of profileNames) {
+            const candidateDir = join(PROFILES_ROOT, name, "sessionData", "vencordFiles");
+            const version = readVersion(join(candidateDir, VERSION_FILE_NAME));
+            if (version === null) continue;
+            if (!existsSync(join(candidateDir, "vencordDesktopMain.js"))) continue; // incomplete install
+            if (best === null || compareDockviewVersions(best.version, version) < 0) {
+                best = { dir: candidateDir, version };
+            }
+        }
+
+        if (!best) return;
+        // Only seed when the best profile install is strictly newer than the shared dir.
+        if (sharedVersion !== null && compareDockviewVersions(sharedVersion, best.version) >= 0) return;
+
+        mkdirSync(VENCORD_FILES_DIR, { recursive: true });
+        for (const file of readdirSync(best.dir)) {
+            const src = join(best.dir, file);
+            try {
+                if (statSync(src).isFile()) copyFileSync(src, join(VENCORD_FILES_DIR, file));
+            } catch {
+                /* skip unreadable entry */
+            }
+        }
+        console.log(
+            `[VencordLoader] migrated shared Vencord dist from profile install ${JSON.stringify(best.dir)} ` +
+                `(version ${JSON.stringify(best.version)} > shared ${JSON.stringify(sharedVersion)})`
+        );
+    } catch (err) {
+        console.warn("[VencordLoader] shared-dir migration skipped:", err);
+    }
+}
+
 export async function ensureVencordFiles() {
+    // Best-effort: rescue a newer OTA that used to live in a per-profile dir.
+    migrateSharedVencordFiles();
+
     if (!existsSync(BUNDLED_VENCORD_DIR)) {
         throw new Error(
             `[VencordLoader] Bundled Vencord dist not found at ${BUNDLED_VENCORD_DIR}. ` +

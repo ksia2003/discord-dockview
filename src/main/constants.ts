@@ -29,6 +29,15 @@ export const DATA_DIR =
     profileDataDir ||
     (PORTABLE ? join(vesktopDir, "Data") : join(app.getPath("userData")));
 
+// The profile-INDEPENDENT base data dir. Frozen HERE, before the profile setPath
+// below rewrites Electron's "userData" to the profile dir — after that,
+// app.getPath("userData") would return the profile dir, not the base. This anchors
+// data that must be SHARED across every account profile (the plugin CODE / OTA
+// files) rather than duplicated per profile. For the DEFAULT no-profile launch,
+// DATA_DIR === BASE_DATA_DIR, so anything derived from it is byte-identical to
+// upstream (no migration for existing single-account users).
+export const BASE_DATA_DIR = PORTABLE ? join(vesktopDir, "Data") : join(app.getPath("userData"));
+
 // When a profile is active (env-pinned OR --profile), scope Electron's userData —
 // and therefore requestSingleInstanceLock + all Chromium storage — to the profile
 // dir, EARLY (before any lock / app.ready). Without this, a second profile instance
@@ -44,6 +53,11 @@ mkdirSync(DATA_DIR, { recursive: true });
 
 export const SESSION_DATA_DIR = join(DATA_DIR, "sessionData");
 app.setPath("sessionData", SESSION_DATA_DIR);
+
+// Profile-independent counterpart of SESSION_DATA_DIR — the shared base under which
+// the plugin files live (see vencordFilesDir.ts). Electron's session storage itself
+// stays per-profile (SESSION_DATA_DIR above); only the shared plugin CODE uses this.
+export const BASE_SESSION_DATA_DIR = join(BASE_DATA_DIR, "sessionData");
 
 export const VENCORD_SETTINGS_DIR = join(DATA_DIR, "settings");
 mkdirSync(VENCORD_SETTINGS_DIR, { recursive: true });
