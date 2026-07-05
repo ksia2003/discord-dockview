@@ -205,22 +205,29 @@ html.dockview-open .dockview-page-inner {
    Discord profile-tab indicator). Inactive tabs = muted text, no underline,
    transparent bg; hover = a faint brighten only (no bg fill).
 
-   Each tab carries its OWN ⋯/✕, PERSISTENT on every tab (active AND inactive,
-   always visible at rest — no hover/active gating) so tab widths never change on
-   hover or active-switch (no layout shift). The ⋯ acts on THAT window in place; the
-   ✕ closes THAT file. The only shared header control is the far-right dock X. The
-   row scrolls horizontally on overflow within the slot. No invented chrome. */
+   CONTROLS (browser-tab grammar): the ONLY inline control on a tab is its ✕ (closes
+   THAT file). The ACTIVE tab shows its ✕ at rest; an INACTIVE tab hides its ✕ and
+   reveals it only on HOVER — absolutely positioned at the tab's right edge over a
+   small gradient (so it stays legible over the label and NEVER reflows the strip). A
+   tab at rest is thus just [icon][name] (inactive) or [icon][name][✕] (active). There
+   is NO inline ⋯ — a tab's secondary actions are reached by right-click. The only
+   shared header control is the far-right dock X.
+
+   OVERFLOW (N-tab model): the strip FITS the header slot — no horizontal scroll. As
+   more tabs open the INACTIVE tabs shrink FIRST (a high flex-shrink) and their label
+   ellipsises, down to a min width that always keeps the icon visible; the ACTIVE tab
+   has a far lower flex-shrink so it keeps its full length until the inactive tabs have
+   all bottomed out. Pinned chips are icon-only (narrowest). This is pure width/flex
+   behaviour — the resting colours/underline/fills of the active and inactive tabs are
+   untouched. No invented chrome. */
 .dockview-tabs {
     flex: 1 1 auto;
     min-width: 0;
     display: flex;
     align-items: stretch; /* tabs fill the full row height (underline at bottom) */
     gap: 0;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none; /* the tab row never shows a bar (it's chrome) */
+    overflow: hidden; /* the strip fits the slot: inactive tabs shrink, no scroll */
 }
-.dockview-tabs::-webkit-scrollbar { height: 0; width: 0; }
 /* When the slot carries tabs (not the plain icon+title), it must NOT impose the
    centred icon/title layout — let the scrollable tab row own the full slot, and
    stretch the slot to the full header-row height so each full-height tab reaches
@@ -234,11 +241,18 @@ html.dockview-open .dockview-page-inner {
     overflow: hidden;
 }
 .dockview-tab {
-    flex: 0 1 auto;
+    /* Inactive tabs are the flexible ones: they shrink FIRST (a high flex-shrink) as
+       the strip fills, so everything fits without a scroll. A min-width keeps the icon
+       visible even when fully squeezed (the label ellipsises away inside; the ✕ is
+       hover-only + absolutely positioned so it never takes layout width) — small enough
+       that a busy strip still fits the panel. The ACTIVE tab overrides this to shrink
+       LAST (a far lower flex-shrink), so it keeps its full length until the inactive
+       tabs have all bottomed out (below). */
+    flex: 1 8 auto;
+    min-width: 30px;
     display: flex;
     align-items: center;
     gap: 6px;
-    min-width: 0;
     max-width: 200px;
     height: 100%; /* full header-row height — content not inset into a sub-row box */
     padding: 0 6px 0 10px;
@@ -249,6 +263,57 @@ html.dockview-open .dockview-page-inner {
     cursor: pointer;
     user-select: none;
     transition: color 0.12s ease;
+}
+/* FLIP reorder: DockTabs applies an inline `transform: translateX(...)` +
+   `transition: transform 180ms ease` while a tab slides to its new slot (pin / unpin /
+   drag). The transform is the ONLY animated geometry — layout (flex widths) is untouched
+   — so the slide is jank-free. Under reduced-motion the JS skips the animation; this rule
+   is a belt-and-suspenders guard that also strips any transform transition there. */
+@media (prefers-reduced-motion: reduce) {
+    .dockview-tab { transition: color 0.12s ease !important; }
+}
+/* The ACTIVE tab keeps its FULL length while inactive tabs shrink around it. Its
+   flex-shrink is far lower than an inactive tab's (1 vs 8), so the inactive tabs shrink
+   to their icon-only floor FIRST and the active tab only gives ground once they have all
+   bottomed out — a last resort on a very busy strip, so it stays the widest tab yet the
+   strip never scrolls. max-width lifted so a lone active tab shows its whole filename.
+   Pure width behaviour: the active highlight (brighter text + lit icon + the
+   --interactive-active underline bar) is unchanged. */
+.dockview-tab-active {
+    flex: 1 1 auto;
+    max-width: none;
+}
+/* PINNED tab = treated IDENTICALLY to a regular tab (leftmost, global). It carries the
+   SAME icon + name + ✕ and the SAME flex/width/min-width/shrink rules (it inherits the
+   base .dockview-tab / .dockview-tab-active geometry — NO overrides here), so it
+   participates in overflow-shrink exactly like a channel tab. The ONLY distinction is
+   its left position (pinned-first) + the pin badge on its icon (below). No special
+   width, no icon-only, no bg/border fill. */
+
+/* Pin badge: a small pushpin glyph pinned to the TOP-RIGHT corner of the pinned tab's
+   icon. It is an overlay sibling of the icon inside a 0-size positioning wrapper, so it
+   never resizes/reflows the icon or the tab. Muted, unobtrusive, NO background/border —
+   the icon corner just carries a faint pin mark. */
+.dockview-tab-iconwrap {
+    flex: 0 0 auto;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+}
+.dockview-tab-pinbadge {
+    position: absolute;
+    top: -3px;
+    right: -4px;
+    /* muted/semantic — matches the resting tab tint, distinctly dimmer than the label */
+    color: var(--text-muted, #949ba4);
+    pointer-events: none;
+}
+/* On the ACTIVE (lit) pinned tab, keep the badge legible but still muted (a touch
+   brighter than the resting muted tint, never a fill). */
+.dockview-tab-active .dockview-tab-pinbadge {
+    color: var(--interactive-normal, #b5bac1);
 }
 /* Inactive tab hover: brighten the text only — the resting strip stays flat,
    no background fill (underline-tab grammar, not a hover box). */
@@ -291,11 +356,12 @@ html.dockview-open .dockview-page-inner {
        inherits Discord's `text-md/medium` = 16px / weight 500): a tab's filename
        must read at the SAME size+weight as the pre-tab header — the active tab is
        distinguished by brightness + the underline, NOT by a smaller font. Long
-       names ellipsise (above) and the strip h-scrolls; we never shrink to fit. */
+       names ellipsise (above); on overflow inactive tabs shrink (flex) so the label
+       ellipsises earlier while the active tab keeps its full length. */
     font-size: 16px;
     font-weight: 500;
 }
-/* Per-tab control (⋯ / ✕): a flat ghost icon button (rule 5/10 — no border, no
+/* Per-tab control (the ✕): a flat ghost icon button (rule 5/10 — no border, no
    bg at rest, faint hover bg) living at the tab's right edge. Its own button so
    a click on it never bubbles up into a tab switch. */
 .dockview-tab-ctrl {
@@ -303,11 +369,10 @@ html.dockview-open .dockview-page-inner {
     display: flex;
     align-items: center;
     justify-content: center;
-    /* SIZE PARITY with the single-window header's ⋯/✕ buttons: those use Discord's
+    /* SIZE PARITY with the single-window header's ✕ button: that uses Discord's
        32px iconWrapper hover target around a 20px SVG. The tab control matches that
-       32x32 box + 20px SVG exactly — a tab's ⋯/✕ must never be smaller than the
-       pre-tab header's (선인's locked "never shrink" principle). The bigger controls
-       widen tabs; that is accepted (the strip h-scrolls — a separate concern). */
+       32x32 box + 20px SVG exactly — a tab's ✕ must never be smaller than the
+       pre-tab header's (the locked "never shrink" principle). */
     width: 32px;
     height: 32px;
     padding: 0;
@@ -324,16 +389,52 @@ html.dockview-open .dockview-page-inner {
     background: var(--background-modifier-active, rgba(255, 255, 255, 0.12));
 }
 .dockview-tab-ctrl svg { display: block; }
-/* PERSISTENT controls: every tab's ⋯ + ✕ are ALWAYS visible at rest (no hover /
-   active gating). This keeps each tab's WIDTH constant whether it is active,
-   inactive, hovered, or at rest — hovering or switching the active tab never
-   reflows the strip (no layout shift). Active vs inactive is conveyed ONLY by the
-   underline + bright/muted text, never by showing/hiding the controls. The active
-   tab's controls sit slightly brighter to match its brighter text. */
-.dockview-tab-ctrl { opacity: 0.65; }
-.dockview-tab-ctrl:hover { opacity: 1; }
-.dockview-tab-active .dockview-tab-ctrl { opacity: 0.8; }
-.dockview-tab-active .dockview-tab-ctrl:hover { opacity: 1; }
+/* CONTROLS VISIBILITY (browser-tab grammar).
+
+   ACTIVE tab: its ✕ is a normal in-flow child (always visible at rest), slightly
+   brighter to match the active tab's brighter text. It takes layout width, which is
+   fine — the active tab keeps its full length anyway.
+
+   INACTIVE tab: its ✕ is HIDDEN at rest and takes NO layout width (absolutely
+   positioned, removed from flow). On HOVER it appears pinned to the tab's right edge,
+   over a small left-to-right gradient of the header tint so it stays legible where it
+   overlaps the ellipsised label. Because it is absolutely positioned it never reflows
+   the strip — hovering an inactive tab only fades the ✕ in, no layout shift. A shrunk
+   inactive tab at rest is thus just [icon][…name], clean. */
+.dockview-tab-active .dockview-tab-ctrl {
+    position: static;
+    opacity: 0.8;
+    background: transparent;
+}
+.dockview-tab-active .dockview-tab-ctrl:hover {
+    opacity: 1;
+    background: var(--background-modifier-active, rgba(255, 255, 255, 0.12));
+}
+.dockview-tab:not(.dockview-tab-active) .dockview-tab-close {
+    position: absolute;
+    top: 50%;
+    right: 4px;
+    transform: translateY(-50%);
+    opacity: 0;
+    pointer-events: none;
+    /* A short gradient fading into the ✕ box so it reads over the label underneath,
+       without a hard-edged plate. Uses the header's own tint via currentColor-free
+       vars so it matches whatever theme is active. */
+    background: linear-gradient(
+        to right,
+        transparent 0,
+        var(--background-secondary-alt, rgba(43, 45, 49, 0.9)) 40%,
+        var(--background-secondary-alt, rgba(43, 45, 49, 0.9)) 100%
+    );
+    transition: opacity 0.12s ease;
+}
+.dockview-tab:not(.dockview-tab-active):hover .dockview-tab-close {
+    opacity: 1;
+    pointer-events: auto;
+}
+.dockview-tab:not(.dockview-tab-active) .dockview-tab-close:hover {
+    opacity: 1;
+}
 
 /* Header: native classes give the 48px bar, padding, tint and border-bottom.
    The TOP row is LOCKED to Discord grammar — [glyph][filename] + [⋯ close] — for
