@@ -116,6 +116,11 @@ export const VesktopNative = {
         copyImage: (imageBuffer: Uint8Array, imageSrc: string) =>
             invoke<void>(IpcEvents.CLIPBOARD_COPY_IMAGE, imageBuffer, imageSrc)
     },
+    networkPrivacy: {
+        setFirewallEnabled: (enabled: boolean) => invoke<void>(IpcEvents.SET_FIREWALL_ENABLED, enabled),
+        setProxy: (config: { enabled: boolean; rules: string; bypass: string }) =>
+            invoke<void>(IpcEvents.SET_PROXY, config)
+    },
     debug: {
         launchGpu: () => invoke<void>(IpcEvents.DEBUG_LAUNCH_GPU),
         launchWebrtcInternals: () => invoke<void>(IpcEvents.DEBUG_LAUNCH_WEBRTC_INTERNALS)

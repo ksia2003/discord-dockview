@@ -60,6 +60,7 @@ import { editBufferText, toggleEditMode } from "./edit/editMode";
 import { onNewFile } from "./edit/newFile";
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
+import { pushNetworkPrivacy } from "./networkPrivacy";
 import { settings } from "./settings";
 import { STRINGS } from "./strings";
 import { scheduleAutoCheck } from "./ui/autoCheck";
@@ -288,6 +289,11 @@ export default definePlugin({
         // 7. chat-side KaTeX (separate concern, kept) + the debug surface.
         startLatex();
         exposeDebug();
+
+        // 8. sync main's network-privacy config (tracker firewall + proxy) to the
+        //    saved Privacy settings. Main defaults the firewall ON, so this only
+        //    matters when the user has changed it or configured a proxy.
+        pushNetworkPrivacy();
 
         // 9. Add DockView's own top-level SECTION to the settings sidebar (a
         //    dedicated "DockView" header, same rank as "Vencord Settings", with

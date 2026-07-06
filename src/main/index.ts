@@ -16,6 +16,7 @@ import { DATA_DIR } from "./constants";
 import { createFirstLaunchTour } from "./firstLaunch";
 import { createWindows, mainWin } from "./mainWindow";
 import { registerMediaPermissionsHandler } from "./mediaPermissions";
+import { initFirewall } from "./networkPrivacy";
 import { registerScreenShareHandler } from "./screenShare";
 import { Settings, State } from "./settings";
 import { setAsDefaultProtocolClient } from "./utils/setAsDefaultProtocolClient";
@@ -115,6 +116,10 @@ function init() {
 
         registerScreenShareHandler();
         registerMediaPermissionsHandler();
+
+        // Block trackers/telemetry from the first request, before the renderer
+        // connects to push its Privacy settings. Default ON; the toggle flips it live.
+        initFirewall();
 
         bootstrap();
 

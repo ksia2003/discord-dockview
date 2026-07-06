@@ -29,6 +29,7 @@ import { IpcEvents } from "../shared/IpcEvents";
 import { setBadgeCount } from "./appBadge";
 import { autoStart } from "./autoStart";
 import { mainWin } from "./mainWindow";
+import { applyProxy, ProxyConfig, setFirewallEnabled } from "./networkPrivacy";
 import { Settings, State } from "./settings";
 import { applyShellUpdate, getShellUpdateInfo } from "./shellUpdate";
 import { handle, handleSync } from "./utils/ipcWrappers";
@@ -193,3 +194,8 @@ function openDebugPage(page: string) {
 
 handle(IpcEvents.DEBUG_LAUNCH_GPU, () => openDebugPage("chrome://gpu"));
 handle(IpcEvents.DEBUG_LAUNCH_WEBRTC_INTERNALS, () => openDebugPage("chrome://webrtc-internals"));
+
+// Network privacy (Privacy settings page). The renderer pushes the current firewall
+// state + proxy config on load and on every change; main holds only the live config.
+handle(IpcEvents.SET_FIREWALL_ENABLED, (_, enabled: boolean) => setFirewallEnabled(enabled));
+handle(IpcEvents.SET_PROXY, (_, config: ProxyConfig) => applyProxy(config));

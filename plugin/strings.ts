@@ -485,15 +485,28 @@ export const STRINGS = {
     },
 
     // --- Privacy settings page ----------------------------------------------
-    // Currently one control — remote images in email files — grouped under a heading so
-    // a future tracker-firewall section can slot in beside it.
+    // Two groups: remote images in email files, and network privacy (the tracker
+    // firewall + proxy that live in main and are driven over IPC).
     privacy: {
         emailGroup: "Email",
         remoteImagesTitle: "Load remote images in email attachments",
         remoteImagesNote:
             "Email files (.eml, .msg) can reference images hosted on a remote server. Those are blocked " +
             "by default, because loading one tells the sender you opened the message (a tracking pixel). " +
-            "Turn this on to load remote images in email previews."
+            "Turn this on to load remote images in email previews.",
+
+        networkGroup: "Network",
+        firewallTitle: "Block trackers and telemetry",
+        firewallNote:
+            "Cancels requests to known tracking, analytics, and telemetry endpoints (science, error " +
+            "reporting, ad/analytics hosts) before they leave your machine. An allowlist keeps normal " +
+            "traffic — attachments, media, and Discord's own services — untouched. On by default.",
+        proxyTitle: "Use a proxy",
+        proxyNote: "Route the app's connection through an HTTP or SOCKS proxy. Takes effect immediately.",
+        proxyRulesLabel: "Proxy rules",
+        proxyRulesPlaceholder: "socks5://127.0.0.1:9050  or  http=host:port;https=host:port",
+        proxyBypassLabel: "Bypass rules",
+        proxyBypassPlaceholder: "localhost;*.discord.com"
     },
 
     // --- Profiles settings page ---------------------------------------------

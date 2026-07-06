@@ -95,6 +95,23 @@ export const settings = definePluginSettings({
     // convertAttachment IPC into main's sanitiser (main stays stateless).
     emailRemoteImages: { type: OptionType.BOOLEAN, description: "Load remote images in email attachments", default: false },
 
+    // --- Privacy page: network (tracker firewall + proxy) -------------------
+    // These mirror controls that actually live in MAIN (the default session's
+    // webRequest + setProxy). The UI value persists here; on plugin start and on
+    // every flip the panel pushes the current value to main over the networkPrivacy
+    // IPC, so main holds only the live config and the panel reflects the saved state.
+    //
+    // The firewall blocks tracker/telemetry requests (science/analytics/error-
+    // reporting endpoints, with an allowlist guard so normal traffic isn't broken).
+    // Default ON — main also defaults it ON so blocking is live from the first
+    // request, before this pushes anything.
+    firewallEnabled: { type: OptionType.BOOLEAN, description: "Block tracker and telemetry requests", default: true },
+    // Route traffic through an HTTP/SOCKS proxy. OFF (default) = direct connection.
+    // proxyRules/proxyBypass are the two strings passed to session.setProxy.
+    proxyEnabled: { type: OptionType.BOOLEAN, description: "Route traffic through a proxy", default: false },
+    proxyRules: { type: OptionType.STRING, description: "Proxy rules", default: "" },
+    proxyBypass: { type: OptionType.STRING, description: "Proxy bypass rules", default: "" },
+
     // --- Updates page: automatic background check ---------------------------
     // ON (default) = on plugin start, once per day, DockView checks GitHub for a newer
     // build off the startup critical path (idle) and, if one is found, raises a one-time
