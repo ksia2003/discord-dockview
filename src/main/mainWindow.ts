@@ -418,11 +418,12 @@ function createMainWindow() {
         delete (params as Record<string, unknown>).nodeintegrationinsubframes;
     });
 
-    // The embedded browsing <webview> is a viewer, never a downloader: cancel any
-    // download that fires on its isolated session so navigating a tab to an
-    // attachment / Content-Disposition url can't pull a file to disk or pop a save
-    // dialog (and can't re-fire it when the tab remounts on a channel switch).
-    initWebDownloadGuard();
+    // The embedded browsing <webview> is a viewer, never a downloader: a download that
+    // fires on its isolated session is cancelled (nothing lands in the guest partition),
+    // handed to the OS browser so a real download still reaches the user, and reported to
+    // the renderer so a tab whose url was only ever a download auto-closes instead of
+    // wedging (and re-firing on channel switch).
+    initWebDownloadGuard(win);
 
     initMenuBar(win);
     makeLinksOpenExternally(win);

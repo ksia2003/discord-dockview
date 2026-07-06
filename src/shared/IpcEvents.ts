@@ -74,7 +74,12 @@ export const enum IpcEvents {
     SET_FIREWALL_ENABLED = "VCD_SET_FIREWALL_ENABLED",
     SET_PROXY = "VCD_SET_PROXY",
 
-    SET_VOICE_FIX_ENABLED = "VCD_SET_VOICE_FIX_ENABLED"
+    SET_VOICE_FIX_ENABLED = "VCD_SET_VOICE_FIX_ENABLED",
+
+    // A download fired on the dock's embedded web <webview>: the page was only ever a
+    // file, not something to browse. Main sends the guest webContents id so the renderer
+    // can close the web tab backing that webview (see webDownloadGuard.ts).
+    WEB_TAB_DOWNLOAD = "VCD_WEB_TAB_DOWNLOAD"
 }
 
 export const enum UpdaterIpcEvents {

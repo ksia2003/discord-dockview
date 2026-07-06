@@ -53,6 +53,7 @@ import { closePanel, registerHost, startHost, stopHost, toggle } from "./host/op
 import { openExternalLink } from "./external/openExternal";
 import { openInVesktopWindow, popoutArtifact, vesktopWindowHtml } from "./external/vesktopWindow";
 import { markdownHasToc, mdState } from "./viewers/doc/MarkdownViewer";
+import { installWebDownloadClose } from "./viewers/web/WebBody";
 import {
     closeAttachBar, confirmAttachBar, isAttachBarOpen, openAttachBar, setAttachBarName,
     attachActiveFile
@@ -346,6 +347,10 @@ export default definePlugin({
         // 6. chip-click delegation: intercept clicks on dock-handled attachment
         //    chips / inline images and route them through the engine's load().
         startEmbed();
+        // 6b. arm the main→renderer web-download signal: a url that only ever produced a
+        //     download never should have wedged a web tab — main reports it and we close
+        //     that tab so it can't persist / re-show the dock / re-navigate.
+        installWebDownloadClose();
 
         // 7. chat-side KaTeX (separate concern, kept) + the debug surface.
         startLatex();

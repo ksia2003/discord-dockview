@@ -24,7 +24,8 @@
 
 import { React } from "@webpack/common";
 
-import { getActiveWindow } from "../../engine/window";
+import { closeTab } from "../../engine/tabs";
+import { allLiveWindows, getActiveWindow } from "../../engine/window";
 import type { DockWindow } from "../../engine/types";
 import { STRINGS } from "../../strings";
 
@@ -40,6 +41,10 @@ export interface WebController {
     goBack(): void;
     reload(): void;
     getURL(): string;
+    /** The guest <webview>'s webContents id, or null if it hasn't attached yet. Read LIVE
+     *  off the element (not cached) so a download signal resolves against the real id even
+     *  for a url that never fired dom-ready (a pure download never commits a page). */
+    webContentsId(): number | null;
 }
 
 // Per-window controller + current-url, keyed by window id. A remounted body republishes;
@@ -48,6 +53,42 @@ const controllers = new Map<string, WebController>();
 const currentUrls = new Map<string, string>();
 // Subscribers bumped when a window's url changes, so the toolbar re-renders its readout.
 const urlListeners = new Set<() => void>();
+
+// Whether a window's <webview> ever finished loading a real page. A url whose whole life
+// was a download (Content-Disposition / a 302 to a file) never loads a page, so its tab is
+// junk and auto-closes; a download the user clicked ON a loaded page leaves the tab alone.
+const loadedAPage = new Map<string, boolean>();
+
+/** Main signalled a download on the guest webContents `guestId`. If it belongs to a web
+ *  tab that never loaded a page, that tab was only ever this download — close it (so it
+ *  doesn't persist, re-show the dock on channel return, or re-navigate). A download from a
+ *  page that DID load (the user clicked a download link) leaves the tab open. The guest id
+ *  is resolved LIVE against each web tab's mounted <webview> (its webContents is attached by
+ *  the time a download fires), so a pure-download url — which never publishes a dom-ready —
+ *  still maps back to its tab. */
+export function onWebTabDownload(guestId: number): void {
+    for (const w of allLiveWindows()) {
+        if (w.content.type !== "web") continue;
+        if (controllers.get(w.id)?.webContentsId() !== guestId) continue;
+        if (loadedAPage.get(w.id)) return; // a real page — the download went external, keep the tab
+        loadedAPage.delete(w.id);
+        closeTab(w.id);
+        return;
+    }
+}
+
+let downloadListenerArmed = false;
+
+/** Arm the main→renderer download signal exactly once (idempotent across start/stop).
+ *  main's webDownloadGuard sends the guest webContents id when a download fires on the
+ *  dock's web session; onWebTabDownload closes the junk tab. */
+export function installWebDownloadClose(): void {
+    if (downloadListenerArmed) return;
+    const native = (window as any).VesktopNative?.dockView;
+    if (!native || typeof native.onWebTabDownload !== "function") return;
+    native.onWebTabDownload((guestId: number) => onWebTabDownload(guestId));
+    downloadListenerArmed = true;
+}
 
 /** The controller for a window's live <webview>, or null if none is mounted. */
 export function webController(win: DockWindow): WebController | null {
@@ -102,7 +143,8 @@ export function WebBody() {
                 canGoBack: () => { try { return el.canGoBack(); } catch { return false; } },
                 goBack: () => { try { el.goBack(); } catch { /* not attached yet */ } },
                 reload: () => { try { el.reload(); } catch { /* not attached yet */ } },
-                getURL: () => { try { return el.getURL(); } catch { return url; } }
+                getURL: () => { try { return el.getURL(); } catch { return url; } },
+                webContentsId: () => { try { return el.getWebContentsId(); } catch { return null; } }
             });
         };
 
@@ -112,6 +154,14 @@ export function WebBody() {
             else { try { currentUrls.set(winId, el.getURL()); } catch { /* keep prior */ } }
             notifyUrl();
         };
+        // A completed main-frame load means this webview really showed a PAGE — so a later
+        // download on it is a click on that page, not a junk-tab url. did-navigate fires for
+        // a real navigation but NOT for a url that only ever produced a download.
+        const onDidFinish = () => { loadedAPage.set(winId, true); };
+        const onDidNavigate = (e: any) => {
+            if (!e || e.isMainFrame !== false) loadedAPage.set(winId, true);
+            onNavigate(e);
+        };
         const onFail = (e: any) => {
             // errorCode -3 = ERR_ABORTED (a superseded/redirected load) — not a real
             // failure; ignore it. isMainFrame guards sub-resource failures.
@@ -120,17 +170,22 @@ export function WebBody() {
         };
         const onStartLoad = () => setFailed(null);
 
+        // publish() sets the controller (with a LIVE webContentsId() read off the element) up
+        // front, so a download signal can map back to this window even for a pure-download url
+        // that never fires dom-ready. dom-ready re-publishes once the guest is fully ready.
         el.addEventListener("dom-ready", publish);
-        el.addEventListener("did-navigate", onNavigate);
+        el.addEventListener("did-navigate", onDidNavigate);
         el.addEventListener("did-navigate-in-page", onNavigate);
+        el.addEventListener("did-finish-load", onDidFinish);
         el.addEventListener("did-start-loading", onStartLoad);
         el.addEventListener("did-fail-load", onFail);
         publish();
 
         return () => {
             el.removeEventListener("dom-ready", publish);
-            el.removeEventListener("did-navigate", onNavigate);
+            el.removeEventListener("did-navigate", onDidNavigate);
             el.removeEventListener("did-navigate-in-page", onNavigate);
+            el.removeEventListener("did-finish-load", onDidFinish);
             el.removeEventListener("did-start-loading", onStartLoad);
             el.removeEventListener("did-fail-load", onFail);
             if (controllers.get(winId)) controllers.delete(winId);

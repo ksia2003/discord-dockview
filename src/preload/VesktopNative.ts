@@ -126,6 +126,14 @@ export const VesktopNative = {
         launchGpu: () => invoke<void>(IpcEvents.DEBUG_LAUNCH_GPU),
         launchWebrtcInternals: () => invoke<void>(IpcEvents.DEBUG_LAUNCH_WEBRTC_INTERNALS)
     },
+    dockView: {
+        /** Main tells the renderer a download fired on a dock web <webview> (the arg is
+         *  the guest webContents id). The DockView plugin closes the web tab backing that
+         *  webview if the page was never anything but this download. */
+        onWebTabDownload: (cb: (guestWebContentsId: number) => void) => {
+            ipcRenderer.on(IpcEvents.WEB_TAB_DOWNLOAD, (_e, id: number) => cb(id));
+        }
+    },
     commands: {
         onCommand(cb: (message: IpcMessage) => void) {
             ipcRenderer.on(IpcEvents.IPC_COMMAND, (_, message) => cb(message));
