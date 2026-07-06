@@ -221,23 +221,27 @@ export function PrivacyPanel() {
                 "div",
                 { style: { marginTop: "8px" } },
                 h(Forms.FormTitle, { tag: "h5" }, PR.proxyRulesLabel),
+                // A half-typed rules string can brick networking, so the fields only
+                // persist on change and apply on blur or an explicit Apply — never
+                // per keystroke.
                 h(TextInput, {
                     value: store.proxyRules ?? "",
                     placeholder: PR.proxyRulesPlaceholder,
-                    onChange: (v: string) => {
-                        store.proxyRules = v;
-                        pushProxy();
-                    }
+                    onChange: (v: string) => { store.proxyRules = v; },
+                    onBlur: () => pushProxy()
                 }),
                 h(Forms.FormTitle, { tag: "h5", style: { marginTop: "12px" } }, PR.proxyBypassLabel),
                 h(TextInput, {
                     value: store.proxyBypass ?? "",
                     placeholder: PR.proxyBypassPlaceholder,
-                    onChange: (v: string) => {
-                        store.proxyBypass = v;
-                        pushProxy();
-                    }
-                })
+                    onChange: (v: string) => { store.proxyBypass = v; },
+                    onBlur: () => pushProxy()
+                }),
+                h(
+                    "div",
+                    { style: { marginTop: "8px" } },
+                    h(Button, { size: Button.Sizes.SMALL, onClick: () => pushProxy() }, PR.proxyApply)
+                )
             ),
 
         // --- Message encryption --------------------------------------------

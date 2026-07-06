@@ -26,24 +26,38 @@ const BLOCKLIST = [
     "https://www.youtube.com/youtubei/v*/log_event?*"
 ];
 
-// Substrings that flag an xhr for blocking when present in its URL. Catches a
-// broad class of tracker/analytics hosts the URL blocklist above would miss.
-const BLOCKED_STRINGS = ["sentry", "google", "tracking", "stats", "\\.spotify", "pagead", "analytics", "doubleclick"];
-
-// Whitelist: any URL containing one of these is never blocked, even if a blocked
-// string matches. This is what keeps the string matcher from breaking normal
-// traffic (attachments, media playback, Google Fonts/APIs, Discord's own assets).
-const ALLOWED_STRINGS = [
-    "videoplayback",
-    "discord-attachments",
-    "googleapis",
-    "search",
-    "api.spotify",
-    "discord.com/assets/sentry."
+// Known tracker/telemetry hosts, matched against the request URL's HOSTNAME only
+// (never a raw substring of the whole URL — that over-blocked accounts.google.com,
+// spclient.wg.spotify.com, and any Discord path containing "stats"). A request is
+// cancelled when its host equals one of these or is a subdomain of it. The list is
+// deliberately narrow: dedicated analytics/error-reporting/ad domains, nothing a
+// first-party service (Discord, Google OAuth, Spotify presence) actually needs.
+const TRACKER_HOSTS = [
+    "sentry.io",
+    "ingest.sentry.io",
+    "google-analytics.com",
+    "analytics.google.com",
+    "ssl.google-analytics.com",
+    "googletagmanager.com",
+    "doubleclick.net",
+    "stats.g.doubleclick.net",
+    "googlesyndication.com",
+    "pagead2.googlesyndication.com",
+    "googleadservices.com",
+    "adservice.google.com",
+    "scorecardresearch.com",
+    "mixpanel.com",
+    "segment.io",
+    "amplitude.com",
+    "branch.io",
+    "app-measurement.com",
+    "crashlytics.com"
 ];
 
-const blockRegex = new RegExp(BLOCKED_STRINGS.join("|"), "i");
-const allowRegex = new RegExp(ALLOWED_STRINGS.join("|"), "i");
+function isTrackerHost(host: string): boolean {
+    const h = host.toLowerCase();
+    return TRACKER_HOSTS.some(d => h === d || h.endsWith("." + d));
+}
 
 // Live gate for the firewall. Default ON so telemetry is blocked from the first
 // request, before the renderer has connected to flip anything. The handlers stay
@@ -62,11 +76,14 @@ export function initFirewall() {
     session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ["<all_urls>"] }, (details, callback) => {
         if (!firewallEnabled || details.resourceType !== "xhr") return callback({ cancel: false });
 
-        if (blockRegex.test(details.url) && !allowRegex.test(details.url)) {
-            return callback({ cancel: true });
+        let host: string;
+        try {
+            host = new URL(details.url).hostname;
+        } catch {
+            return callback({ cancel: false });
         }
 
-        callback({ cancel: false });
+        callback({ cancel: isTrackerHost(host) });
     });
 }
 
@@ -76,16 +93,22 @@ export interface ProxyConfig {
     bypass: string;
 }
 
-// Apply proxy settings to the default session. Disabled/empty rules mean a direct
-// connection. Called once at startup with the renderer's persisted config and
-// again whenever the Privacy panel pushes a change.
-export function applyProxy(config: ProxyConfig) {
-    if (!config.enabled || !config.rules) {
+// Apply proxy settings to the default session. Disabled/empty/whitespace rules mean
+// a direct connection. Called once at startup with the renderer's persisted config
+// and again whenever the Privacy panel pushes a change. A malformed rules string must
+// not brick the session, so a failed setProxy falls back to a direct connection.
+export async function applyProxy(config: ProxyConfig) {
+    const rules = config.rules?.trim();
+    if (!config.enabled || !rules) {
         return session.defaultSession.setProxy({ mode: "direct" });
     }
 
-    return session.defaultSession.setProxy({
-        proxyRules: config.rules,
-        proxyBypassRules: config.bypass || undefined
-    });
+    try {
+        await session.defaultSession.setProxy({
+            proxyRules: rules,
+            proxyBypassRules: config.bypass?.trim() || undefined
+        });
+    } catch {
+        await session.defaultSession.setProxy({ mode: "direct" });
+    }
 }

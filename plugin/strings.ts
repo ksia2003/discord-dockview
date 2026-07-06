@@ -536,6 +536,7 @@ export const STRINGS = {
         proxyRulesPlaceholder: "socks5://127.0.0.1:9050  or  http=host:port;https=host:port",
         proxyBypassLabel: "Bypass rules",
         proxyBypassPlaceholder: "localhost;*.discord.com",
+        proxyApply: "Apply proxy",
 
         // --- Message encryption (StegCloak) ---
         encGroup: "Message encryption",

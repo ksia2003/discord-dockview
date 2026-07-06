@@ -20,11 +20,13 @@ export function pushFirewall(): void {
 }
 
 export function pushProxy(): void {
-    native()?.setProxy?.({
-        enabled: settings.store.proxyEnabled === true,
-        rules: settings.store.proxyRules ?? "",
-        bypass: settings.store.proxyBypass ?? ""
-    });
+    Promise.resolve(
+        native()?.setProxy?.({
+            enabled: settings.store.proxyEnabled === true,
+            rules: settings.store.proxyRules ?? "",
+            bypass: settings.store.proxyBypass ?? ""
+        })
+    ).catch(() => {});
 }
 
 export function pushVoiceFix(): void {

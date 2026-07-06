@@ -75,6 +75,11 @@ export const DEFAULT_HEIGHT = 720;
 
 export const DISCORD_HOSTNAMES = ["discord.com", "canary.discord.com", "ptb.discord.com"];
 
+// The isolated session partition the dock's embedded web-browsing <webview> runs on
+// (mirrors WEB_PARTITION in plugin/viewers/web/WebBody.tsx). Contents on this session
+// are third-party pages, kept out of Discord-only behaviour (e.g. the voice fix).
+export const WEB_PARTITION = "persist:dockview-web";
+
 const VersionString = `AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome.split(".")[0]}.0.0.0 Safari/537.36`;
 const BrowserUserAgents = {
     darwin: `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ${VersionString}`,
