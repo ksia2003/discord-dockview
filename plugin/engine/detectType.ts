@@ -168,39 +168,30 @@ export const AUDIO_EXT = new Set(["mp3", "wav", "m4a", "aac", "ogg", "oga", "opu
 // TypeScript in a dev context, not an MPEG transport stream). ".mov" usually plays.
 export const VIDEO_EXT = new Set(["mp4", "m4v", "webm", "ogv", "mov"]);
 
-// Hosts whose links are Discord's OWN in-app navigation (a channel/message/server
-// route). A left-click on one of these must stay NATIVE (React-router navigation),
-// so the link path never intercepts it into a web tab. Matched on the URL host, and
-// only for the app's navigation paths (/channels, /invite, …) — a link to a Discord
-// CDN attachment (cdn.discordapp.com / media.discordapp.net) is a real file/media URL
-// and is handled by the file-extension branches above, not here.
-const DISCORD_NAV_HOSTS = new Set([
-    "discord.com", "discordapp.com", "canary.discord.com", "ptb.discord.com",
-    "www.discord.com", "discord.gg"
-]);
+// The Discord-owned domain family. ANY url on one of these hosts is Discord's own —
+// in-app navigation (discord.com/channels, /shop, /store, /app, @me DMs…), its support/
+// status sites, invites (discord.gg / discord.new / discord.gift), or a CDN/media asset.
+// None of them may be pulled into the isolated web tab: app routes must stay native
+// (React-router), and the CDN/support sites in the cookie-less partition would just
+// demand a login. A file/media CDN url is already resolved by the extension branches
+// ABOVE this point, so what's left on a Discord host here is navigation/chrome — never a
+// page to browse. We deny the whole family by suffix rather than list individual paths,
+// because Discord adds routes (/shop, /quest-home, …) faster than any allow-list tracks.
+const DISCORD_HOST_SUFFIXES = [
+    "discord.com", "discordapp.com", "discordapp.net", "discord.gg",
+    "discord.media", "discord.dev", "discord.new", "discord.gift", "dis.gd"
+];
 
-/** Is `url` a Discord IN-APP navigation link (a channel/message/server/invite route)
- *  that must stay native, NOT open as a web tab? True only for the app-nav paths on a
- *  Discord host; a Discord CDN file url (already caught by the extension branches) is
- *  not one of these. */
-function isDiscordInternalLink(url: string): boolean {
-    let u: URL;
-    try {
-        u = new URL(url, location.href);
-    } catch {
-        return false;
-    }
-    const host = u.hostname.toLowerCase();
-    if (host === "discord.gg") return true; // invite short links
-    if (!DISCORD_NAV_HOSTS.has(host)) return false;
-    // On a discord.com host, only the app-router paths are internal navigation.
-    return /^\/(channels|invite|guild-discovery|store|library|application-directory|servers|users)(\/|$)/i.test(u.pathname);
+/** Is `host` the Discord-owned domain, or any subdomain of it? */
+function isDiscordHost(host: string): boolean {
+    const h = host.toLowerCase();
+    return DISCORD_HOST_SUFFIXES.some(d => h === d || h.endsWith("." + d));
 }
 
-/** Is `url` a real EXTERNAL http(s) web page — the target for a dock web tab? True when
- *  the url is http(s) and is NOT a Discord in-app navigation link. Callers reach this
- *  only after the file-extension branches have declined, so a dock-openable file/media
- *  url never counts as "web". */
+/** Is `url` a real EXTERNAL http(s) web page — the target for a dock web tab? True only
+ *  for a THIRD-PARTY http(s) host: anything Discord-owned stays native/native-chrome and
+ *  never opens in the isolated tab. Callers reach this only after the file-extension
+ *  branches have declined, so a dock-openable file/media url never counts as "web". */
 function isWebPageUrl(url: string | null | undefined): boolean {
     if (!url) return false;
     let u: URL;
@@ -210,7 +201,7 @@ function isWebPageUrl(url: string | null | undefined): boolean {
         return false;
     }
     if (u.protocol !== "http:" && u.protocol !== "https:") return false;
-    return !isDiscordInternalLink(url);
+    return !isDiscordHost(u.hostname);
 }
 
 /** Decide the content type from an explicit hint or the url/name extension. */

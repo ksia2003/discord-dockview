@@ -189,13 +189,13 @@ function resolvePanelClick(target: EventTarget | null): { url: string; anchor: H
 }
 
 // --- web-link interception (A1) ---------------------------------------------
-// A left-click on a real http(s) web-page link in a chat message opens the page as a
-// dock WEB tab (the browsing pillar) instead of the external browser. Discord IN-APP
-// links (discord.com/channels/…, invites) are NOT web pages per detectType — they stay
-// "unknown" here and pass through to native navigation, untouched. File/media links are
-// handled by the chip path above (isPanelUrl excludes "web"), so this only ever matches
-// a plain page link. Modifier/middle clicks are already excluded by onDocClickCapture,
-// so ctrl/cmd/middle-click keep their native behaviour.
+// A left-click on a real THIRD-PARTY http(s) web-page link in a chat message opens the
+// page as a dock WEB tab (the browsing pillar) instead of the external browser. Anything
+// on a Discord-owned host (channels/@me/DMs, /shop, /store, invites, support, CDN…) is
+// NOT a web page per detectType — it stays "unknown" here and passes through to native
+// navigation, untouched. File/media links are handled by the chip path above (isPanelUrl
+// excludes "web"), so this only ever matches a plain page link. Modifier/middle clicks
+// are already excluded by onDocClickCapture, so ctrl/cmd/middle-click keep native behaviour.
 
 /** Is `href` a real external http(s) web page (→ a dock web tab)? Decided by detectType
  *  returning "web" (which already excludes Discord in-app nav links + non-http urls). */
