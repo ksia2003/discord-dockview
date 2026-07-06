@@ -562,7 +562,20 @@ export const STRINGS = {
         encMarkLabel: "Decrypted marker",
         encMarkPlaceholder: "🔒 ",
         encMarkNote: "Prefixed to messages after they're decrypted, so you can tell which were received encrypted.",
-        encStorageError: "Couldn't store the password securely (the OS keychain is unavailable here)."
+        encStorageError: "Couldn't store the password securely (the OS keychain is unavailable here).",
+
+        // --- Invidious embeds ---
+        invidiousGroup: "YouTube embeds",
+        invidiousTitle: "Route YouTube embeds through Invidious",
+        invidiousNote:
+            "When a YouTube video is embedded in chat, Discord loads it straight from youtube.com, which " +
+            "tells Google your IP and that you viewed it. Turn this on to load embeds through an Invidious " +
+            "instance instead — a privacy frontend that proxies the video, so Google never sees the request. " +
+            "Off by default: it rewrites Discord's embed player, so a Discord update can break it until this " +
+            "app catches up.",
+        invidiousInstanceLabel: "Instance",
+        invidiousInstancePlaceholder: "https://inv.nadeko.net",
+        invidiousInstanceNote: "The Invidious instance to load embeds from. Pick one from the public list, or self-host."
     },
 
     // --- Profiles settings page ---------------------------------------------

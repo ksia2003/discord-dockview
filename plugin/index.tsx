@@ -60,6 +60,7 @@ import {
 import { editBufferText, toggleEditMode } from "./edit/editMode";
 import { onNewFile } from "./edit/newFile";
 import { startEmbed, stopEmbed } from "./embed";
+import { invidiousEmbedsActive, rewriteEmbedSrc } from "./invidiousEmbeds";
 import { startLatex, stopLatex } from "./latex";
 import {
     encryptionPasswordCount, messageEncryptionActive, messageEncryptionPatched, refreshPasswords,
@@ -159,7 +160,12 @@ function exposeDebug(): void {
         saveEncryptionPasswords, refreshPasswords, syncMessageEncryption,
         get encryptionPasswordCount() { return encryptionPasswordCount(); },
         get messageEncryptionActive() { return messageEncryptionActive(); },
-        get messageEncryptionPatched() { return messageEncryptionPatched(); }
+        get messageEncryptionPatched() { return messageEncryptionPatched(); },
+
+        // invidious embeds (Privacy → YouTube embeds): drive the src rewriter directly
+        // and assert the live armed state (on + a non-empty instance).
+        rewriteEmbedSrc,
+        get invidiousEmbedsActive() { return invidiousEmbedsActive(); }
     };
 }
 
@@ -197,6 +203,28 @@ export default definePlugin({
     hidden: true,
 
     settings,
+
+    // Invidious embeds (Privacy page): rewrite the YouTube embed URL builder to point at
+    // an Invidious instance so Google doesn't get the request. Discord builds the embed
+    // player URL from a small arrow fn — `id => `https://www.youtube.com/embed/${id}`` —
+    // and this patch wraps that fn's output in a call to rewriteInvidiousEmbed() below.
+    // The wrapper runs each time an embed URL is built, reads the setting live (returns
+    // the URL untouched when the feature is off), so the toggle needs no reload. The
+    // string literal is the stable anchor; the surrounding var names are minified and
+    // change across builds, hence the \i identifier match. Version-fragile by nature —
+    // the feature is off by default. noWarn: on a Discord build where the shape has
+    // shifted, the patch is a no-op and embeds just stay on youtube.com; a console
+    // warning there is noise, not a user-actionable error.
+    patches: [
+        {
+            find: "https://www.youtube.com/embed/${",
+            noWarn: true,
+            replacement: {
+                match: /=(\i)=>(`https:\/\/www\.youtube\.com\/embed\/\$\{\1\}`)/,
+                replace: "=$1=>$self.rewriteInvidiousEmbed($2)"
+            }
+        }
+    ],
 
     // Managed style: Vencord auto-enables this CSS when the plugin starts and
     // disables it on stop.
@@ -238,6 +266,14 @@ export default definePlugin({
                 })
             );
         }
+    },
+
+    // Invidious embed rewrite hook, called from the embed-builder patch above with the
+    // video src the builder was about to use. Kept as a thin plugin method so the patch
+    // can reach it via $self; all logic (the live enabled check, the instance, the YT
+    // origin swap, fail-safe) lives in invidiousEmbeds.ts.
+    rewriteInvidiousEmbed(src: unknown) {
+        return rewriteEmbedSrc(src);
     },
 
     start() {

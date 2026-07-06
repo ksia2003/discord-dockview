@@ -132,6 +132,42 @@ function EncryptionGroup() {
     );
 }
 
+/** The Invidious group: a master switch + the instance URL. Both persist to the
+ *  reactive store and are read live by the embed patch (invidiousEmbeds.ts) at
+ *  render time, so a flip takes effect on the next YouTube embed with no reload. */
+function InvidiousGroup() {
+    const store = settings.use(["invidiousEmbeds", "invidiousInstance"]);
+
+    return h(
+        "div",
+        null,
+        h(Forms.FormTitle, { tag: "h3", style: { marginTop: "20px" } }, PR.invidiousGroup),
+        h(
+            Switch,
+            {
+                value: store.invidiousEmbeds === true,
+                note: PR.invidiousNote,
+                hideBorder: true,
+                onChange: (v: boolean) => { store.invidiousEmbeds = v; }
+            },
+            PR.invidiousTitle
+        ),
+
+        store.invidiousEmbeds === true &&
+            h(
+                "div",
+                { style: { marginTop: "8px" } },
+                h(Forms.FormTitle, { tag: "h5" }, PR.invidiousInstanceLabel),
+                h(TextInput, {
+                    value: store.invidiousInstance ?? "",
+                    placeholder: PR.invidiousInstancePlaceholder,
+                    onChange: (v: string) => { store.invidiousInstance = v; }
+                }),
+                h(Forms.FormText, { style: { marginTop: "4px", color: "var(--text-muted)" } }, PR.invidiousInstanceNote)
+            )
+    );
+}
+
 export function PrivacyPanel() {
     const store = settings.use(["emailRemoteImages", "firewallEnabled", "proxyEnabled", "proxyRules", "proxyBypass"]);
 
@@ -205,6 +241,9 @@ export function PrivacyPanel() {
             ),
 
         // --- Message encryption --------------------------------------------
-        h(EncryptionGroup, null)
+        h(EncryptionGroup, null),
+
+        // --- Invidious embeds ----------------------------------------------
+        h(InvidiousGroup, null)
     );
 }

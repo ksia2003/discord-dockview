@@ -151,6 +151,18 @@ export const settings = definePluginSettings({
     // message was received encrypted. Read live on each decrypt. Empty = no marker.
     encryptionMark: { type: OptionType.STRING, description: "Prefix shown on decrypted messages", default: "🔒 " },
 
+    // --- Privacy page: Invidious embeds -------------------------------------
+    // Route YouTube embeds through an Invidious instance (a privacy frontend) instead
+    // of youtube.com, so Google never receives the request a YT embed makes from the
+    // client. OFF (default, opt-in) = embeds stay on youtube.com. The rewrite is a code
+    // patch on Discord's embed builder (index.tsx `patches`); invidiousEmbeds.ts reads
+    // this + the instance below LIVE at render time, so a flip applies to the next embed
+    // with no reload. Version-fragile by nature (minified target) — hence off by default.
+    invidiousEmbeds: { type: OptionType.BOOLEAN, description: "Route YouTube embeds through Invidious", default: false },
+    // The Invidious instance origin YT embeds are pointed at when the toggle is on. A
+    // public instance by default; the user can point it at any instance (or self-host).
+    invidiousInstance: { type: OptionType.STRING, description: "Invidious instance URL", default: "https://inv.nadeko.net" },
+
     // --- Updates page: automatic background check ---------------------------
     // ON (default) = on plugin start, once per day, DockView checks GitHub for a newer
     // build off the startup critical path (idle) and, if one is found, raises a one-time
