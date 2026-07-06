@@ -27,6 +27,7 @@
 
 import { Forms, React, Select, Switch } from "@webpack/common";
 
+import { syncDomOptimizer } from "../domOptimizer";
 import { DECODER_CONTROLS, type DecoderMode } from "../engine/decoderModes";
 import { settings } from "../settings";
 import { STRINGS } from "../strings";
@@ -34,6 +35,22 @@ import { STRINGS } from "../strings";
 const h = (...args: any[]) => (React.createElement as any)(...args);
 
 const P = STRINGS.performance;
+
+/** Read/write the Vesktop settings store (not the plugin store) for the GPU-blocklist
+ *  flag: main reads it at boot, so it must live where main can see it. Writing through
+ *  VesktopNative.settings persists it to Vesktop's settings.json for the next launch. */
+function vesktopSettings() {
+    return (window as any).VesktopNative?.settings;
+}
+function readIgnoreBlocklist(): boolean {
+    try { return vesktopSettings()?.get?.()?.ignoreGpuBlocklist === true; } catch { return false; }
+}
+function writeIgnoreBlocklist(value: boolean): void {
+    const s = vesktopSettings();
+    if (!s?.get || !s?.set) return;
+    const next = { ...s.get(), ignoreGpuBlocklist: value };
+    s.set(next, "ignoreGpuBlocklist");
+}
 
 /** The three modes in display order, as native Select options (value + label). */
 const MODE_OPTIONS: Array<{ value: DecoderMode; label: string; }> = [
@@ -76,11 +93,20 @@ function decoderRow(store: any, settingKey: string, label: string, formats: stri
 }
 
 export function PerformancePanel() {
-    // Subscribe to every decoder-mode key + the lossless switch so a change re-renders.
+    // Subscribe to every decoder-mode key + the lossless + DOM-optimizer switches so a
+    // change re-renders.
     const store = settings.use([
         ...DECODER_CONTROLS.map(c => c.settingKey),
-        "largeImageLossless"
+        "largeImageLossless",
+        "domOptimizer"
     ]);
+
+    // The GPU-blocklist flag lives in the Vesktop store (main reads it at boot), not the
+    // plugin store, so it's held in local React state seeded from VesktopNative. Flipping
+    // it persists to Vesktop's settings.json and reveals the restart hint — the flag is a
+    // startup-time command-line switch that can't move on a live process.
+    const [ignoreBlocklist, setIgnoreBlocklist] = React.useState(readIgnoreBlocklist);
+    const [restartNeeded, setRestartNeeded] = React.useState(false);
 
     return h(
         "div",
@@ -113,6 +139,43 @@ export function PerformancePanel() {
                 onChange: (v: boolean) => { store.largeImageLossless = v; }
             },
             P.losslessTitle
+        ),
+
+        h(Forms.FormDivider, { style: { margin: "20px 0" } }),
+
+        // --- Graphics ------------------------------------------------------
+        h(Forms.FormTitle, { tag: "h3" }, P.graphicsGroup),
+        h(
+            Switch,
+            {
+                value: ignoreBlocklist,
+                note: P.ignoreBlocklistNote,
+                onChange: (v: boolean) => {
+                    setIgnoreBlocklist(v);
+                    setRestartNeeded(true);
+                    writeIgnoreBlocklist(v);
+                }
+            },
+            P.ignoreBlocklistTitle
+        ),
+        restartNeeded &&
+            h(
+                Forms.FormText,
+                { style: { margin: "-4px 0 12px", color: "var(--text-warning)", fontSize: "12px" } },
+                P.restartHint
+            ),
+        h(
+            Switch,
+            {
+                value: store.domOptimizer === true,
+                note: P.domOptimizerNote,
+                hideBorder: true,
+                onChange: (v: boolean) => {
+                    store.domOptimizer = v;
+                    syncDomOptimizer(v);
+                }
+            },
+            P.domOptimizerTitle
         )
     );
 }

@@ -481,7 +481,24 @@ export const STRINGS = {
             "Exotic images (TIFF, PSD, HEIC, JPEG XL, JPEG 2000) are decoded and re-encoded for the " +
             "dock. Large frames (over ~8 megapixels) default to JPEG to keep memory down. Turn this " +
             "on to keep them lossless PNG instead — sharper, but a bigger picture uses more memory.",
-        largeImageGroup: "Image quality"
+        largeImageGroup: "Image quality",
+
+        // Graphics / rendering group: the GPU-blocklist bypass switch (a startup-time
+        // command-line flag, so a change needs a restart) and the DOM optimizer switch.
+        graphicsGroup: "Graphics",
+        ignoreBlocklistTitle: "Force hardware video acceleration (ignore GPU blocklist)",
+        ignoreBlocklistNote:
+            "Video hardware acceleration is turned on, but Chromium keeps it disabled for many GPU " +
+            "drivers. Turn this on to override that blocklist so the decoder is actually used — this can " +
+            "cut CPU use on video and screenshare, but may cause glitches on unstable drivers. Needs " +
+            "Video Hardware Acceleration on (Vesktop settings) and a restart to take effect.",
+        // Shown after the switch is flipped, until the app is restarted.
+        restartHint: "Restart the app for this to take effect.",
+        domOptimizerTitle: "Snappier channel switching (DOM optimizer)",
+        domOptimizerNote:
+            "Delay updating the member-list activity panel by a fraction of a second when you switch " +
+            "channels or servers, so the chat paints first. Makes switching feel faster on a busy list. " +
+            "Applies immediately."
     },
 
     // --- Privacy settings page ----------------------------------------------

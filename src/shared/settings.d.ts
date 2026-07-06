@@ -18,6 +18,7 @@ export interface Settings {
     disableSmoothScroll?: boolean;
     hardwareAcceleration?: boolean;
     hardwareVideoAcceleration?: boolean;
+    ignoreGpuBlocklist?: boolean;
     arRPC?: boolean;
     appBadge?: boolean;
     enableTaskbarFlashing?: boolean;

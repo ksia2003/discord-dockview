@@ -87,6 +87,14 @@ export const settings = definePluginSettings({
     // RasterImageViewer.rgbaToBlobUrl at export time.
     largeImageLossless: { type: OptionType.BOOLEAN, description: "Always convert large images losslessly (PNG)", default: false },
 
+    // --- Performance page: DOM optimizer ------------------------------------
+    // Defer removal of member-list "activity" DOM nodes by 100ms (OpenAsar trick) so a
+    // channel/server switch paints chat first and the cosmetic activity churn settles a
+    // beat later. OFF (default) — it patches a global DOM prototype, so it's opt-in. The
+    // patch is applied on start() when on and cleanly removed on stop()/toggle-off
+    // (domOptimizer.ts). Read at start + on every flip, not per-behaviour.
+    domOptimizer: { type: OptionType.BOOLEAN, description: "Defer member-list activity DOM updates for snappier switching", default: false },
+
     // --- Privacy page: remote images in email files -------------------------
     // Whether an .eml / .msg body may load its REMOTE <img> (http/https). OFF (default) =
     // remote images are blocked (replaced with a "blocked" pill) so no tracking-pixel

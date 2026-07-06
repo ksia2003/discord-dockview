@@ -36,6 +36,7 @@ import {
 } from "./engine/channelMemory";
 import { loadPersistedState } from "./engine/persist";
 import { closeTab, pinActiveWindow, switchToWindow, unpinActiveWindow } from "./engine/tabs";
+import { startDomOptimizer, stopDomOptimizer } from "./domOptimizer";
 import {
     getActiveWindow, getActiveWindowId, getChannelTabs, getPinnedWindows, getWindows, reorderTab,
     resetCollection
@@ -311,7 +312,12 @@ export default definePlugin({
         if (typeof ric === "function") ric(warm, { timeout: 4000 });
         else setTimeout(warm, 2000);
 
-        // 11. Once-a-day background update check (opt-out via the Updates page switch),
+        // 11. DOM optimizer (Performance page, opt-in): defer member-list "activity"
+        //     node removals by 100ms so a channel/server switch paints chat first.
+        //     Off by default; only patches Element.prototype when the user enabled it.
+        if (settings.store.domOptimizer === true) startDomOptimizer();
+
+        // 12. Once-a-day background update check (opt-out via the Updates page switch),
         //     OFF the boot critical path + throttled to 24h. On finding a newer build it
         //     raises a one-time notice + flags the Updates row; it NEVER auto-applies.
         scheduleAutoCheck();
@@ -340,5 +346,8 @@ export default definePlugin({
         // 5. restore the Settings plugin's buildLayout so a disable/enable cycle
         //    leaves the sidebar exactly as we found it (no stale/duplicate section).
         uninstallDockViewSection();
+        // 6. restore the native Element.prototype.removeChild if the DOM optimizer
+        //    patched it (no-op when it was never installed).
+        stopDomOptimizer();
     }
 });
