@@ -40,6 +40,11 @@ import * as lzutf8 from "lzutf8";
 /** The six zero-width characters StegCloak encodes into (U+200C, U+200D, U+2061..U+2064). */
 const ZWC = ["‌", "‍", "⁡", "⁢", "⁣", "⁤"];
 
+/** Shortest zero-width run we'll treat as a possible payload. The smallest real stream
+ *  (8-byte salt + one ciphertext byte, plus the shrink flag) is well over a hundred
+ *  chars; ordinary ZWJ emoji / Persian ZWNJ contribute only isolated single chars. */
+const MIN_ZWC_RUN = 16;
+
 // ── crypto core (StegCloak components/encrypt.js) ───────────────────────────
 
 /** PBKDF2-SHA512, 10000 iterations, 48 bytes — split into a 16-byte IV + 32-byte key. */
@@ -172,19 +177,21 @@ function zwcToData(str: string): { encrypt: boolean; integrity: boolean; data: B
     return { encrypt, integrity, data: binToBytes(bin) };
 }
 
-/** Pull the zero-width run back out of a cover string. Throws PayloadNotFoundError
- *  when the text carries no hidden stream. */
+/** Pull the zero-width run back out of a cover string. `embed` prepends the whole
+ *  stream to a single word, so the payload is a leading run of zero-width chars. We
+ *  take the FIRST word that begins with a long-enough run, not the last: a trailing
+ *  word may carry an incidental zero-width char (a ZWJ emoji, Persian/Indic text) that
+ *  isn't ours, and keeping the last such run would hand decrypt the wrong bytes. The
+ *  run-length floor keeps a stray ZWJ from being mistaken for a payload. Throws
+ *  PayloadNotFoundError when the text carries no hidden stream. */
 function detach(str: string): string {
-    let detached = "";
     for (const word of str.split(" ")) {
-        const chars = word.split("");
-        if (chars.some(c => ZWC.includes(c))) {
-            const limit = chars.findIndex(c => ZWC.indexOf(c) === -1);
-            detached = limit === -1 ? word : word.slice(0, limit);
-        }
+        if (!ZWC.includes(word[0])) continue;
+        let end = 0;
+        while (end < word.length && ZWC.includes(word[end])) end++;
+        if (end >= MIN_ZWC_RUN) return word.slice(0, end);
     }
-    if (!detached) throw named("PayloadNotFoundError", "No hidden data found in the message");
-    return detached;
+    throw named("PayloadNotFoundError", "No hidden data found in the message");
 }
 
 function embed(cover: string, secret: string): string {
@@ -198,9 +205,21 @@ function embed(cover: string, secret: string): string {
 
 // ── public API ──────────────────────────────────────────────────────────────
 
-/** Whether a string carries any StegCloak zero-width character (cheap gate). */
+/** Whether a string plausibly carries a StegCloak payload — a cheap pre-gate that
+ *  short-circuits ordinary text WITHOUT any crypto. A real stream is a long contiguous
+ *  run of zero-width chars; the smallest real payload (salt +
+ *  HMAC + one ciphertext byte) is well over a hundred chars long. Ordinary ZWJ emoji
+ *  and Persian/Indic text only sprinkle isolated U+200C/U+200D, so requiring a
+ *  minimum contiguous run lets them pass through untouched. */
 export function isCloaked(str: string): boolean {
-    for (const z of ZWC) if (str.includes(z)) return true;
+    if (!str) return false;
+    for (let i = 0; i < str.length; i++) {
+        if (!ZWC.includes(str[i])) continue;
+        let end = i + 1;
+        while (end < str.length && ZWC.includes(str[end])) end++;
+        if (end - i >= MIN_ZWC_RUN) return true;
+        i = end - 1;
+    }
     return false;
 }
 
@@ -221,6 +240,12 @@ export function hide(message: string, password: string, cover: string, integrity
 export function reveal(cloaked: string, password: string): string {
     const { data, integrity, encrypt } = zwcToData(expand(detach(cloaked)));
     if (!encrypt) throw named("DecryptionError", "Message is not encrypted");
+    // Refuse unauthenticated payloads. The integrity flag is attacker-controlled: a
+    // no-HMAC payload decrypts to arbitrary bytes that lzutf8 happily turns into
+    // garbage, which the receive path would then show as a trusted "🔒 decrypted"
+    // message — a spoof. Our own send path always sets integrity=true, so a genuine
+    // DockView message is unaffected; only forged no-integrity payloads are dropped.
+    if (!integrity) throw named("IntegrityError", "Message is not authenticated");
     let decrypted: Buffer;
     try {
         decrypted = decryptSecret(data, password, integrity);

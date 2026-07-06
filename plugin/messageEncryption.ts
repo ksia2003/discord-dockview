@@ -40,16 +40,26 @@
 import { addChatBarButton, ChatBarButton, ChatBarButtonFactory, removeChatBarButton } from "@api/ChatButtons";
 import { addMessagePreEditListener, addMessagePreSendListener, MessageEditListener, MessageSendListener, removeMessagePreEditListener, removeMessagePreSendListener } from "@api/MessageEvents";
 import { updateMessage } from "@api/MessageUpdater";
-import { FluxDispatcher, React } from "@webpack/common";
+import { FluxDispatcher, React, showToast, Toasts } from "@webpack/common";
 
 import { settings } from "./settings";
 
 /** The six StegCloak zero-width chars — the renderer-side gate scans for these so it
  *  never fires an IPC for a plain (non-cloaked) message. Must match native-crypto.ts. */
 const ZWC = ["‌", "‍", "⁡", "⁢", "⁣", "⁤"];
+/** Cheap renderer-side gate. Mirrors native-crypto's isCloaked: fire only for a
+ *  contiguous run of zero-width chars long enough to be a real payload, so ordinary
+ *  ZWJ emoji / Persian / Indic text short-circuits with no IPC and no PBKDF2. */
+const MIN_ZWC_RUN = 16;
 function looksCloaked(str: string): boolean {
     if (!str) return false;
-    for (const z of ZWC) if (str.includes(z)) return true;
+    for (let i = 0; i < str.length; i++) {
+        if (!ZWC.includes(str[i])) continue;
+        let end = i + 1;
+        while (end < str.length && ZWC.includes(str[end])) end++;
+        if (end - i >= MIN_ZWC_RUN) return true;
+        i = end - 1;
+    }
     return false;
 }
 
@@ -121,17 +131,38 @@ function recomputeActive(): void {
 
 // ── SEND path ────────────────────────────────────────────────────────────────
 
-/** Encrypt one outgoing content string, or return null on any failure (the caller
- *  then leaves the message untouched rather than sending a broken payload). Uses the
- *  FIRST password as the encryption key (the receive side tries them all). */
-async function encryptOutgoing(content: string): Promise<string | null> {
+/** The outcome of an encrypt attempt. The send path fails CLOSED on anything other
+ *  than `ok`: it never transmits plaintext when the user believes encryption is on. */
+type EncryptResult =
+    | { ok: true; text: string; }
+    | { ok: false; reason: "noPasswords" | "failed"; };
+
+/** Encrypt one outgoing content string. Uses the FIRST password as the key (the
+ *  receive side tries them all). On any failure — helper missing, IPC rejected,
+ *  hide() threw — returns a non-ok result so the caller can block the send. */
+async function encryptOutgoing(content: string): Promise<EncryptResult> {
+    if (passwords.length === 0) return { ok: false, reason: "noPasswords" };
     const helpers = native();
-    if (!helpers?.encryptMessage || passwords.length === 0) return null;
+    if (!helpers?.encryptMessage) return { ok: false, reason: "failed" };
     try {
         const res = await helpers.encryptMessage(content, passwords[0], coverText());
-        return res?.ok && typeof res.text === "string" ? res.text : null;
+        if (res?.ok && typeof res.text === "string") return { ok: true, text: res.text };
     } catch {
-        return null;
+        /* fall through to failed */
+    }
+    return { ok: false, reason: "failed" };
+}
+
+/** Surface a fail-closed block to the user via a Vencord toast. Accessed lazily (no
+ *  module-top webpack execution). */
+function encryptBlockToast(reason: "noPasswords" | "failed"): void {
+    const msg = reason === "noPasswords"
+        ? "Encryption is on but no password is set — message not sent. Add one in DockView → Privacy."
+        : "Encryption failed — message not sent so it isn't leaked as plaintext.";
+    try {
+        showToast(msg, Toasts.Type.FAILURE);
+    } catch {
+        /* toast module not ready — the send is still blocked, which is the safe outcome */
     }
 }
 
@@ -304,15 +335,22 @@ const EncryptionButton: ChatBarButtonFactory = ({ isMainChat }) => {
 
 function addSendListeners(): void {
     if (preSendListener) return;
+    // Fail CLOSED: when the toggle is on but we can't produce ciphertext, cancel the
+    // send (return { cancel: true }) and tell the user — never let plaintext go out
+    // while they believe encryption is on.
     preSendListener = addMessagePreSendListener(async (_channelId, msg) => {
         if (!sendEnabled || !msg?.content) return;
         const enc = await encryptOutgoing(msg.content);
-        if (enc) msg.content = enc; // failure → send untouched (never a broken payload)
+        if (enc.ok) { msg.content = enc.text; return; }
+        encryptBlockToast(enc.reason);
+        return { cancel: true };
     });
     preEditListener = addMessagePreEditListener(async (_channelId, _id, msg) => {
         if (!sendEnabled || !msg?.content) return;
         const enc = await encryptOutgoing(msg.content);
-        if (enc) msg.content = enc;
+        if (enc.ok) { msg.content = enc.text; return; }
+        encryptBlockToast(enc.reason);
+        return { cancel: true };
     });
 }
 
