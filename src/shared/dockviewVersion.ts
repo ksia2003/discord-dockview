@@ -29,7 +29,7 @@
 
 /** The compiled-in app-shell build. Bump per shell (Vesktop main/preload) change
  *  that ships in a release; only an installer can update the running value. */
-export const DOCKVIEW_SHELL_VERSION = "0.1.31";
+export const DOCKVIEW_SHELL_VERSION = "0.1.32";
 
 export interface ParsedVersionTxt {
     plugin: string | null;
