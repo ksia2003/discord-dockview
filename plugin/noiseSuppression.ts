@@ -146,6 +146,16 @@ async function denoise(stream: MediaStream): Promise<MediaStream> {
     const rawTrack = stream.getAudioTracks()[0];
     if (!rawTrack) return stream; // no audio track to process
 
+    // Discord re-acquires the mic on a voice reconnect / device change and doesn't always
+    // fire "ended" on the old denoised track, which would leave the previous graph's context
+    // nodes + raw mic track hot forever (an open AudioContext + a live worklet burning CPU).
+    // A new mic acquisition supersedes the old one, so reap stale graphs before standing up
+    // the replacement: any graph whose raw track has already died (Discord dropped it), plus
+    // — since a silently-swapped old track can stay "live" — a hard cap so graphs can never
+    // accumulate across reconnects. The current call's graph isn't in the set yet, so this
+    // only ever reaps prior ones.
+    reapStaleGraphs();
+
     const context = ensureContext();
     await ensureWorklet(context);
     if (context.state === "suspended") await context.resume();
@@ -180,6 +190,25 @@ async function denoise(stream: MediaStream): Promise<MediaStream> {
     denoisedTrack.addEventListener("ended", () => teardownGraph(graph), { once: true });
 
     return stream;
+}
+
+/** Most concurrent denoise graphs we'll ever keep alive. Discord holds one mic at a time,
+ *  so anything beyond a small margin is an orphan from a track-swap that never fired "ended".
+ *  Set is insertion-ordered, so the leading entries are the oldest — reap those. */
+const MAX_GRAPHS = 2;
+
+/** Reap graphs that a track-swap orphaned, without relying on the "ended" event: any whose
+ *  raw mic track already ended, then the oldest ones over the cap. Called before each new
+ *  mic acquisition so an open AudioContext + hot mic can't pile up across voice reconnects. */
+function reapStaleGraphs(): void {
+    for (const g of [...graphs]) {
+        if (g.rawTrack.readyState === "ended") teardownGraph(g);
+    }
+    while (graphs.size >= MAX_GRAPHS) {
+        const oldest = graphs.values().next().value;
+        if (!oldest) break;
+        teardownGraph(oldest);
+    }
 }
 
 /** Disconnect one graph's nodes and stop its raw mic track. */

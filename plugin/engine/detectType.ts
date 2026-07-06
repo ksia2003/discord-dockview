@@ -177,9 +177,13 @@ export const VIDEO_EXT = new Set(["mp4", "m4v", "webm", "ogv", "mov"]);
 // ABOVE this point, so what's left on a Discord host here is navigation/chrome — never a
 // page to browse. We deny the whole family by suffix rather than list individual paths,
 // because Discord adds routes (/shop, /quest-home, …) faster than any allow-list tracks.
+// The list is Discord's SEPARATE apex domains, not just subdomains of one — a suffix match
+// on "discord.com" alone would miss sibling apexes like discordstatus.com or discord.co.
 const DISCORD_HOST_SUFFIXES = [
     "discord.com", "discordapp.com", "discordapp.net", "discord.gg",
-    "discord.media", "discord.dev", "discord.new", "discord.gift", "dis.gd"
+    "discord.media", "discord.dev", "discord.new", "discord.gift", "discord.gifts",
+    "dis.gd", "discordstatus.com", "discord.co", "discordcdn.com", "discordapp.io",
+    "discord.store", "discord.design"
 ];
 
 /** Is `host` the Discord-owned domain, or any subdomain of it? */

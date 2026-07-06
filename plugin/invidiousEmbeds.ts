@@ -28,13 +28,25 @@ const YT_EMBED = "https://www.youtube.com/embed/";
 // when we actually redirect to an Invidious instance.
 const INVIDIOUS_PARAMS = "?autoplay=0&player_style=youtube&local=true";
 
-/** Read the configured instance, trimmed and without a trailing slash, or "" if
- *  the feature is off / no instance is set. */
+/** Read the configured instance as a validated http(s) origin (scheme + host, no trailing
+ *  slash), or "" if the feature is off / no instance is set / the value isn't a well-formed
+ *  http(s) URL. A malformed setting (javascript:, a bare host, junk) yields "" so the caller
+ *  leaves the embed on youtube.com instead of concatenating an unusable/hostile src. */
 function activeInstance(): string {
     if (settings.store.invidiousEmbeds !== true) return "";
     const raw = (settings.store.invidiousInstance ?? "").trim();
     if (!raw) return "";
-    return raw.replace(/\/+$/, "");
+    let u: URL;
+    try {
+        u = new URL(raw);
+    } catch {
+        return "";
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+    if (!u.hostname) return "";
+    // Rebuild from the parsed origin + path so only a clean scheme://host[/path] survives
+    // (drops any query/hash/credentials), trailing slash stripped as before.
+    return (u.origin + u.pathname).replace(/\/+$/, "");
 }
 
 /**

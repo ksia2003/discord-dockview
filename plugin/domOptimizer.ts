@@ -31,9 +31,21 @@ export function startDomOptimizer(): void {
     const orig = current;
 
     const patched: Patched = function (this: Element, child: any) {
-        if (typeof child?.className === "string" && child.className.indexOf("activity") !== -1) {
+        // Only defer a node that IS currently our child AND carries the activity class —
+        // this is the member-list activity row Discord churns on a switch. Anything else
+        // (including React's own reconciliation removals of unrelated nodes) removes now,
+        // synchronously, so we don't intercept a commit that expects immediate detach.
+        if (child?.parentNode === this
+            && typeof child.className === "string"
+            && child.className.indexOf("activity") !== -1) {
+            const parent = this;
             setTimeout(() => {
-                try { orig.call(this, child); } catch { /* node already gone */ }
+                // If the node was re-parented or already removed within the delay, the
+                // deferred detach would throw NotFoundError (and leak it, never removed).
+                // Only detach while it's still our child; otherwise the move already did it.
+                if (child.parentNode === parent) {
+                    try { orig.call(parent, child); } catch { /* raced with another removal */ }
+                }
             }, 100);
             return child;
         }

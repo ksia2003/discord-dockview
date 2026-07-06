@@ -372,15 +372,31 @@ export default definePlugin({
         if (typeof ric === "function") ric(warm, { timeout: 4000 });
         else setTimeout(warm, 2000);
 
+        // 11-12. The two features that install GLOBAL mutations (Element.prototype patch,
+        //     getUserMedia hook). Each is wrapped so a throw in one can't orphan the other
+        //     half-installed with no teardown — Vencord won't call stop() on a start() that
+        //     threw, so a leaked global patch would survive with nothing to reverse it. Both
+        //     installs are idempotent, so this only guards the partial-failure case.
+        //
         // 11. DOM optimizer (Performance page, opt-in): defer member-list "activity"
         //     node removals by 100ms so a channel/server switch paints chat first.
         //     Off by default; only patches Element.prototype when the user enabled it.
-        if (settings.store.domOptimizer === true) startDomOptimizer();
+        try {
+            if (settings.store.domOptimizer === true) startDomOptimizer();
+        } catch (e) {
+            console.error("[DockView] DOM optimizer install failed", e);
+            try { stopDomOptimizer(); } catch { /* nothing to restore */ }
+        }
 
         // 12. RNNoise mic noise suppression (Performance page → Voice, opt-in): when on,
         //     install a getUserMedia hook that routes the microphone through an RNNoise
         //     AudioWorklet before Discord captures it. Off by default; no-op when off.
-        startNoiseSuppression();
+        try {
+            startNoiseSuppression();
+        } catch (e) {
+            console.error("[DockView] noise suppression install failed", e);
+            try { stopNoiseSuppression(); } catch { /* nothing to restore */ }
+        }
 
         // 13. Once-a-day background update check (opt-out via the Updates page switch),
         //     OFF the boot critical path + throttled to 24h. On finding a newer build it
