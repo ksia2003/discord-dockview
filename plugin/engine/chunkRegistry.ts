@@ -80,6 +80,7 @@ export const CHUNKS: ChunkSpec[] = [
     { key: "three", pkg: "three", chunkId: "three", exportMode: "star", entryFile: "engine/chunks/three.entry.ts" },
     { key: "ghostscript", pkg: "@jspawn/ghostscript-wasm", chunkId: "ghostscript", exportMode: "star", entryFile: "engine/chunks/ghostscript.entry.ts" },
     { key: "pdfjs", pkg: "pdfjs-dist", chunkId: "pdfjs", exportMode: "star", entryFile: "engine/chunks/pdfjs.entry.ts" },
+    { key: "rnnoise", pkg: "@timephy/rnnoise-wasm", chunkId: "rnnoise", exportMode: "star", entryFile: "engine/chunks/rnnoise.entry.ts" },
     {
         key: "codemirror", pkg: "@codemirror/state", chunkId: "codemirror", exportMode: "star",
         entryFile: "engine/chunks/codemirror.entry.ts",

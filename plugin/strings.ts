@@ -505,7 +505,12 @@ export const STRINGS = {
         voiceFixTitle: "Fix voice connection over VPN",
         voiceFixNote:
             "Stops voice from binding to VPN interfaces (Tailscale, etc.) that cause calls to hang on " +
-            "\"DTLS Connecting\"."
+            "\"DTLS Connecting\".",
+        noiseSuppressionTitle: "Noise suppression (RNNoise)",
+        noiseSuppressionNote:
+            "Filters background noise (keyboards, fans, hum) out of your microphone using open-source " +
+            "RNNoise. Works where Discord's own noise suppression doesn't, notably on Linux. Applies the " +
+            "next time you connect to voice."
     },
 
     // --- Privacy settings page ----------------------------------------------

@@ -62,6 +62,7 @@ import { onNewFile } from "./edit/newFile";
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
 import { pushNetworkPrivacy } from "./networkPrivacy";
+import { noiseSuppressionActive, startNoiseSuppression, stopNoiseSuppression, syncNoiseSuppression } from "./noiseSuppression";
 import { settings } from "./settings";
 import { STRINGS } from "./strings";
 import { scheduleAutoCheck } from "./ui/autoCheck";
@@ -143,7 +144,11 @@ function exposeDebug(): void {
         get isNewFile() { return getActiveWindow().isNewFile; },
 
         // external pop-out (in-app Vesktop window).
-        openInVesktopWindow, vesktopWindowHtml, popout: popoutArtifact
+        openInVesktopWindow, vesktopWindowHtml, popout: popoutArtifact,
+
+        // noise suppression (Performance → Voice): drive the toggle + assert the hook.
+        syncNoiseSuppression,
+        get noiseSuppressionActive() { return noiseSuppressionActive(); }
     };
 }
 
@@ -317,7 +322,12 @@ export default definePlugin({
         //     Off by default; only patches Element.prototype when the user enabled it.
         if (settings.store.domOptimizer === true) startDomOptimizer();
 
-        // 12. Once-a-day background update check (opt-out via the Updates page switch),
+        // 12. RNNoise mic noise suppression (Performance page → Voice, opt-in): when on,
+        //     install a getUserMedia hook that routes the microphone through an RNNoise
+        //     AudioWorklet before Discord captures it. Off by default; no-op when off.
+        startNoiseSuppression();
+
+        // 13. Once-a-day background update check (opt-out via the Updates page switch),
         //     OFF the boot critical path + throttled to 24h. On finding a newer build it
         //     raises a one-time notice + flags the Updates row; it NEVER auto-applies.
         scheduleAutoCheck();
@@ -349,5 +359,8 @@ export default definePlugin({
         // 6. restore the native Element.prototype.removeChild if the DOM optimizer
         //    patched it (no-op when it was never installed).
         stopDomOptimizer();
+        // 7. restore the original getUserMedia + tear down the RNNoise graphs/context if
+        //    noise suppression was on (no-op when it was never installed).
+        stopNoiseSuppression();
     }
 });

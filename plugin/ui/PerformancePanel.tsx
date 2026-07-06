@@ -30,6 +30,7 @@ import { Forms, React, Select, Switch } from "@webpack/common";
 import { syncDomOptimizer } from "../domOptimizer";
 import { DECODER_CONTROLS, type DecoderMode } from "../engine/decoderModes";
 import { pushVoiceFix } from "../networkPrivacy";
+import { syncNoiseSuppression } from "../noiseSuppression";
 import { settings } from "../settings";
 import { STRINGS } from "../strings";
 
@@ -100,7 +101,8 @@ export function PerformancePanel() {
         ...DECODER_CONTROLS.map(c => c.settingKey),
         "largeImageLossless",
         "domOptimizer",
-        "voiceFixEnabled"
+        "voiceFixEnabled",
+        "noiseSuppression"
     ]);
 
     // The GPU-blocklist flag lives in the Vesktop store (main reads it at boot), not the
@@ -189,13 +191,25 @@ export function PerformancePanel() {
             {
                 value: store.voiceFixEnabled === true,
                 note: P.voiceFixNote,
-                hideBorder: true,
                 onChange: (v: boolean) => {
                     store.voiceFixEnabled = v;
                     pushVoiceFix();
                 }
             },
             P.voiceFixTitle
+        ),
+        h(
+            Switch,
+            {
+                value: store.noiseSuppression === true,
+                note: P.noiseSuppressionNote,
+                hideBorder: true,
+                onChange: (v: boolean) => {
+                    store.noiseSuppression = v;
+                    syncNoiseSuppression(v);
+                }
+            },
+            P.noiseSuppressionTitle
         )
     );
 }

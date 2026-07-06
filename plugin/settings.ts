@@ -102,6 +102,12 @@ export const settings = definePluginSettings({
     // persists here; on plugin start and on every flip the panel pushes it to main over
     // the networkPrivacy IPC, and main applies/reverts the policy live.
     voiceFixEnabled: { type: OptionType.BOOLEAN, description: "Fix voice connection over VPN", default: false },
+    // Denoise the outgoing microphone with open-source RNNoise (works where Discord's own
+    // Krisp doesn't, notably on Linux). OFF (default, opt-in). Entirely renderer-side: on
+    // start (when on) and on every flip, noiseSuppression.ts installs/removes a
+    // getUserMedia hook that routes the mic through an RNNoise AudioWorklet before Discord
+    // sees it. Read at start + on each flip, not per-behaviour.
+    noiseSuppression: { type: OptionType.BOOLEAN, description: "Suppress background noise on your microphone (RNNoise)", default: false },
 
     // --- Privacy page: remote images in email files -------------------------
     // Whether an .eml / .msg body may load its REMOTE <img> (http/https). OFF (default) =

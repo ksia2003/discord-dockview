@@ -133,6 +133,12 @@ async function loadChunk(spec: ChunkSpec): Promise<any> {
  *     specifier (the build's dep-deriver scans for it) so the lib ships inline and
  *     the import() resolves in a microtask.
  * Subsequent calls with the same key return the cached promise either way.
+ *
+ * NOTE: one chunk registry entry ("rnnoise") is NOT a renderer lib — it is an
+ * AudioWorklet loaded by noiseSuppression.ts as a blob: URL, never eval'd here (its
+ * top-level registerProcessor only exists in the audio thread). It is in the registry
+ * purely so the build emits + ships + OTA-manifests chunk-rnnoise.js; nothing ever calls
+ * loadLib("rnnoise"), so it never reaches loadChunk's eval.
  */
 export function loadLib<T = any>(key: string, importer: () => Promise<T>): Promise<T> {
     let p = libCache.get(key);
