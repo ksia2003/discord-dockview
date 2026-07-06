@@ -36,6 +36,7 @@ import { makeLinksOpenExternally } from "./utils/makeLinksOpenExternally";
 import { applyDeckKeyboardFix, askToApplySteamLayout, isDeckGameMode } from "./utils/steamOS";
 import { downloadVencordFiles, ensureVencordFiles, vencordSupportsSandboxing } from "./utils/vencordLoader";
 import { VENCORD_FILES_DIR } from "./vencordFilesDir";
+import { initWebDownloadGuard } from "./webDownloadGuard";
 
 let isQuitting = false;
 
@@ -416,6 +417,12 @@ function createMainWindow() {
         delete (params as Record<string, unknown>).nodeintegration;
         delete (params as Record<string, unknown>).nodeintegrationinsubframes;
     });
+
+    // The embedded browsing <webview> is a viewer, never a downloader: cancel any
+    // download that fires on its isolated session so navigating a tab to an
+    // attachment / Content-Disposition url can't pull a file to disk or pop a save
+    // dialog (and can't re-fire it when the tab remounts on a channel switch).
+    initWebDownloadGuard();
 
     initMenuBar(win);
     makeLinksOpenExternally(win);

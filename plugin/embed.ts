@@ -142,16 +142,24 @@ function ArtifactContextMenu({ url, name }: { url: string; name: string; }) {
 
 // --- chip click delegation --------------------------------------------------
 
-/** Is this node (or an ancestor up to the chip) the EXPLICIT download button? */
+/** Is this node (or an ancestor up to the chip) an EXPLICIT download control — the
+ *  hover-bar download button, the file-chip download icon, OR any anchor that carries
+ *  the `download` HTML attribute (a save-to-disk intent, whatever the UI language)? A
+ *  download click must ALWAYS pass through to Discord's native download; the dock only
+ *  ever intercepts an OPEN/VIEW intent, never a save. */
 function isExplicitDownloadButton(target: EventTarget | null): boolean {
     let el = target as HTMLElement | null;
     for (let i = 0; i < 8 && el; i++) {
         const cls = String(el.className || "");
         if (/hoverBarButton|hoverButtonGroup|downloadButton/i.test(cls)) return true;
         if (el.tagName === "A") {
+            const a = el as HTMLAnchorElement;
+            // The `download` HTML attribute IS the save-to-disk intent — an anchor that
+            // asks the browser to download must never be pulled into the dock viewer.
+            if (a.hasAttribute("download")) return true;
             // Match Discord's OWN localized download aria-label (not our copy) so
             // the native download button keeps working across UI languages.
-            const label = (el.getAttribute("aria-label") || "").toLowerCase();
+            const label = (a.getAttribute("aria-label") || "").toLowerCase();
             if (/download|다운로드|télécharger|descargar/.test(label)) return true;
         }
         el = el.parentElement;
