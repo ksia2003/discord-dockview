@@ -72,7 +72,9 @@ export const enum IpcEvents {
     CHOOSE_USER_ASSET = "VCD_CHOOSE_USER_ASSET",
 
     SET_FIREWALL_ENABLED = "VCD_SET_FIREWALL_ENABLED",
-    SET_PROXY = "VCD_SET_PROXY"
+    SET_PROXY = "VCD_SET_PROXY",
+
+    SET_VOICE_FIX_ENABLED = "VCD_SET_VOICE_FIX_ENABLED"
 }
 
 export const enum UpdaterIpcEvents {

@@ -119,7 +119,8 @@ export const VesktopNative = {
     networkPrivacy: {
         setFirewallEnabled: (enabled: boolean) => invoke<void>(IpcEvents.SET_FIREWALL_ENABLED, enabled),
         setProxy: (config: { enabled: boolean; rules: string; bypass: string }) =>
-            invoke<void>(IpcEvents.SET_PROXY, config)
+            invoke<void>(IpcEvents.SET_PROXY, config),
+        setVoiceFixEnabled: (enabled: boolean) => invoke<void>(IpcEvents.SET_VOICE_FIX_ENABLED, enabled)
     },
     debug: {
         launchGpu: () => invoke<void>(IpcEvents.DEBUG_LAUNCH_GPU),

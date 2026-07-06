@@ -27,7 +27,12 @@ export function pushProxy(): void {
     });
 }
 
+export function pushVoiceFix(): void {
+    native()?.setVoiceFixEnabled?.(settings.store.voiceFixEnabled === true);
+}
+
 export function pushNetworkPrivacy(): void {
     pushFirewall();
     pushProxy();
+    pushVoiceFix();
 }

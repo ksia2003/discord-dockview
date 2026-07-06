@@ -498,7 +498,14 @@ export const STRINGS = {
         domOptimizerNote:
             "Delay updating the member-list activity panel by a fraction of a second when you switch " +
             "channels or servers, so the chat paints first. Makes switching feel faster on a busy list. " +
-            "Applies immediately."
+            "Applies immediately.",
+
+        // Voice group: the WebRTC IP-handling fix for calls over a VPN.
+        voiceGroup: "Voice",
+        voiceFixTitle: "Fix voice connection over VPN",
+        voiceFixNote:
+            "Stops voice from binding to VPN interfaces (Tailscale, etc.) that cause calls to hang on " +
+            "\"DTLS Connecting\"."
     },
 
     // --- Privacy settings page ----------------------------------------------

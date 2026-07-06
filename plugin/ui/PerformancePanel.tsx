@@ -29,6 +29,7 @@ import { Forms, React, Select, Switch } from "@webpack/common";
 
 import { syncDomOptimizer } from "../domOptimizer";
 import { DECODER_CONTROLS, type DecoderMode } from "../engine/decoderModes";
+import { pushVoiceFix } from "../networkPrivacy";
 import { settings } from "../settings";
 import { STRINGS } from "../strings";
 
@@ -98,7 +99,8 @@ export function PerformancePanel() {
     const store = settings.use([
         ...DECODER_CONTROLS.map(c => c.settingKey),
         "largeImageLossless",
-        "domOptimizer"
+        "domOptimizer",
+        "voiceFixEnabled"
     ]);
 
     // The GPU-blocklist flag lives in the Vesktop store (main reads it at boot), not the
@@ -176,6 +178,24 @@ export function PerformancePanel() {
                 }
             },
             P.domOptimizerTitle
+        ),
+
+        h(Forms.FormDivider, { style: { margin: "20px 0" } }),
+
+        // --- Voice ---------------------------------------------------------
+        h(Forms.FormTitle, { tag: "h3" }, P.voiceGroup),
+        h(
+            Switch,
+            {
+                value: store.voiceFixEnabled === true,
+                note: P.voiceFixNote,
+                hideBorder: true,
+                onChange: (v: boolean) => {
+                    store.voiceFixEnabled = v;
+                    pushVoiceFix();
+                }
+            },
+            P.voiceFixTitle
         )
     );
 }

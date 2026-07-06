@@ -37,6 +37,7 @@ import { PopoutWindows } from "./utils/popout";
 import { isDeckGameMode, showGamePage } from "./utils/steamOS";
 import { isValidVencordInstall } from "./utils/vencordLoader";
 import { VENCORD_FILES_DIR } from "./vencordFilesDir";
+import { setVoiceFixEnabled } from "./voiceFix";
 
 handleSync(IpcEvents.DEPRECATED_GET_VENCORD_PRELOAD_SCRIPT_PATH, () =>
     join(VENCORD_FILES_DIR, "vencordDesktopPreload.js")
@@ -199,3 +200,8 @@ handle(IpcEvents.DEBUG_LAUNCH_WEBRTC_INTERNALS, () => openDebugPage("chrome://we
 // state + proxy config on load and on every change; main holds only the live config.
 handle(IpcEvents.SET_FIREWALL_ENABLED, (_, enabled: boolean) => setFirewallEnabled(enabled));
 handle(IpcEvents.SET_PROXY, (_, config: ProxyConfig) => applyProxy(config));
+
+// Voice connection fix (Performance page). Opt-in WebRTC IP-handling policy so calls
+// stop hanging on "DTLS Connecting" over a VPN. The renderer pushes the current state
+// on start and on every flip; main applies it to every web contents.
+handle(IpcEvents.SET_VOICE_FIX_ENABLED, (_, enabled: boolean) => setVoiceFixEnabled(enabled));

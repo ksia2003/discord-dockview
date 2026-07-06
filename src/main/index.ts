@@ -21,6 +21,7 @@ import { registerScreenShareHandler } from "./screenShare";
 import { Settings, State } from "./settings";
 import { setAsDefaultProtocolClient } from "./utils/setAsDefaultProtocolClient";
 import { isDeckGameMode } from "./utils/steamOS";
+import { initVoiceFix } from "./voiceFix";
 
 console.log("Vesktop v" + app.getVersion());
 
@@ -132,6 +133,10 @@ function init() {
         // Block trackers/telemetry from the first request, before the renderer
         // connects to push its Privacy settings. Default ON; the toggle flips it live.
         initFirewall();
+
+        // Register the WebRTC voice-fix hook so it covers popouts too. Default OFF;
+        // the renderer enables it when the Performance toggle is on.
+        initVoiceFix();
 
         bootstrap();
 

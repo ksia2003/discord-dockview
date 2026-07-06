@@ -95,6 +95,14 @@ export const settings = definePluginSettings({
     // (domOptimizer.ts). Read at start + on every flip, not per-behaviour.
     domOptimizer: { type: OptionType.BOOLEAN, description: "Defer member-list activity DOM updates for snappier switching", default: false },
 
+    // --- Performance page: voice ---------------------------------------------
+    // Fix voice calls hanging on "DTLS Connecting" over a VPN (Tailscale etc.). This
+    // mirrors a control that lives in MAIN (setWebRTCIPHandlingPolicy on every web
+    // contents). OFF (default, opt-in) = stock Chromium interface selection. The value
+    // persists here; on plugin start and on every flip the panel pushes it to main over
+    // the networkPrivacy IPC, and main applies/reverts the policy live.
+    voiceFixEnabled: { type: OptionType.BOOLEAN, description: "Fix voice connection over VPN", default: false },
+
     // --- Privacy page: remote images in email files -------------------------
     // Whether an .eml / .msg body may load its REMOTE <img> (http/https). OFF (default) =
     // remote images are blocked (replaced with a "blocked" pill) so no tracking-pixel
