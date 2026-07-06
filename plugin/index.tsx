@@ -61,6 +61,10 @@ import { editBufferText, toggleEditMode } from "./edit/editMode";
 import { onNewFile } from "./edit/newFile";
 import { startEmbed, stopEmbed } from "./embed";
 import { startLatex, stopLatex } from "./latex";
+import {
+    encryptionPasswordCount, messageEncryptionActive, messageEncryptionPatched, refreshPasswords,
+    saveEncryptionPasswords, startMessageEncryption, stopMessageEncryption, syncMessageEncryption
+} from "./messageEncryption";
 import { pushNetworkPrivacy } from "./networkPrivacy";
 import { noiseSuppressionActive, startNoiseSuppression, stopNoiseSuppression, syncNoiseSuppression } from "./noiseSuppression";
 import { settings } from "./settings";
@@ -148,7 +152,14 @@ function exposeDebug(): void {
 
         // noise suppression (Performance → Voice): drive the toggle + assert the hook.
         syncNoiseSuppression,
-        get noiseSuppressionActive() { return noiseSuppressionActive(); }
+        get noiseSuppressionActive() { return noiseSuppressionActive(); },
+
+        // message encryption (Privacy → StegCloak): drive the password store + master
+        // sync, and assert the receive path is armed + the dispatch patch is installed.
+        saveEncryptionPasswords, refreshPasswords, syncMessageEncryption,
+        get encryptionPasswordCount() { return encryptionPasswordCount(); },
+        get messageEncryptionActive() { return messageEncryptionActive(); },
+        get messageEncryptionPatched() { return messageEncryptionPatched(); }
     };
 }
 
@@ -161,6 +172,14 @@ export default definePlugin({
     description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images (F9 to toggle; mutually exclusive with the member list; remembers per channel; PDF refits on resize).",
     authors: [{ name: "seonin", id: 0n }],
     target: "DESKTOP",
+
+    // The message-encryption feature (Privacy page) uses Vencord's ChatBar-button and
+    // message-events APIs. Listing them here makes Vencord's PluginManager force-enable
+    // those API plugins whenever DockView is enabled (startDependenciesRecursive), so
+    // the ChatBar toggle + pre-send/pre-edit listeners work with no runtime .enabled
+    // poke. They're inert until the user turns message encryption on, but the APIs must
+    // be present for start() to install the (inert) button + listeners cleanly.
+    dependencies: ["ChatInputButtonAPI", "MessageEventsAPI"],
 
     // This build (a Vesktop fork) exists to ship DockView, so the panel is ON out
     // of the box. Without this a fresh install leaves the app's whole reason for
@@ -331,6 +350,13 @@ export default definePlugin({
         //     OFF the boot critical path + throttled to 24h. On finding a newer build it
         //     raises a one-time notice + flags the Updates row; it NEVER auto-applies.
         scheduleAutoCheck();
+
+        // 14. Message encryption (Privacy page, StegCloak): install the ChatBar toggle +
+        //     pre-send/pre-edit listeners + the FluxDispatcher receive patch. All INERT
+        //     until the master setting is on AND a password exists — a disabled feature
+        //     is a passthrough that costs nothing and needs no reload to arm. Loads the
+        //     safeStorage-stored passwords async.
+        startMessageEncryption();
     },
 
     stop() {
@@ -362,5 +388,9 @@ export default definePlugin({
         // 7. restore the original getUserMedia + tear down the RNNoise graphs/context if
         //    noise suppression was on (no-op when it was never installed).
         stopNoiseSuppression();
+        // 8. restore FluxDispatcher.dispatch to the exact original + remove the ChatBar
+        //    button + pre-send/pre-edit listeners + clear the password/decrypt state, so a
+        //    disable/enable cycle leaves Discord's dispatch + composer exactly as found.
+        stopMessageEncryption();
     }
 });

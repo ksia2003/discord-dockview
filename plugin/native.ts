@@ -50,6 +50,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 
 import { runConverter } from "./native-convert";
+import { hide, isCloaked, reveal } from "./native-crypto";
 import {
     createProfileImpl,
     deleteProfileImpl,
@@ -58,6 +59,7 @@ import {
     type ProfilesList,
     switchProfileImpl
 } from "./native-profiles";
+import { loadPasswordsImpl, savePasswordsImpl } from "./native-secrets";
 
 /**
  * Local stand-in for Electron's IpcMainInvokeEvent. We do NOT import it from
@@ -608,4 +610,73 @@ export async function switchProfile(
     name: string
 ): Promise<{ ok: boolean; error?: string }> {
     return switchProfileImpl(name);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  MESSAGE ENCRYPTION (StegCloak) — thin IPC wrappers over native-crypto.ts +
+//  native-secrets.ts. The crypto + the safeStorage password blob live in MAIN
+//  (node:crypto + Electron safeStorage); the renderer passes the password(s) per
+//  call so main stays stateless, and reaches these as
+//  VencordNative.pluginHelpers.DockView.<name>.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Encrypt `message` under `password`, hiding the ciphertext in `cover`. Returns the
+ *  cover-with-hidden-stream, or a structured error the renderer surfaces (a failed
+ *  encrypt must NOT silently send plaintext — the caller checks `ok`). */
+export async function encryptMessage(
+    _: IpcMainInvokeEvent,
+    message: string,
+    password: string,
+    cover: string
+): Promise<{ ok: boolean; text?: string; error?: string }> {
+    if (typeof message !== "string" || typeof password !== "string" || !password) {
+        return { ok: false, error: "Missing message or password" };
+    }
+    try {
+        return { ok: true, text: hide(message, password, cover || "This is a confidential message") };
+    } catch (err) {
+        return { ok: false, error: (err as Error)?.message ?? String(err) };
+    }
+}
+
+/** Try to reveal `cloaked` with each password in turn. Returns the FIRST success.
+ *  The result codes let the renderer distinguish the three StegCloak outcomes:
+ *    ok:true          → decrypted (text carries the plaintext).
+ *    "notCloaked"     → the text carries no hidden stream (fast-path, not our msg).
+ *    "noMatch"        → cloaked, but no supplied password revealed it (wrong key).
+ *    "integrity"      → a password matched the structure but the HMAC failed
+ *                       (tampered / truncated) — surfaced distinctly.
+ *  main never logs the plaintext or the passwords. */
+export async function decryptMessage(
+    _: IpcMainInvokeEvent,
+    cloaked: string,
+    passwords: string[]
+): Promise<{ ok: boolean; text?: string; code?: "notCloaked" | "noMatch" | "integrity" }> {
+    if (typeof cloaked !== "string" || !isCloaked(cloaked)) return { ok: false, code: "notCloaked" };
+    const list = Array.isArray(passwords) ? passwords.filter(p => typeof p === "string" && p) : [];
+    let sawIntegrity = false;
+    for (const password of list) {
+        try {
+            return { ok: true, text: reveal(cloaked, password) };
+        } catch (err) {
+            const name = (err as Error)?.name;
+            if (name === "PayloadNotFoundError") return { ok: false, code: "notCloaked" };
+            if (name === "IntegrityError") { sawIntegrity = true; continue; } // could be another pw's
+            // DecryptionError (wrong password) → try the next one.
+        }
+    }
+    return { ok: false, code: sawIntegrity ? "integrity" : "noMatch" };
+}
+
+/** Persist the password list, encrypted at rest via safeStorage (the OS keychain). */
+export async function savePasswords(
+    _: IpcMainInvokeEvent,
+    passwords: string[]
+): Promise<{ ok: boolean; error?: string }> {
+    return savePasswordsImpl(passwords);
+}
+
+/** Load + decrypt the stored password list (empty when none / unreadable). */
+export async function loadPasswords(_: IpcMainInvokeEvent): Promise<string[]> {
+    return loadPasswordsImpl();
 }

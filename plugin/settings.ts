@@ -134,6 +134,23 @@ export const settings = definePluginSettings({
     proxyRules: { type: OptionType.STRING, description: "Proxy rules", default: "" },
     proxyBypass: { type: OptionType.STRING, description: "Proxy bypass rules", default: "" },
 
+    // --- Privacy page: message encryption (StegCloak) -----------------------
+    // The MASTER switch for the message-encryption feature. OFF (default) = fully
+    // inert: the FluxDispatcher receive patch is a passthrough, the ChatBar toggle
+    // is disabled, nothing is encrypted or decrypted. ON = the feature arms once at
+    // least one password exists (the passwords live in the OS keychain via
+    // safeStorage, NOT here). messageEncryption.ts reads this live on start + every
+    // flip. The per-send toggle is the ChatBar button, not a setting — it's never
+    // persisted, so a restart never silently encrypts.
+    messageEncryption: { type: OptionType.BOOLEAN, description: "Encrypt messages (zero-width StegCloak)", default: false },
+    // The visible cover text a hidden ciphertext is embedded into (StegCloak needs a
+    // ≥2-word carrier). Recipients without the feature just see this string. Default
+    // is a neutral phrase; the Privacy panel lets the user change it.
+    encryptionCover: { type: OptionType.STRING, description: "Cover text for encrypted messages", default: "This is a confidential message" },
+    // The marker prepended to a message AFTER it's decrypted, so the reader can tell a
+    // message was received encrypted. Read live on each decrypt. Empty = no marker.
+    encryptionMark: { type: OptionType.STRING, description: "Prefix shown on decrypted messages", default: "🔒 " },
+
     // --- Updates page: automatic background check ---------------------------
     // ON (default) = on plugin start, once per day, DockView checks GitHub for a newer
     // build off the startup critical path (idle) and, if one is found, raises a one-time

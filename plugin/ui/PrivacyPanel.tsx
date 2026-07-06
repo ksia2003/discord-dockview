@@ -18,8 +18,9 @@
  * Binds the reactive settings store (settings.use) so a flip persists + re-renders.
  */
 
-import { Forms, React, Switch, TextInput } from "@webpack/common";
+import { Button, Forms, React, Switch, TextInput } from "@webpack/common";
 
+import { saveEncryptionPasswords, syncMessageEncryption } from "../messageEncryption";
 import { pushFirewall, pushProxy } from "../networkPrivacy";
 import { settings } from "../settings";
 import { STRINGS } from "../strings";
@@ -27,6 +28,109 @@ import { STRINGS } from "../strings";
 const h = (...args: any[]) => (React.createElement as any)(...args);
 
 const PR = STRINGS.privacy;
+
+/** Load the stored passwords over IPC (decrypted from the safeStorage blob). Returns
+ *  [] on any failure — the panel then shows the empty state. */
+function loadStoredPasswords(): Promise<string[]> {
+    const helpers = (window as any).VencordNative?.pluginHelpers?.DockView;
+    if (!helpers?.loadPasswords) return Promise.resolve([]);
+    return Promise.resolve(helpers.loadPasswords())
+        .then((l: any) => (Array.isArray(l) ? l.filter((p: any) => typeof p === "string" && p) : []))
+        .catch(() => []);
+}
+
+/** The message-encryption group: password add/remove (masked), cover text, marker.
+ *  Passwords live in local state seeded from the encrypted store; every mutation
+ *  persists through saveEncryptionPasswords (safeStorage) and re-arms the feature. */
+function EncryptionGroup() {
+    const store = settings.use(["messageEncryption", "encryptionCover", "encryptionMark"]);
+    const [passwords, setPasswords] = React.useState<string[]>([]);
+    const [draft, setDraft] = React.useState("");
+    const [err, setErr] = React.useState<string | null>(null);
+
+    React.useEffect(() => { loadStoredPasswords().then(setPasswords); }, []);
+
+    const persist = async (next: string[]) => {
+        const res = await saveEncryptionPasswords(next);
+        if (res?.ok) { setPasswords(next); setErr(null); }
+        else setErr(res?.error || PR.encStorageError);
+    };
+    const add = () => {
+        const p = draft.trim();
+        if (!p || passwords.includes(p)) { setDraft(""); return; }
+        setDraft("");
+        void persist([...passwords, p]);
+    };
+    const remove = (i: number) => void persist(passwords.filter((_, j) => j !== i));
+
+    return h(
+        "div",
+        null,
+        h(Forms.FormTitle, { tag: "h3", style: { marginTop: "20px" } }, PR.encGroup),
+        h(
+            Switch,
+            {
+                value: store.messageEncryption === true,
+                note: PR.encEnableNote,
+                hideBorder: true,
+                onChange: (v: boolean) => { store.messageEncryption = v; syncMessageEncryption(); }
+            },
+            PR.encEnableTitle
+        ),
+
+        // Passwords
+        h(Forms.FormTitle, { tag: "h5", style: { marginTop: "12px" } }, PR.encPasswordsTitle),
+        h(Forms.FormText, { style: { marginBottom: "8px", color: "var(--text-muted)" } }, PR.encPasswordsNote),
+        passwords.length === 0
+            ? h(Forms.FormText, { style: { marginBottom: "8px", color: "var(--text-muted)" } }, PR.encNoPasswords)
+            : passwords.map((_, i) =>
+                h(
+                    "div",
+                    { key: i, style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" } },
+                    h("span", { style: { flex: 1, color: "var(--text-normal)" } }, PR.encPasswordMasked + " " + (i + 1)),
+                    h(
+                        Button,
+                        {
+                            size: Button.Sizes.SMALL,
+                            color: Button.Colors.RED,
+                            onClick: () => remove(i)
+                        },
+                        PR.encRemove
+                    )
+                )
+            ),
+        h(
+            "div",
+            { style: { display: "flex", gap: "8px", marginTop: "4px" } },
+            h("div", { style: { flex: 1 } }, h(TextInput, {
+                type: "password",
+                value: draft,
+                placeholder: PR.encAddPlaceholder,
+                onChange: (v: string) => setDraft(v)
+            })),
+            h(Button, { onClick: add }, PR.encAdd)
+        ),
+        err && h(Forms.FormText, { style: { marginTop: "6px", color: "var(--status-danger)" } }, err),
+
+        // Cover text
+        h(Forms.FormTitle, { tag: "h5", style: { marginTop: "16px" } }, PR.encCoverLabel),
+        h(TextInput, {
+            value: store.encryptionCover ?? "",
+            placeholder: PR.encCoverPlaceholder,
+            onChange: (v: string) => { store.encryptionCover = v; }
+        }),
+        h(Forms.FormText, { style: { marginTop: "4px", color: "var(--text-muted)" } }, PR.encCoverNote),
+
+        // Marker
+        h(Forms.FormTitle, { tag: "h5", style: { marginTop: "16px" } }, PR.encMarkLabel),
+        h(TextInput, {
+            value: store.encryptionMark ?? "",
+            placeholder: PR.encMarkPlaceholder,
+            onChange: (v: string) => { store.encryptionMark = v; }
+        }),
+        h(Forms.FormText, { style: { marginTop: "4px", color: "var(--text-muted)" } }, PR.encMarkNote)
+    );
+}
 
 export function PrivacyPanel() {
     const store = settings.use(["emailRemoteImages", "firewallEnabled", "proxyEnabled", "proxyRules", "proxyBypass"]);
@@ -98,6 +202,9 @@ export function PrivacyPanel() {
                         pushProxy();
                     }
                 })
-            )
+            ),
+
+        // --- Message encryption --------------------------------------------
+        h(EncryptionGroup, null)
     );
 }

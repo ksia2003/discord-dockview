@@ -535,7 +535,34 @@ export const STRINGS = {
         proxyRulesLabel: "Proxy rules",
         proxyRulesPlaceholder: "socks5://127.0.0.1:9050  or  http=host:port;https=host:port",
         proxyBypassLabel: "Bypass rules",
-        proxyBypassPlaceholder: "localhost;*.discord.com"
+        proxyBypassPlaceholder: "localhost;*.discord.com",
+
+        // --- Message encryption (StegCloak) ---
+        encGroup: "Message encryption",
+        encEnableTitle: "Encrypt messages",
+        encEnableNote:
+            "Hide the text of the messages you send inside invisible characters, encrypted with a " +
+            "shared password. Discord only ever stores the encrypted form; anyone with the same " +
+            "password sees the real text, everyone else sees a short cover phrase. A padlock button " +
+            "appears next to the message box — click it to turn encryption on for what you send. Off " +
+            "by default; needs at least one password below.",
+        encPasswordsTitle: "Passwords",
+        encPasswordsNote:
+            "Shared secrets. A message is encrypted with your first password; an incoming message is " +
+            "decrypted by trying each of them. Stored encrypted on this device through the OS keychain, " +
+            "never in plain text. Share a password out of band with whoever you want to read your messages.",
+        encAddPlaceholder: "Add a password…",
+        encAdd: "Add",
+        encRemove: "Remove",
+        encNoPasswords: "No passwords yet. Add one to use message encryption.",
+        encPasswordMasked: "Password",
+        encCoverLabel: "Cover text",
+        encCoverPlaceholder: "This is a confidential message",
+        encCoverNote: "The visible phrase shown to people who don't have the password (needs at least two words).",
+        encMarkLabel: "Decrypted marker",
+        encMarkPlaceholder: "🔒 ",
+        encMarkNote: "Prefixed to messages after they're decrypted, so you can tell which were received encrypted.",
+        encStorageError: "Couldn't store the password securely (the OS keychain is unavailable here)."
     },
 
     // --- Profiles settings page ---------------------------------------------
