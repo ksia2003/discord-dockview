@@ -338,7 +338,6 @@ export const STRINGS = {
         download: "Download",
         copyImage: "Copy image",
         copyLink: "Copy link",
-        openInPanel: "Open in panel",
         // Attach the file currently shown in the panel to the message composer
         // (a pending upload chip on the active channel). When the file has edits,
         // the EDITED buffer is attached, not the original.
@@ -716,6 +715,10 @@ export const STRINGS = {
         autoCheckNote:
             "Once a day, DockView quietly checks GitHub for a newer build and lets you know " +
             "when one is ready. It never installs anything on its own — you still choose when to apply.",
+        devChannelTitle: "Receive development builds",
+        devChannelNote:
+            "Also offer pre-release (development) builds, not just full releases. For testing " +
+            "new features early — dev builds can be rough. Leave off for stable updates only.",
         // The one-time notice shown when the daily background check finds an update.
         // {version} -> the newer plugin version.
         noticeUpdate: (version: string) => `DockView ${version} is available.`,

@@ -109,7 +109,7 @@ export function UpdatePanel() {
     const targetDir = getTargetDir();
 
     // The reactive settings store — the auto-check switch persists + re-renders through it.
-    const store = settings.use(["autoCheckUpdates"]);
+    const store = settings.use(["autoCheckUpdates", "devChannel"]);
 
     // On-disk version.txt (read once on mount). null until read / if unreadable.
     const [installed, setInstalled] = useState<string | null>(null);
@@ -165,7 +165,7 @@ export function UpdatePanel() {
         setStatus(null);
         setCheckFailed(false);
         try {
-            const found = await native.discoverManifest(OWNER, REPO);
+            const found = await native.discoverManifest(OWNER, REPO, settings.store.devChannel);
             if (!found.ok) {
                 // Typed failure → precise per-code copy + a Retry affordance. Never "—".
                 setLatest(null);
@@ -429,6 +429,17 @@ export function UpdatePanel() {
                 onChange: (v: boolean) => { store.autoCheckUpdates = v; }
             },
             U.autoCheckTitle
+        ),
+        // --- development-channel switch (also offer pre-release / dev builds) ----
+        React.createElement(
+            Switch,
+            {
+                value: store.devChannel === true,
+                note: U.devChannelNote,
+                hideBorder: true,
+                onChange: (v: boolean) => { store.devChannel = v; }
+            },
+            U.devChannelTitle
         )
     );
 }

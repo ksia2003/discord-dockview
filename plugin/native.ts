@@ -480,7 +480,8 @@ function cmpPluginTag(a: string, b: string): number {
 export async function discoverManifest(
     _: IpcMainInvokeEvent,
     owner: string,
-    repo: string
+    repo: string,
+    includePrerelease = false
 ): Promise<DiscoverResult> {
     // --- 1. List the releases. Distinguish a rate-limit / HTTP error / network fail. ---
     const listUrl = `https://api.github.com/repos/${owner}/${repo}/releases?per_page=30`;
@@ -513,9 +514,12 @@ export async function discoverManifest(
     // releases that actually carry the plugin's manifest.json asset (the clean
     // DockView releases also carry the installers, and an installer-only release has
     // no manifest.json — skip it here), then take the highest NUMERIC version.
+    // The stable channel takes only full releases; the dev channel also accepts
+    // GitHub pre-releases (our dev builds are published as pre-releases).
     const candidates = releases.filter(
         r =>
             !r?.draft &&
+            (includePrerelease || !r?.prerelease) &&
             typeof r?.tag_name === "string" &&
             r.tag_name.startsWith(PLUGIN_TAG_PREFIX) &&
             (r.assets ?? []).some(a => a?.name === "manifest.json")

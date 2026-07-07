@@ -92,7 +92,7 @@ async function runCheck(): Promise<void> {
         // offline). A found update re-checks on demand anyway.
         writeLastCheck(now);
 
-        const found = await native.discoverManifest(OWNER, REPO);
+        const found = await native.discoverManifest(OWNER, REPO, settings.store.devChannel);
         if (!found.ok) return; // background: stay silent on any check failure
 
         const latestVer =

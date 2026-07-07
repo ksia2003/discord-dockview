@@ -39,6 +39,14 @@ export const settings = definePluginSettings({
         description: "Autoplay media when opened",
         default: false
     },
+    // Receive development (pre-release) builds via the in-app updater. OFF (default) = the
+    // updater only offers full releases; ON = it also offers GitHub pre-releases (our dev
+    // builds). discoverManifest reads this to widen the release filter (see UpdatePanel).
+    devChannel: {
+        type: OptionType.BOOLEAN,
+        description: "Receive development builds",
+        default: false
+    },
 
     // --- Viewers page: master switch ----------------------------------------
     // Open attachments in the dock. ON (default) = the chip interception is live.

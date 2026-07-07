@@ -33,7 +33,7 @@ export type DiscoverResult =
 /** The subset of native.ts (main process) the renderer updater calls. Reached via
  *  Vencord's pluginHelpers bridge, so every method is async (ipcRenderer.invoke). */
 export interface DockViewNative {
-    discoverManifest: (owner: string, repo: string) => Promise<DiscoverResult>;
+    discoverManifest: (owner: string, repo: string, includePrerelease?: boolean) => Promise<DiscoverResult>;
     readInstalledVersion: (targetDir: string) => Promise<string | null>;
     applyUpdate: (
         targetDir: string,
