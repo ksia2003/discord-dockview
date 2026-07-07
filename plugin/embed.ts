@@ -19,20 +19,12 @@
  * side interception can't drift from what the panel actually renders.
  */
 
-import { ContextMenuApi, Menu, React } from "@webpack/common";
-
 import { viewerEnabled } from "./engine/categoryMap";
 import { detectType, IMG_EXT } from "./engine/detectType";
 import type { ContentType } from "./engine/types";
 import { load } from "./engine/load";
 import { openExternalLink } from "./external/openExternal";
-import { STRINGS } from "./strings";
 import { fullResImageUrl } from "./viewers/image/url";
-
-// openContextMenu/closeContextMenu are read off ContextMenuApi at CALL time, never
-// destructured at module top: touching a @webpack/common proxy during the plugin's
-// module-eval drags Webpack in before it's ready, and the whole plugin then fails
-// to register (the lazy-init trap).
 
 /** The matched extension of a url's path, lowercased, or null (path-aware, the
  *  same probe detectType uses). */
@@ -60,8 +52,8 @@ function isPanelUrl(url: string | null | undefined): boolean {
     if (!url) return false;
     const type = detectType({ url });
     if (type === "unknown") return false;
-    // A "web" url is not an attachment/file chip — it's a plain message link handled by
-    // the dedicated web-link path (resolveWebLinkClick), NOT the chip route. Exclude it
+    // A "web" url is not an attachment/file chip — it's a plain message link, handled by
+    // main's window-open hook (WEB_TAB_OPEN -> openWebTab), NOT the chip route. Exclude it
     // here so the file-chip resolver only ever matches real dock-openable FILES.
     if (type === "web") return false;
     return viewerEnabled(type);
@@ -109,35 +101,6 @@ function openInPanel(url: string, name: string) {
         /* panel mount failed somehow — fall back to opening the link */
     }
     openExternalLink(url);
-}
-
-/** Context menu (right-click on a chip): open in panel / open externally / copy. */
-function ArtifactContextMenu({ url, name }: { url: string; name: string; }) {
-    return React.createElement(Menu.Menu, {
-        navId: "artifact-context-menu",
-        onClose: () => ContextMenuApi.closeContextMenu()
-    },
-    React.createElement(Menu.MenuGroup, null,
-        React.createElement(Menu.MenuItem, {
-            id: "artifact-open",
-            label: STRINGS.menu.openInPanel,
-            action: () => openInPanel(url, name)
-        }),
-        React.createElement(Menu.MenuItem, {
-            id: "artifact-popout",
-            label: STRINGS.menu.openInNewWindow,
-            action: () => openExternalLink(url)
-        })
-    ),
-    React.createElement(Menu.MenuSeparator),
-    React.createElement(Menu.MenuGroup, null,
-        React.createElement(Menu.MenuItem, {
-            id: "artifact-copy-link",
-            label: STRINGS.menu.copyLink,
-            action: () => { try { navigator.clipboard.writeText(url); } catch { /* ignore */ } }
-        })
-    )
-    );
 }
 
 // --- chip click delegation --------------------------------------------------
@@ -205,28 +168,30 @@ function resolvePanelClick(target: EventTarget | null): { url: string; anchor: H
 // excludes "web"), so this only ever matches a plain page link. Modifier/middle clicks
 // are already excluded by onDocClickCapture, so ctrl/cmd/middle-click keep native behaviour.
 
-/** Is `href` a real external http(s) web page (→ a dock web tab)? Decided by detectType
- *  returning "web" (which already excludes Discord in-app nav links + non-http urls). */
-function isWebLink(href: string | null | undefined): boolean {
-    if (!href) return false;
-    return detectType({ url: href }) === "web";
+// External web links are NOT sniffed from raw clicks anymore. The app already decides
+// "open this url externally" in one place — main/utils/makeLinksOpenExternally's
+// setWindowOpenHandler — which internal Discord navigation (the router) and downloads never
+// reach. Main signals us the url there and we open it as a dock web tab below.
+
+/** Open an external web url as a dock web tab. Falls back to the OS browser if the dock
+ *  can't mount (e.g. the home/friends page has no host). */
+export function openWebTab(url: string): void {
+    try {
+        load({ name: webNameFor(url), url, type: "web" });
+    } catch {
+        openExternalLink(url);
+    }
 }
 
-/** Resolve a click to the nearest ancestor <a> that is a real web-page link, or null.
- *  Only genuine message-content anchors reach here as "web" (discord-internal + file
- *  links are excluded by detectType / isPanelUrl), so no message-container scoping is
- *  needed — a discord.com/channels link simply isn't a web link. */
-function resolveWebLinkClick(target: EventTarget | null): string | null {
-    let el = target as HTMLElement | null;
-    for (let i = 0; i < 12 && el; i++) {
-        if (el.tagName === "A") {
-            const a = el as HTMLAnchorElement;
-            const href = a.href || a.getAttribute("href");
-            if (isWebLink(href)) return a.href || (href as string);
-        }
-        el = el.parentElement;
-    }
-    return null;
+let webOpenListenerArmed = false;
+
+/** Arm the main->renderer "open this web link in the dock" signal once (idempotent). */
+export function installWebOpenListener(): void {
+    if (webOpenListenerArmed) return;
+    const native = (window as any).VesktopNative?.dockView;
+    if (!native || typeof native.onOpenWebTab !== "function") return;
+    native.onOpenWebTab((url: string) => openWebTab(url));
+    webOpenListenerArmed = true;
 }
 
 // --- inline image interception ----------------------------------------------
@@ -351,47 +316,20 @@ function onDocClickCapture(e: MouseEvent) {
         openInPanel(hit.url, nameFromUrl(hit.url));
         return;
     }
-    // A real web-page link in a message -> open it as a dock web tab (dedup on re-click
-    // via the engine), instead of the external browser. Runs LAST so file/media chips
-    // keep their route and a discord.com/channels link (not a web link) is never caught.
-    const webUrl = resolveWebLinkClick(e.target);
-    if (!webUrl) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
-    try {
-        load({ name: webNameFor(webUrl), url: webUrl, type: "web" });
-    } catch {
-        // Panel mount refused (home/friends page) — fall back to the external browser.
-        openExternalLink(webUrl);
-    }
-}
-
-function onDocContextCapture(e: MouseEvent) {
-    const hit = resolvePanelClick(e.target);
-    if (!hit) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
-    const url = hit.url;
-    ContextMenuApi.openContextMenu(e as any, () =>
-        React.createElement(ArtifactContextMenu, { url, name: nameFromUrl(url) }));
 }
 
 let attached = false;
 
-/** Install the capture-phase delegation listeners. */
+/** Install the capture-phase delegation listener. */
 export function startEmbed() {
     if (attached) return;
     document.addEventListener("click", onDocClickCapture, true);
-    document.addEventListener("contextmenu", onDocContextCapture, true);
     attached = true;
 }
 
-/** Remove the delegation listeners. */
+/** Remove the delegation listener. */
 export function stopEmbed() {
     if (!attached) return;
     document.removeEventListener("click", onDocClickCapture, true);
-    document.removeEventListener("contextmenu", onDocContextCapture, true);
     attached = false;
 }

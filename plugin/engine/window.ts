@@ -212,12 +212,29 @@ export function setActiveWindow(w: DockWindow | string): void {
     if (currentChannelId != null) activeByChannel.set(currentChannelId, win.id);
 }
 
+/** A url's STABLE identity for the dedup match: origin + path, dropping the query
+ *  string. Discord attachment/media urls carry rotating signed params (ex/is/hm) that
+ *  change every time the same file is fetched, so an exact-string compare misses the
+ *  re-open; the attachment path (/attachments/<ch>/<id>/<name>) is unique per file, so
+ *  origin+path identifies it stably. Non-url inputs fall back to the raw string. */
+function fileIdentity(url: string): string {
+    try {
+        const u = new URL(url, location.href);
+        return u.origin + u.pathname;
+    } catch {
+        return url;
+    }
+}
+
 /** Find an existing tab in the CURRENT strip whose file matches `url`+`type`
- *  (dedup-on-open). Returns the window or null. */
+ *  (dedup-on-open). Matched on the url's stable identity (origin+path) so the same
+ *  file re-opened under a freshly-signed url still hits its existing tab. */
 function findTabByFile(url: string | null, type: string): DockWindow | null {
     if (url == null) return null;
+    const id = fileIdentity(url);
     for (const w of stripFor(currentChannelId)) {
-        if (w.activeDescriptor && w.activeDescriptor.url === url && w.activeDescriptor.type === type) return w;
+        const d = w.activeDescriptor;
+        if (d && d.type === type && fileIdentity(d.url) === id) return w;
     }
     return null;
 }

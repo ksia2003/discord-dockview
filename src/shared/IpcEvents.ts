@@ -79,7 +79,11 @@ export const enum IpcEvents {
     // A download fired on the dock's embedded web <webview>: the page was only ever a
     // file, not something to browse. Main sends the guest webContents id so the renderer
     // can close the web tab backing that webview (see webDownloadGuard.ts).
-    WEB_TAB_DOWNLOAD = "VCD_WEB_TAB_DOWNLOAD"
+    WEB_TAB_DOWNLOAD = "VCD_WEB_TAB_DOWNLOAD",
+
+    // A user clicked an external web link: main tells the renderer to open it as a dock web
+    // tab instead of the OS browser (the arg is the url). See makeLinksOpenExternally.ts.
+    WEB_TAB_OPEN = "VCD_WEB_TAB_OPEN"
 }
 
 export const enum UpdaterIpcEvents {

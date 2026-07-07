@@ -132,6 +132,11 @@ export const VesktopNative = {
          *  webview if the page was never anything but this download. */
         onWebTabDownload: (cb: (guestWebContentsId: number) => void) => {
             ipcRenderer.on(IpcEvents.WEB_TAB_DOWNLOAD, (_e, id: number) => cb(id));
+        },
+        /** Main tells the renderer a user clicked an external web link — open it as a dock
+         *  web tab instead of the browser (the arg is the url). */
+        onOpenWebTab: (cb: (url: string) => void) => {
+            ipcRenderer.on(IpcEvents.WEB_TAB_OPEN, (_e, url: string) => cb(url));
         }
     },
     commands: {

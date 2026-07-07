@@ -60,7 +60,7 @@ import {
 } from "./edit/attach";
 import { editBufferText, toggleEditMode } from "./edit/editMode";
 import { onNewFile } from "./edit/newFile";
-import { startEmbed, stopEmbed } from "./embed";
+import { installWebOpenListener, startEmbed, stopEmbed } from "./embed";
 import { invidiousEmbedsActive, rewriteEmbedSrc } from "./invidiousEmbeds";
 import { startLatex, stopLatex } from "./latex";
 import {
@@ -351,6 +351,10 @@ export default definePlugin({
         //     download never should have wedged a web tab — main reports it and we close
         //     that tab so it can't persist / re-show the dock / re-navigate.
         installWebDownloadClose();
+        // 6c. arm the main→renderer web-OPEN signal: when the user clicks an external web
+        //     link, main's setWindowOpenHandler (the one place that decides "open externally")
+        //     hands us the url and we open it as a dock web tab — no raw-click sniffing.
+        installWebOpenListener();
 
         // 7. chat-side KaTeX (separate concern, kept) + the debug surface.
         startLatex();
