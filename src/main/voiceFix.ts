@@ -7,7 +7,8 @@
 // WebRTC IP-handling policy for voice. On a VPN (Tailscale and friends) Chromium
 // happily binds voice to the VPN interface, and the call then hangs on
 // "DTLS Connecting". Forcing the policy back to public+private interfaces lets it
-// reach a working candidate. This is opt-in (default OFF): the renderer's
+// reach a working candidate. The setting defaults ON (opt-out — harmless without a
+// VPN, and upstream Vesktop applies it unconditionally): the renderer's
 // Performance panel pushes the flag on start and on every flip over IPC, and the
 // hook below applies it to Discord's own contents (main window + voice popouts) so
 // calls are covered — but never to the isolated web-browsing tab.
