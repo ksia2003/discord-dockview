@@ -48,7 +48,7 @@ import {
     onChannelSidebarView, onMemberSectionToggle, onUserProfileSidebarToggle
 } from "./host/exclusivity";
 import { applyHostWidth, clampWidth } from "./host/layout";
-import { applyOpenState, ensureHost } from "./host/mount";
+import { applyOpenState, ensureHost, renderDockRail } from "./host/mount";
 import { closePanel, registerHost, startHost, stopHost, toggle } from "./host/open";
 import { openExternalLink } from "./external/openExternal";
 import { openInVesktopWindow, popoutArtifact, vesktopWindowHtml } from "./external/vesktopWindow";
@@ -224,6 +224,23 @@ export default definePlugin({
                 match: /=(\i)=>(`https:\/\/www\.youtube\.com\/embed\/\$\{\1\}`)/,
                 replace: "=$1=>$self.rewriteInvidiousEmbed($2)"
             }
+        },
+        // Mount the dock as a real child of Discord's React tree. The channel-view
+        // component renders the chat/sidebar flex row as `[this.renderChat(),
+        // this.renderSidebar()]`; we append our host as that row's last flex child, so
+        // it sits beside chat_ like a native thread sidebar and the reconciler never
+        // tears it out. `maybePreloadChannelCall` is a method name unique to this
+        // component (locates the module); the chat/sidebar pair is the structural
+        // anchor (both are `this.`-called methods, stable across recent builds). If the
+        // anchor drifts, the patch is a no-op and the host falls back to DOM injection
+        // (host/mount.ts startHost) — so the dock keeps working, hence noWarn.
+        {
+            find: "maybePreloadChannelCall",
+            noWarn: true,
+            replacement: {
+                match: /(this\.renderChat\(\),this\.renderSidebar\(\))/,
+                replace: "$1,$self.renderDockRail()"
+            }
         }
     ],
 
@@ -275,6 +292,14 @@ export default definePlugin({
     // origin swap, fail-safe) lives in invidiousEmbeds.ts.
     rewriteInvidiousEmbed(src: unknown) {
         return rewriteEmbedSrc(src);
+    },
+
+    // The dock host, appended as the last flex child of the channel-view's chat/sidebar
+    // row by the layout patch above. Returns a stable placeholder <div> whose ref binds
+    // our own React root (host/mount.ts); all dock logic lives there, this is just the
+    // reachable-from-$self seam.
+    renderDockRail() {
+        return renderDockRail();
     },
 
     start() {
