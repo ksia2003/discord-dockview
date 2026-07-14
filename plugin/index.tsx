@@ -2,15 +2,15 @@
  * DockView — Vencord userplugin (modular rewrite entry).
  * ---------------------------------------------------------------------------
  * The manifest + lifecycle + Flux wiring for the from-scratch modular DockView.
- * It mounts the host (the right-docked, native-style panel), registers the host
- * with the engine bridge, restores the persisted width/open state, binds the
- * F9 toggle, and exposes window.__dockView for console / CDP driving.
+ * It mounts the host (the always-on right rail), registers the host with the engine
+ * bridge, restores the persisted width, and exposes window.__dockView for console /
+ * CDP driving.
  *
- * Phase 3: the text/code viewer is registered (viewers/registry.ts), and chip-click
- * loading is re-wired — embed.ts intercepts a dock-handled attachment chip / inline
- * image and routes it through the engine's load(). Open the dock with F9 (or
- * __dockView.toggle()); clicking a code/text chip renders it, and a handled type
- * whose viewer isn't built yet lands on the unsupported card.
+ * The dock is ALWAYS visible (it IS the right rail) — there is no toggle. Chip-click
+ * loading is wired via embed.ts, which intercepts a dock-handled attachment chip /
+ * inline image and routes it through the engine's load(); a handled type whose viewer
+ * isn't built yet lands on the unsupported card, and an empty channel shows the
+ * empty-state body.
  *
  * target DESKTOP: the eventual artifact/PDF/markdown renderers rely on the CSP
  * nonce trick + main-thread pdf worker that only hold under the desktop client.
@@ -31,25 +31,21 @@ import { fallbackCopy } from "./engine/fetch";
 import { loadLib } from "./engine/lazyLib";
 import { detectType } from "./engine/detectType";
 import { requestRender } from "./engine/forceRender";
-import {
-    clearChannelVisibility, dockVisible, onChannelSelect, setCurrentChannelMemId
-} from "./engine/channelMemory";
+import { onChannelSelect, setCurrentChannelMemId } from "./engine/channelMemory";
 import { loadPersistedState } from "./engine/persist";
-import { closeTab, pinActiveWindow, switchToWindow, unpinActiveWindow } from "./engine/tabs";
+import { closeTab, switchToWindow } from "./engine/tabs";
 import { startDomOptimizer, stopDomOptimizer } from "./domOptimizer";
 import {
-    getActiveWindow, getActiveWindowId, getChannelTabs, getPinnedWindows, getWindows, reorderTab,
-    resetCollection
+    getActiveWindow, getActiveWindowId, getChannelTabs, getWindows, reorderTab, resetCollection
 } from "./engine/window";
 import { getCurrentChannelId } from "./host/channel";
 import {
     closeNativeChannelSidebar, getMemberListRestorePending, getProfileSidebarRestorePending,
-    getSelfMemberToggle, getSelfProfileToggle, isMemberListShown, isUserProfileSidebarShown,
-    onChannelSidebarView, onMemberSectionToggle, onUserProfileSidebarToggle
+    getSelfMemberToggle, getSelfProfileToggle, isMemberListShown, isUserProfileSidebarShown
 } from "./host/exclusivity";
 import { applyHostWidth, clampWidth } from "./host/layout";
 import { applyOpenState, ensureHost, renderDockRail } from "./host/mount";
-import { closePanel, registerHost, startHost, stopHost, toggle } from "./host/open";
+import { registerHost, startHost, stopHost } from "./host/open";
 import { openExternalLink } from "./external/openExternal";
 import { openInVesktopWindow, popoutArtifact, vesktopWindowHtml } from "./external/vesktopWindow";
 import { markdownHasToc, mdState } from "./viewers/doc/MarkdownViewer";
@@ -74,8 +70,7 @@ import { STRINGS } from "./strings";
 import { scheduleAutoCheck } from "./ui/autoCheck";
 import { installDockViewSection, uninstallDockViewSection } from "./ui/settingsSection";
 
-// --- window key handlers (lifecycle-scoped, removed on stop) ----------------
-let onKeyDown: ((e: KeyboardEvent) => void) | null = null;
+// --- window handlers (lifecycle-scoped, removed on stop) --------------------
 let onResize: (() => void) | null = null;
 let onMessage: ((e: MessageEvent) => void) | null = null;
 
@@ -88,13 +83,10 @@ async function applyPersisted(): Promise<void> {
         const w = clampWidth(parseInt(widthStr, 10) || getActiveWindow().state.width);
         if (w !== getActiveWindow().state.width) getActiveWindow().state.width = w;
     }
-    // Dock VISIBILITY is per-channel and in-memory (NOT persisted): on a fresh boot the
-    // dock starts hidden. There's nothing to restore open onto anyway — stop() cleared
-    // the cache + windows, and attachment CDN links expire, so auto-reopening would
-    // only surface an empty/broken shell. Only the width persists (LS_WIDTH).
-    // Re-render with the restored width. The DockPanel keeps `width` in local React
-    // state (write-only, drives persistence on a user drag); a bump never reseeds it,
-    // so this can't clobber the width we just restored onto state.width.
+    // Only the width persists (LS_WIDTH) — the dock is always open, there is no
+    // visibility state to restore. Re-render with the restored width. The DockPanel
+    // keeps `width` in local React state (write-only, drives persistence on a user
+    // drag); a bump never reseeds it, so this can't clobber the restored width.
     requestRender();
 }
 
@@ -109,17 +101,16 @@ function exposeDebug(): void {
         get content() { return getActiveWindow().content; },
         get activeCacheKey() { return getActiveWindow().activeCacheKey; },
 
-        // open / close / toggle.
-        toggle, ensureHost, applyOpenState, closePanel,
-        get dockOpen() { return dockVisible(); },
+        // host mount. The dock is always open — no toggle/close (dockOpen is always true).
+        ensureHost, applyOpenState,
+        get dockOpen() { return true; },
 
         // content router + channel switch.
         load, retry: retryActiveLoad, clear: clearArtifact, detectType,
         onChannelSelect, getCurrentChannelId,
 
-        // exclusivity (member list / profile sidebar) — drive + assert.
+        // exclusivity (member list / profile sidebar) — the interim collapse-only seal.
         closeNativeChannelSidebar,
-        onMemberSectionToggle, onUserProfileSidebarToggle, onChannelSidebarView,
         get memberListShown() { return isMemberListShown(); },
         get memberListRestorePending() { return getMemberListRestorePending(); },
         get profileSidebarShown() { return isUserProfileSidebarShown(); },
@@ -127,14 +118,13 @@ function exposeDebug(): void {
         get selfMemberToggle() { return getSelfMemberToggle(); },
         get selfProfileToggle() { return getSelfProfileToggle(); },
 
-        // browser-like tabs: the derived current-channel strip + the per-store views +
-        // the tab verbs. `windows` is the CURRENT channel's strip (pinned ∪ its own
-        // tabs); `pinned` + `channelTabs(id)` expose the raw stores for the rig.
+        // browser-like tabs: the current-channel flat strip + the raw per-channel store +
+        // the tab verbs. `windows` is the CURRENT channel's strip; `channelTabs(id)`
+        // exposes the raw store for the rig.
         get windows() { return getWindows(); },
         get activeWindowId() { return getActiveWindowId(); },
-        get pinned() { return getPinnedWindows(); },
         channelTabs: (id: string) => getChannelTabs(id),
-        switchToWindow, pinActiveWindow, unpinActiveWindow, closeTab, reorderTab,
+        switchToWindow, closeTab, reorderTab,
 
         // edit-mode (the cross-cutting capability): drive the view↔edit toggle +
         // assert the temporary buffer / re-render loop.
@@ -176,7 +166,7 @@ function unexposeDebug(): void {
 
 export default definePlugin({
     name: "DockView",
-    description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images (F9 to toggle; mutually exclusive with the member list; remembers per channel; PDF refits on resize).",
+    description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images. The dock is always the right rail (channel-bound tabs; collapses the native member list; PDF refits on resize).",
     authors: [{ name: "seonin", id: 0n }],
     target: "DESKTOP",
 
@@ -248,23 +238,13 @@ export default definePlugin({
     // disables it on stop.
     managedStyle,
 
-    // Per-channel panel memory + reverse sidebar exclusivity, routed to the new
-    // engine/host modules. CHANNEL_SELECT saves the leaving channel's transient and
-    // restores the entered channel's; the three toggle actions vacate the dock when
-    // a native sidebar takes the exclusive right slot (our own toggles are filtered
-    // inside the handlers via the self-dispatch flags).
+    // Per-channel panel memory. CHANNEL_SELECT re-points the active tab for the entered
+    // channel and reseals the native member list / profile sidebar. The dock is always
+    // open, so there is no reverse-takeover: the member-list/thread/profile toggle
+    // subscriptions are gone (proper action interception lands in Batch D).
     flux: {
         CHANNEL_SELECT({ channelId }: { channelId: string | null; }) {
             onChannelSelect(channelId ?? null);
-        },
-        CHANNEL_TOGGLE_MEMBERS_SECTION() {
-            onMemberSectionToggle();
-        },
-        SIDEBAR_VIEW_CHANNEL() {
-            onChannelSidebarView();
-        },
-        USER_PROFILE_SIDEBAR_TOGGLE_SECTION() {
-            onUserProfileSidebarToggle();
         }
     },
 
@@ -310,25 +290,12 @@ export default definePlugin({
         // 2. restore persisted width/open from DataStore (async; applies on resolve).
         applyPersisted();
 
-        // 3. F9 toggles the dock. A single function key — text inputs don't capture
-        //    it, so no focus guard is needed; we still preventDefault to stop any
-        //    default. The viewer single-key/Ctrl+F shortcuts (image zoom, PDF page-nav/
-        //    zoom/find, code find, pptx slide-nav) are bound by each viewer's body
-        //    behind the shared dock-focus gate (engine/dockKeyboard); this entry owns
-        //    only the global dock toggle.
-        onKeyDown = (e: KeyboardEvent) => {
-            if (e.key === "F9" || e.code === "F9") {
-                e.preventDefault();
-                toggle();
-            }
-        };
-        window.addEventListener("keydown", onKeyDown);
-
-        // 4. On window resize: re-clamp the persisted width to the window bound and
+        // 3. On window resize: re-clamp the persisted width to the window bound and
         //    re-evaluate the docked/floating geometry (a narrowing window must flip a
-        //    wide dock to floating even if the intended width doesn't change).
+        //    wide dock to floating even if the intended width doesn't change). The dock
+        //    is always open, so this always runs. (The old F9 toggle is gone — the dock
+        //    can no longer be hidden; the empty channel shows the empty-state body.)
         onResize = () => {
-            if (!dockVisible()) return;
             const w = clampWidth(getActiveWindow().state.width);
             if (w !== getActiveWindow().state.width) getActiveWindow().state.width = w;
             applyHostWidth();
@@ -447,20 +414,18 @@ export default definePlugin({
 
     stop() {
         // 1. window listeners + chip-click delegation.
-        if (onKeyDown) { window.removeEventListener("keydown", onKeyDown); onKeyDown = null; }
         if (onResize) { window.removeEventListener("resize", onResize); onResize = null; }
         if (onMessage) { window.removeEventListener("message", onMessage); onMessage = null; }
         stopEmbed();
         // 2. tear down the host (heartbeat/observer/React unmount + triple sweep +
         //    native-sidebar restore). Marks inactive first so no callback re-injects.
         stopHost();
-        // 3. clear the whole tab collection (all three stores) so a re-start begins from
-        //    a clean empty state + drop the content cache + per-channel visibility
-        //    (in-memory only). We do NOT persist tabs — the collection is session-only
-        //    by design; only the dock width stays in DataStore so a re-start restores it.
+        // 3. clear the whole tab collection (both channel stores) so a re-start begins
+        //    from a clean empty state + drop the content cache (in-memory only). We do
+        //    NOT persist tabs — the collection is session-only by design; only the dock
+        //    width stays in DataStore so a re-start restores it.
         resetCollection();
         clearContentCache();
-        clearChannelVisibility();
         setCurrentChannelMemId(null);
         // 4. chat-side KaTeX teardown + remove the debug handle.
         stopLatex();

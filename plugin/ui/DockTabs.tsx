@@ -1,37 +1,30 @@
 /*
- * The tab strip (pin-driven multi-window). Renders one tab per REAL window — a
- * content tab or a pinned tab (isRealTab). A content-less transient (the F9-opened
- * empty shell) gets NO tab, so the strip is empty and the shell shows the empty-state
- * body. The tabs ARE the header's icon/name slot.
+ * The tab strip (a single flat, channel-bound list). Renders one tab per REAL window —
+ * a content tab (isRealTab). A content-less transient (the empty-state shell) gets NO
+ * tab, so the strip is empty and the empty-state body shows. The tabs ARE the header's
+ * icon/name slot.
  *
  * "header = tab" model (browser-tab grammar): the ONLY inline control on a tab is its
- * ✕ (close THAT window via closeTab — closing the LAST real tab auto-hides the dock;
- * the far-right DOCK X, owned by DockPanel, closes the whole dock). There is NO inline
- * ⋯ on any tab — a tab's secondary actions (pin/unpin, etc.) are reached by RIGHT-CLICK
- * (onContextMenu → DockMoreMenu for THAT window, in place, never setActiveWindow → no
- * tab switch). Tabs are FLAT (icon + name); the active tab gets a subtle underline +
- * brighter text (CSS), not a pill.
+ * ✕ (close THAT window via closeTab — closing the LAST tab shows the empty-state body;
+ * the dock itself can no longer be closed). There is NO inline ⋯ on any tab — a tab's
+ * secondary actions are reached by RIGHT-CLICK (onContextMenu → DockMoreMenu for THAT
+ * window, in place, never setActiveWindow → no tab switch). Tabs are FLAT (icon + name);
+ * the active tab gets a subtle underline + brighter text (CSS), not a pill.
  *
  * The ✕ follows browser-tab visibility: the ACTIVE tab shows its ✕ at rest; an INACTIVE
  * tab hides its ✕ at rest and reveals it only on HOVER (absolutely positioned at the
  * tab's right edge over a small gradient so it stays legible, and so it never reflows
  * the strip — pure CSS, see style.css). A shrunk inactive tab at rest is just icon + …name.
  *
- * PINNED tabs are treated IDENTICALLY to regular tabs (same icon + name, same
- * flex/width/shrink rules, same ✕ grammar). The ONLY distinction is (a) they render
- * FIRST (leftmost — pinned-first ordering, owned by getWindows()) and (b) a small pin
- * BADGE overlaid at the corner of their icon (a muted pushpin glyph, no bg/border fill).
- * A pinned tab's ✕ CLOSES it (closeTab does the global removal for a pinned window);
- * UNPIN is reached via right-click → DockMoreMenu ("Unpin tab"). On overflow the ACTIVE
- * tab keeps its full length while inactive tabs shrink + ellipsise (pure CSS flex).
+ * On overflow the ACTIVE tab keeps its full length while inactive tabs shrink +
+ * ellipsise (pure CSS flex).
  *
- * FLIP REORDER ANIMATION: whenever a tab changes position in the strip (pin → slides
- * left into the pinned group, unpin → slides back, drag-reorder), it animates SLIDING
- * smoothly to its new slot. The mechanism is self-contained (no per-action wiring): a
- * useLayoutEffect records each tab's left offset every render; on the next render it
- * compares, and for any tab whose position moved it applies the INVERSE translate
- * immediately, then (next frame) transitions it back to identity (~180ms ease). The
- * `prefers-reduced-motion` media query short-circuits the animation (positions snap).
+ * FLIP REORDER ANIMATION: whenever a tab changes position in the strip (drag-reorder),
+ * it animates SLIDING smoothly to its new slot. The mechanism is self-contained (no
+ * per-action wiring): a useLayoutEffect records each tab's left offset every render; on
+ * the next render it compares, and for any tab whose position moved it applies the
+ * INVERSE translate immediately, then (next frame) transitions it back to identity
+ * (~180ms ease). The `prefers-reduced-motion` media query short-circuits the animation.
  */
 
 import { ContextMenuApi, React } from "@webpack/common";
@@ -46,33 +39,13 @@ import { iconPaths } from "./toolbar";
 
 const TAB_CLOSE_PATH = "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z";
 
-// A tiny pushpin glyph for the pin BADGE overlaid at a pinned tab's icon corner —
-// the ONLY visual mark that distinguishes a pinned tab (that + its left position).
-// Drawn in a small standalone SVG on its own 24-box so it scales cleanly to ~10px;
-// coloured via CSS (muted --text-muted), never a background/border fill on the tab.
-const PIN_BADGE_PATH = "M19.38 11.38a3 3 0 0 0 0-4.24l-2.52-2.52a3 3 0 0 0-4.24 0l-1.06 1.06a1 1 0 0 0 0 1.42l.7.7-4.6 4.6a1 1 0 0 0 0 1.41l.36.36-2.83 2.83a2 2 0 0 0-.44.68l-1 2.5a1 1 0 0 0 1.3 1.3l2.5-1a2 2 0 0 0 .68-.44l2.83-2.83.36.36a1 1 0 0 0 1.41 0l4.6-4.6.7.7a1 1 0 0 0 1.42 0l1.06-1.06Z";
-
-/** A file-type glyph for a tab, optionally carrying the pin badge overlay. SIZE
- *  PARITY with the single-window header's leading glyph (20px) — a tab must never
- *  shrink any element vs the pre-tab header. When `pinned`, a small pushpin badge is
- *  drawn at the icon's corner (a sibling absolutely-positioned SVG, so it never resizes
- *  or reflows the icon itself). */
-function tabIcon(type: ContentType, pinned: boolean) {
-    const glyph = React.createElement(
+/** A file-type glyph for a tab. SIZE PARITY with the single-window header's leading
+ *  glyph (20px) — a tab must never shrink any element vs the pre-tab header. */
+function tabIcon(type: ContentType) {
+    return React.createElement(
         "svg",
         { key: "glyph", className: "dockview-tab-icon", width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
         ...iconPaths(type)
-    );
-    if (!pinned) return glyph;
-    return React.createElement(
-        "span",
-        { className: "dockview-tab-iconwrap" },
-        glyph,
-        React.createElement(
-            "svg",
-            { key: "pin", className: "dockview-tab-pinbadge", width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
-            React.createElement("path", { fill: "currentColor", d: PIN_BADGE_PATH })
-        )
     );
 }
 
@@ -151,23 +124,17 @@ function runFlip(strip: HTMLElement, prev: Map<string, number>): Map<string, num
 }
 
 /** Tabs row (browser-tab grammar). A tab carries a ✕ acting on THAT window (closeTab —
- *  active or not; closing the last tab closes the dock; a pinned window's close is a
- *  global removal). The active tab shows its ✕ at rest; inactive tabs reveal it on hover
- *  (CSS). A tab's secondary actions (pin/UNPIN, etc.) are reached by right-click
- *  (onContextMenu → DockMoreMenu), not an inline ⋯. A content-less window yields NO tab
- *  (empty strip + the empty-state body) — the tab-less empty shell is only ever the
- *  F9-open path.
- *
- *  PINNED tabs render IDENTICALLY to regular tabs (icon + name, same flex/width/shrink,
- *  same ✕) — distinguished ONLY by the pin badge on their icon + their left position
- *  (pinned-first, owned by getWindows()). Their ✕ closes; right-click → "Unpin tab".
+ *  active or not; closing the last tab leaves the dock open on the empty-state body).
+ *  The active tab shows its ✕ at rest; inactive tabs reveal it on hover (CSS). A tab's
+ *  secondary actions are reached by right-click (onContextMenu → DockMoreMenu), not an
+ *  inline ⋯. A content-less window yields NO tab (empty strip + the empty-state body).
  *
  *  DRAG-TO-REORDER: each tab is draggable; dropping it onto another tab reorders it
- *  (via reorderTab) within its partition (pinned among pinned, channel among channel)
- *  so pinned-first is preserved, and the new order persists in the channel/pinned store.
+ *  (via reorderTab) within the single flat channel strip, and the new order persists in
+ *  the channel store.
  *
- *  FLIP: any reorder (pin / unpin / drag) animates the moved tabs sliding to their new
- *  slots — a useLayoutEffect measures offsets each render and inverts+plays on change. */
+ *  FLIP: a drag-reorder animates the moved tabs sliding to their new slots — a
+ *  useLayoutEffect measures offsets each render and inverts+plays on change. */
 export function DockTabs() {
     const { useRef, useLayoutEffect } = React;
     const stripRef = useRef(null as HTMLElement | null);
@@ -182,12 +149,11 @@ export function DockTabs() {
         { className: "dockview-tabs", role: "tablist", ref: stripRef },
         ...getWindows().filter(isRealTab).map(w => {
             const isActive = w.id === activeId;
-            // An empty window (no file yet — the open-but-empty dock) shows the short
-            // product name, not the long empty-card sentence.
+            // An empty window (no file yet) shows the short product name, not the long
+            // empty-card sentence.
             const label = (w.content.name as string | null) || STRINGS.tabs.untitled;
-            const isPinned = w.pinned;
-            // Right-click any tab → THAT window's menu in place (pin/unpin, etc.) — the
-            // route to a tab's secondary actions now that no tab carries an inline ⋯.
+            // Right-click any tab → THAT window's menu in place — the route to a tab's
+            // secondary actions now that no tab carries an inline ⋯.
             const onContextMenu = (e: any) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -199,8 +165,7 @@ export function DockTabs() {
                     key: w.id,
                     "data-tab-id": w.id,
                     className: "dockview-tab"
-                        + (isActive ? " dockview-tab-active" : "")
-                        + (isPinned ? " dockview-tab-pinned" : ""),
+                        + (isActive ? " dockview-tab-active" : ""),
                     role: "tab",
                     "aria-selected": isActive,
                     title: label,
@@ -221,9 +186,7 @@ export function DockTabs() {
                     },
                     onDragEnd: () => { dragId = null; }
                 },
-                // Pinned tabs get the SAME icon + name + ✕ as a regular tab; the ONLY
-                // mark is the pin badge on the icon (tabIcon) and the left position.
-                tabIcon(w.content.type, isPinned),
+                tabIcon(w.content.type),
                 React.createElement("span", { key: "name", className: "dockview-tab-name" }, label),
                 tabCtrlBtn({
                     key: "close",

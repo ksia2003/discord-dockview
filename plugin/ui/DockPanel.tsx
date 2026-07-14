@@ -3,15 +3,14 @@
  *
  * It paints Discord's native thread-sidebar chrome (resolved CSS-module classes +
  * our own dockview-* classes) around the active window's body: the resize handle,
- * the header (top row = the tab strip on the left + a dock-level X at the far right;
- * second row = the active viewer's controls), the body-wrap, and the find slot.
+ * the header (top row = the tab strip; second row = the active viewer's controls), the
+ * body-wrap, and the find slot.
  *
- * The tab strip renders one tab per REAL window (a content tab or a pinned tab). A
- * content-less transient — the F9-opened empty shell — gets NO tab: the strip is
- * empty and the body shows the empty-state card. A tab carries its own icon/name/⋯/×;
- * closing the LAST real tab via that × auto-hides the dock (it does NOT fall back to
- * an empty shell). The far-right X is dock-level: it closes the ENTIRE dock (same as
- * the F9 toggle), distinct from a tab's × which closes just that file.
+ * The tab strip renders one tab per REAL window (a content tab). A content-less
+ * transient — the empty-state shell — gets NO tab: the strip is empty and the body
+ * shows the empty-state card. A tab carries its own icon/name/⋯/×; closing the LAST tab
+ * leaves the dock OPEN on the empty-state body (the dock is ALWAYS visible now — it IS
+ * the right rail — so there is no dock-close affordance).
  *
  * Wiring into the engine:
  *  - On mount it publishes its rerender via setRenderer(); on unmount it clears the
@@ -39,7 +38,6 @@ import { consumePendingScroll } from "../engine/viewState";
 import { getActiveWindow } from "../engine/window";
 import { applyHostWidth, clampDockDrag } from "../host/layout";
 import { applyOpenState } from "../host/mount";
-import { toggle } from "../host/open";
 import { getViewer } from "../viewers/registry";
 import type { ViewerContext } from "../engine/types";
 import { attachToolbar, isAttachBarOpen } from "../edit/attach";
@@ -47,7 +45,6 @@ import { DockTabs } from "./DockTabs";
 import { FindBar } from "./FindBar";
 import { HeaderControls, hasViewerControls } from "./HeaderControls";
 import { LoadingBody, renderEmptyBody, renderErrorBody, renderUnsupportedBody } from "./StateCards";
-import { STRINGS } from "../strings";
 
 /** A minimal ViewerContext for the find-slot dispatch — findModel only reads
  *  window/content + requestRender; fetch is the live dvFetch in case a viewer's
@@ -92,11 +89,8 @@ const CLS = {
     headerSection: `${headMod.container || "container__9293f"} ${headMod.themed || "themed__9293f"}`,
     upper: headMod.upperContainer || "upperContainer__9293f",
     headerChildren: headMod.children || "children__9293f",
-    toolbar: headMod.toolbar || "toolbar__9293f",
     titleWrapper: headMod.titleWrapper || "titleWrapper__9293f",
-    title: `${defaultColor} ${textMd} ${headMod.title || "title__9293f"}`,
-    iconWrapper: "iconWrapper__9293f",
-    clickable: "clickable__9293f"
+    title: `${defaultColor} ${textMd} ${headMod.title || "title__9293f"}`
 };
 
 /** The body dispatcher. Routes content.type to its viewer's Body; with no viewer
@@ -224,38 +218,8 @@ export function DockPanel() {
         document.addEventListener("mouseup", onUp);
     }, []);
 
-    const closeDock = useCallback(() => {
-        // The far-right X is DOCK-level: it closes the ENTIRE dock, exactly like the
-        // F9 toggle / shortcut while open (every tab dropped, native sidebars
-        // restored). Distinct from a tab's ✕, which closes just that one file and
-        // leaves the dock open. toggle() closes because the dock is open here.
-        toggle();
-    }, []);
-
     const win = getActiveWindow();
     const hasContent = win.content.name != null;
-
-    // The dock-level close (the far-right X). A plain icon button in Discord's
-    // native iconWrapper/clickable grammar, parked at the header's right edge.
-    const closeBtn = React.createElement(
-        "div",
-        {
-            className: `${CLS.iconWrapper} ${CLS.clickable} dockview-close`,
-            role: "button",
-            tabIndex: 0,
-            "aria-label": STRINGS.header.closeDock,
-            title: STRINGS.header.closeDockHint,
-            onClick: closeDock
-        },
-        React.createElement(
-            "svg",
-            { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
-            React.createElement("path", {
-                fill: "currentColor",
-                d: "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z"
-            })
-        )
-    );
 
     // The header grows to TWO rows for the second-row strip: the attach filename bar
     // (when the user picked "Attach to message") OVERRIDES the viewer controls strip;
@@ -292,15 +256,10 @@ export function DockPanel() {
                             className: `${CLS.headerChildren} dockview-header-children`
                                 + " dockview-header-children--tabs"
                         },
-                        // The tab strip is ALWAYS rendered (one window or many). Each tab
-                        // carries its own icon/name/⋯/✕ in place.
+                        // The tab strip is ALWAYS rendered (empty, one, or many). Each tab
+                        // carries its own icon/name/⋯/✕ in place. There is no dock-close
+                        // affordance — the dock is always visible.
                         React.createElement(DockTabs, null)
-                    ),
-                    // The far-right DOCK X (closes the whole dock, not a tab).
-                    React.createElement(
-                        "div",
-                        { className: `${CLS.toolbar} dockview-header-actions` },
-                        closeBtn
                     )
                 ),
                 // SECOND ROW: the attach filename bar (when open) OR the active

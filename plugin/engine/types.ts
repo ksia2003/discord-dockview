@@ -264,15 +264,14 @@ export interface GalleryState {
 
 // ── the window ───────────────────────────────────────────────────────────────
 
-/** One dock window. Pinned windows are global tabs that persist across channels;
- *  the single un-pinned window is transient, bound to the channel it opened in.
- *  Genuinely cross-window state (the cache, channel memory, host refs) lives
- *  outside this. `state.width` is a proxy onto the one global dock width. */
+/** One dock window (a tab). Every tab is bound to the channel it opened in
+ *  (ownerChannelId); the dock is always visible, so there is no per-window open flag.
+ *  Genuinely cross-window state (the cache, channel memory, host refs) lives outside
+ *  this. `state.width` is a proxy onto the one global dock width. */
 export interface DockWindow {
     id: string;
-    pinned: boolean;
     ownerChannelId: string | null;
-    state: { open: boolean; width: number };
+    state: { width: number };
     content: PanelContent;
 
     /** Per-viewer view-state, keyed by ContentType (viewer.createState()). The

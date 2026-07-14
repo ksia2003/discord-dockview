@@ -319,16 +319,14 @@ export const STRINGS = {
     },
 
     // --- header buttons (popout / more / close) -----------------------------
-    // `close` / `closeHint` are the per-TAB ✕ (one file); `closeDock` is the
-    // far-right DOCK X that closes the whole dock (the F9 toggle).
+    // `close` / `closeHint` are the per-TAB ✕ (one file). The dock is always open —
+    // there is no dock-close affordance.
     header: {
         openInNewWindow: "Open in browser",
         popOut: "Pop out",
         more: "More",
         close: "Close",
-        closeHint: "Close",
-        closeDock: "Close dock",
-        closeDockHint: "Close dock (F9)"
+        closeHint: "Close"
     },
 
     // --- ⋯ more-menu items ---------------------------------------------------
@@ -344,17 +342,12 @@ export const STRINGS = {
         attach: "Attach to message",
         // `+` composer-menu item: open an empty editable dock surface (a new
         // markdown file) and write it from scratch.
-        newFile: "New file",
-        // Pin the active window so it becomes a persistent TAB that survives channel
-        // switches (the multi-window vision: the dock holds several windows you can
-        // switch between, like a browser). The item flips to Unpin once pinned.
-        pin: "Pin as a tab",
-        unpin: "Unpin tab"
+        newFile: "New file"
     },
 
-    // --- tabs (pin-driven multi-window) -------------------------------------
-    // The tabs that live in the header top row (the icon/name slot), ALWAYS shown
-    // (one window or many). Each tab carries a file-type icon + name + a ⋯ + close ✕.
+    // --- tabs (channel-bound flat strip) ------------------------------------
+    // The tabs that live in the header top row (the icon/name slot). Each tab carries a
+    // file-type icon + name + a close ✕; secondary actions are on right-click.
     tabs: {
         // {name} -> the file name shown in the tab.
         select: (name: string) => `Switch to ${name}`,

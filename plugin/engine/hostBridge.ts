@@ -17,10 +17,8 @@
 export interface HostActions {
     /** Ensure the dock host node exists / is mounted. */
     ensureHost(): void;
-    /** Reflect the active window's open state into the DOM (mount/show/hide). */
+    /** Reflect the active window into the DOM (mount + apply the always-open layout). */
     applyOpenState(): void;
-    /** Fully close the dock (last window gone): hide host + restore native sidebars. */
-    closePanel(): void;
     /** Collapse Discord's native channel/thread sidebar so the dock holds the slot. */
     closeNativeChannelSidebar(): void;
     /** Collapse/restore the native member list to mirror a thread (true = collapse). */
@@ -36,7 +34,6 @@ const noop = () => { };
 let host: HostActions = {
     ensureHost: noop,
     applyOpenState: noop,
-    closePanel: noop,
     closeNativeChannelSidebar: noop,
     syncNativeMemberList: noop,
     syncNativeProfileSidebar: noop,

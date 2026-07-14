@@ -15,12 +15,11 @@
  * concern and lands in P8; only a thin note is left here.)
  */
 
-import { getCurrentChannelId } from "../host/channel";
-import { setChannelVisibility } from "./channelMemory";
 import { detectType } from "./detectType";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
 import { showContent } from "./showContent";
+import { snapshotActiveView } from "./viewState";
 import { getActiveWindow, openTab } from "./window";
 import type { ContentType } from "./types";
 
@@ -70,17 +69,14 @@ export function loadInPlace(next: { name: string; url: string; type?: ContentTyp
     if (result !== "noop") requestRender();
 }
 
-/** The shared "open the panel into the right slot" side-effects, run by load()
- *  (chip click) and onNewFile() (P8). Flips this channel's visibility on, then
- *  collapses the native thread/channel sidebar + member list / profile sidebar so the
- *  dock holds the exclusive right slot like a real thread. Does NOT render — the
- *  caller decides if the body changed. */
+/** The shared "make sure the dock is mounted + sealed" side-effects, run by load()
+ *  (chip click) and onNewFile() (P8). The dock is always visible, so this just ensures
+ *  the host is mounted and keeps the native thread/channel sidebar + member list /
+ *  profile sidebar collapsed so the dock holds the exclusive right slot. Does NOT
+ *  render — the caller decides if the body changed. */
 export function openPanelChrome(): void {
     const host = hostActions();
     host.closeNativeChannelSidebar();
-    // Opening a file = an explicit "show the dock here" for this channel.
-    setChannelVisibility(getCurrentChannelId(), true);
-    getActiveWindow().state.open = true; // vestigial per-window flag; harmless to set
     host.ensureHost();
     host.applyOpenState();
     host.syncNativeMemberList(true); // collapse the member list like a thread

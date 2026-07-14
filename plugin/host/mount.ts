@@ -27,7 +27,6 @@
 import { createRoot, React } from "@webpack/common";
 import type { Root } from "react-dom/client";
 
-import { dockVisible } from "../engine/channelMemory";
 import { DockPanel } from "../ui/DockPanel";
 import {
     hideExclusiveRightSlot, nodeMayContainExclusiveRightSlot, restoreHiddenMembers
@@ -106,26 +105,21 @@ export function ensureHost(): boolean {
     return false;
 }
 
-/** Reflect the active window's open state across the host node + the exclusive right
- *  slot (member list / DM user-profile sidebar / native thread sidebar). Open/closed
- *  is driven by the `dockview-open` CLASS (display:block !important) instead of inline
- *  display, because Discord's layout code intermittently resets our sibling's inline
- *  display to none — but never beats the class rule. Geometry (docked push + clamp /
- *  floating overlay) is owned by applyDockLayout; the sidebar exclusion is the targeted
- *  data attribute set by hideExclusiveRightSlot. */
+/** Reflect the dock into the DOM. The dock is ALWAYS open in the rewrite, so the
+ *  `dockview-open` class (display:block !important — Discord's layout code
+ *  intermittently resets our sibling's inline display to none, but never beats the
+ *  class rule) is applied unconditionally. Geometry (docked push + clamp / floating
+ *  overlay) is owned by applyDockLayout; the native right-slot (member list / profile /
+ *  thread sidebar) is kept collapsed via the targeted data attribute set by
+ *  hideExclusiveRightSlot. */
 export function applyOpenState(): void {
     const host = document.getElementById(HOST_ID);
     const inner = findPageInner();
     // A harmless debug/compat marker; the hide path no longer depends on this class.
     if (inner) inner.classList.add("dockview-page-inner");
 
-    if (dockVisible()) {
-        if (host) host.classList.add("dockview-open");
-        document.documentElement.classList.add("dockview-open");
-    } else {
-        if (host) host.classList.remove("dockview-open");
-        document.documentElement.classList.remove("dockview-open");
-    }
+    if (host) host.classList.add("dockview-open");
+    document.documentElement.classList.add("dockview-open");
     applyDockLayout();
     hideExclusiveRightSlot(inner);
 }
@@ -169,7 +163,7 @@ function attachObserver(): void {
     observer?.disconnect();
     observedParent = inner;
     observer = new MutationObserver(records => {
-        if (dockVisible() && records.some(r =>
+        if (records.some(r =>
             r.target === observedParent
             || Array.from(r.addedNodes).some(nodeMayContainExclusiveRightSlot)
         )) {
