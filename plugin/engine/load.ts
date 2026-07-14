@@ -18,9 +18,10 @@
 import { detectType } from "./detectType";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
+import { setContextActive } from "./contextTab";
 import { showContent } from "./showContent";
 import { snapshotActiveView } from "./viewState";
-import { getActiveWindow, openTab } from "./window";
+import { getActiveWindow, getWindowChannelId, openTab } from "./window";
 import type { ContentType } from "./types";
 
 export interface LoadOptsPublic {
@@ -44,6 +45,9 @@ export function load(opts: LoadOptsPublic): void {
     // showContent writes). Inline html (no url) can't dedup, so it always appends.
     const type = detectType(opts);
     openTab(opts.url ?? null, type);
+    // Opening a file makes that file the active VIEW — the context tab (member list /
+    // profile) yields to it for this channel until the user picks the context tab again.
+    setContextActive(getWindowChannelId(), false);
     // Viewing a real file ends any new-file session (the empty editable surface),
     // so the loaded file gets a fresh original baseline + the merge diff.
     getActiveWindow().isNewFile = false;

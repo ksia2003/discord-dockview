@@ -19,10 +19,11 @@ import { getCurrentChannel } from "@utils/discord";
 import { ChannelStore, SelectedChannelStore } from "@webpack/common";
 
 import { requestRender } from "../engine/forceRender";
+import { setContextActive } from "../engine/contextTab";
 import { bump } from "../engine/loadToken";
 import { openPanelChrome } from "../engine/load";
 import { setPendingScrollTop, snapshotActiveView } from "../engine/viewState";
-import { getActiveWindow, openTab } from "../engine/window";
+import { getActiveWindow, getWindowChannelId, openTab } from "../engine/window";
 import { STRINGS } from "../strings";
 
 /** Resolve the channel a brand-new file should attach to: the menu's channel (if
@@ -43,6 +44,8 @@ export function onNewFile(channel: any | null): void {
     // A new file OPENS A NEW channel-owned tab in the current channel. It has no url so
     // it never dedups (openTab appends a fresh tab) and never clobbers a pinned tab.
     openTab(null, "markdown");
+    // The new file is the active view — yield the context tab for this channel.
+    setContextActive(getWindowChannelId(), false);
     const win = getActiveWindow();
     // Leaving whatever was docked: snapshot its view-state so a later re-open of that
     // file is unaffected (mirrors showContent's switch-away bookkeeping).

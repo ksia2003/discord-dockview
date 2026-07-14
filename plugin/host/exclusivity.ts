@@ -32,6 +32,7 @@
 
 import { findByProps } from "@webpack";
 
+import { isSealBypassed } from "../engine/contextTab";
 import { settings } from "../settings";
 import { getCurrentChannelId } from "./channel";
 import { findPageInner } from "./layout";
@@ -216,9 +217,17 @@ function clearExclusiveRightSlotHidden(root: ParentNode = document): void {
 }
 
 /** Mark the current native sidebar / thread / DM-profile nodes so style.css hides
- *  ONLY them while the dock holds the slot (always, now). Never marks our own host. */
+ *  ONLY them while the dock holds the slot (always, now). Never marks our own host.
+ *
+ *  SEAL BYPASS (Batch C fallback): when the context tab's acquisition failed and the user
+ *  hit "Open native panel", the seal is bypassed for that channel (isSealBypassed) so the
+ *  native member list / profile can be reached. In that one case we clear the marks and do
+ *  NOT re-mark, so the un-collapsed native panel is actually visible (otherwise the node
+ *  keeps display:none and the escape reveals nothing). The bypass is one-shot — cleared on
+ *  the next channel switch — so the seal resumes normally after. */
 export function hideExclusiveRightSlot(inner: HTMLElement | null = findPageInner()): void {
     clearExclusiveRightSlotHidden();
+    if (isSealBypassed(getCurrentChannelId())) return; // leave the native panel visible
     if (!inner) return;
 
     const host = document.getElementById(HOST_ID);

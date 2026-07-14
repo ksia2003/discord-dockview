@@ -353,7 +353,25 @@ export const STRINGS = {
         select: (name: string) => `Switch to ${name}`,
         close: "Close tab",
         // the label for an empty window's tab (the open-but-empty dock).
-        untitled: "DockView"
+        untitled: "DockView",
+        // The permanent leftmost "context tab" label — the member list (guild) or the
+        // user-profile sidebar (DM). It follows the current channel and is never closable.
+        members: "Members",
+        profile: "Profile"
+    },
+
+    // --- context tab (the leftmost singleton "what am I looking at" view) ----
+    // The context tab renders Discord's own member list / profile sidebar inside the dock.
+    // These strings drive its honest failure card when acquisition drifts after a Discord
+    // update — never a silent break. The card offers a one-shot escape to the native panel.
+    context: {
+        failTitle: "Can't show this here right now",
+        // {what} -> "member list" or "profile", so the card names what failed.
+        failSub: (what: string) =>
+            `The ${what} couldn't be loaded into the dock — a Discord update may have changed it.`,
+        failWhatMembers: "member list",
+        failWhatProfile: "profile",
+        openNative: "Open native panel"
     },
 
     // --- attach (after edit) filename input ---------------------------------

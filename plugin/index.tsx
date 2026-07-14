@@ -32,6 +32,7 @@ import { loadLib } from "./engine/lazyLib";
 import { detectType } from "./engine/detectType";
 import { requestRender } from "./engine/forceRender";
 import { onChannelSelect, setCurrentChannelMemId } from "./engine/channelMemory";
+import { isContextActive, resetContextTab, setContextActive } from "./engine/contextTab";
 import { loadPersistedState } from "./engine/persist";
 import { closeTab, switchToWindow } from "./engine/tabs";
 import { startDomOptimizer, stopDomOptimizer } from "./domOptimizer";
@@ -46,6 +47,9 @@ import {
 import { applyHostWidth, clampWidth } from "./host/layout";
 import { applyOpenState, ensureHost, renderDockRail } from "./host/mount";
 import { registerHost, startHost, stopHost } from "./host/open";
+import {
+    getMemberListType, getProfileType, invalidateSlotComponents, primeMemberList, primeProfile
+} from "./host/slotComponents";
 import { openExternalLink } from "./external/openExternal";
 import { openInVesktopWindow, popoutArtifact, vesktopWindowHtml } from "./external/vesktopWindow";
 import { markdownHasToc, mdState } from "./viewers/doc/MarkdownViewer";
@@ -125,6 +129,14 @@ function exposeDebug(): void {
         get activeWindowId() { return getActiveWindowId(); },
         channelTabs: (id: string) => getChannelTabs(id),
         switchToWindow, closeTab, reorderTab,
+
+        // context tab (member list / profile in the dock): drive the active-view flag +
+        // assert acquisition state (the captured types + priming) for the rig gates.
+        setContextActive,
+        get contextActive() { return isContextActive(getCurrentChannelId()); },
+        get memberListCaptured() { return !!getMemberListType(); },
+        get profileCaptured() { return !!getProfileType(); },
+        primeMemberList, primeProfile, invalidateSlotComponents,
 
         // edit-mode (the cross-cutting capability): drive the view↔edit toggle +
         // assert the temporary buffer / re-render loop.
@@ -364,6 +376,17 @@ export default definePlugin({
         //    bundle can't import plugin/). Idempotent + fully guarded.
         installDockViewSection();
 
+        // 9b. PRIME the context-tab slot components. Fiber capture needs the native panel
+        //     to have rendered once, but the interim seal collapses them → the prime opens
+        //     the store section, lets it render while our CSS hide-mark keeps it invisible,
+        //     captures the component TYPE, then re-collapses. Off the critical path (the
+        //     first context-tab render also lazily primes, so this is a warm-up). The
+        //     member list is usually open by default (a straight capture, no toggle); the
+        //     profile sidebar needs a brief hidden toggle. A failure here is non-fatal —
+        //     the context body falls back to lazy prime / the honest error card.
+        const primeSlots = () => { primeMemberList(); primeProfile(); };
+        setTimeout(primeSlots, 1200);
+
         // 10. Warm any heavy decoder the user set to "Preload" (Performance page), once,
         //     OFF the startup critical path — requestIdleCallback when available, else a
         //     short timeout. Each warm is a plain loadLib(chunkKey); a failure falls back
@@ -426,6 +449,10 @@ export default definePlugin({
         //    width stays in DataStore so a re-start restores it.
         resetCollection();
         clearContentCache();
+        // Clear the context-tab per-channel flags + drop the captured slot component types
+        // (a re-start re-primes/re-acquires them lazily).
+        resetContextTab();
+        invalidateSlotComponents();
         setCurrentChannelMemId(null);
         // 4. chat-side KaTeX teardown + remove the debug handle.
         stopLatex();

@@ -30,14 +30,23 @@
 import { ContextMenuApi, React } from "@webpack/common";
 
 import { requestRender } from "../engine/forceRender";
+import { getCurrentChannelMemId } from "../engine/channelMemory";
+import { isContextActive, setContextActive } from "../engine/contextTab";
 import { closeTab, switchToWindow } from "../engine/tabs";
 import { getActiveWindowId, getWindows, isRealTab, reorderTab } from "../engine/window";
+import { contextKindFor } from "../host/slotComponents";
 import { STRINGS } from "../strings";
 import type { ContentType } from "../engine/types";
 import { DockMoreMenu } from "./DockMoreMenu";
 import { iconPaths } from "./toolbar";
 
 const TAB_CLOSE_PATH = "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z";
+
+// Context-tab glyphs (20px parity with tabIcon). Members = the people/roster icon;
+// profile = a single-person head+shoulders. Both drawn to match Discord's own iconography
+// weight (the same 24-viewBox filled paths as the file-type glyphs).
+const MEMBERS_ICON_PATH = "M14.5 8a3 3 0 1 0-2.99-3.24A5 5 0 0 1 14.5 8Zm2.5 3c-.34 0-.68.02-1 .07 1.2.86 2 2.28 2 3.93v2h4v-2c0-1.66-3.34-4-5-4ZM9 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 2c-2 0-6 1.34-6 4v2h12v-2c0-2.66-4-4-6-4Z";
+const PROFILE_ICON_PATH = "M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-3.33 0-10 1.67-10 5v2a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-2c0-3.33-6.67-5-10-5Z";
 
 /** A file-type glyph for a tab. SIZE PARITY with the single-window header's leading
  *  glyph (20px) — a tab must never shrink any element vs the pre-tab header. */
@@ -123,15 +132,54 @@ function runFlip(strip: HTMLElement, prev: Map<string, number>): Map<string, num
     return next;
 }
 
-/** Tabs row (browser-tab grammar). A tab carries a ✕ acting on THAT window (closeTab —
- *  active or not; closing the last tab leaves the dock open on the empty-state body).
- *  The active tab shows its ✕ at rest; inactive tabs reveal it on hover (CSS). A tab's
- *  secondary actions are reached by right-click (onContextMenu → DockMoreMenu), not an
- *  inline ⋯. A content-less window yields NO tab (empty strip + the empty-state body).
+/** The permanent leftmost CONTEXT tab: a singleton that follows the current channel
+ *  (member list in a guild, profile sidebar in a DM). It looks like a normal tab (icon +
+ *  name, uniform-tab rule) but is NOT closable (no ✕), NOT draggable, and cannot be
+ *  displaced by a drag reorder (it's rendered as a fixed sibling BEFORE the file-tab map,
+ *  and reorderTab only ever touches channelTabs, so a drop never moves it). Clicking it
+ *  makes the context tab the active view for this channel. */
+function contextTabElement(channelId: string | null, active: boolean) {
+    // Group DM + guild channels show a member list ("Members"); a 1:1 DM shows the
+    // profile sidebar ("Profile"). The kind resolver matches native per channel type.
+    const kind = contextKindFor(channelId);
+    const isProfile = kind === "profile";
+    const label = isProfile ? STRINGS.tabs.profile : STRINGS.tabs.members;
+    const iconPath = isProfile ? PROFILE_ICON_PATH : MEMBERS_ICON_PATH;
+    return React.createElement(
+        "div",
+        {
+            key: "__context__",
+            "data-tab-id": "__context__",
+            className: "dockview-tab dockview-tab-context" + (active ? " dockview-tab-active" : ""),
+            role: "tab",
+            "aria-selected": active,
+            title: label,
+            // NOT draggable: a drag must never displace the context tab.
+            draggable: false,
+            onClick: () => {
+                setContextActive(channelId, true);
+                requestRender();
+            }
+        },
+        React.createElement(
+            "svg",
+            { key: "glyph", className: "dockview-tab-icon", width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+            React.createElement("path", { fill: "currentColor", d: iconPath })
+        ),
+        React.createElement("span", { key: "name", className: "dockview-tab-name" }, label)
+    );
+}
+
+/** Tabs row (browser-tab grammar). The leftmost tab is always the singleton CONTEXT tab
+ *  (member list / profile — non-closable, non-draggable); after it come the channel's
+ *  file tabs. A file tab carries a ✕ acting on THAT window (closeTab — active or not;
+ *  closing the last file tab falls back to the context tab as the default view). The
+ *  active file tab shows its ✕ at rest; inactive tabs reveal it on hover (CSS). A file
+ *  tab's secondary actions are reached by right-click (onContextMenu → DockMoreMenu).
  *
- *  DRAG-TO-REORDER: each tab is draggable; dropping it onto another tab reorders it
- *  (via reorderTab) within the single flat channel strip, and the new order persists in
- *  the channel store.
+ *  DRAG-TO-REORDER: each FILE tab is draggable; dropping it onto another file tab reorders
+ *  it (via reorderTab) within the flat channel strip. The context tab guards itself: it's
+ *  never draggable and reorderTab only touches channelTabs, so it stays at index 0.
  *
  *  FLIP: a drag-reorder animates the moved tabs sliding to their new slots — a
  *  useLayoutEffect measures offsets each render and inverts+plays on change. */
@@ -143,12 +191,18 @@ export function DockTabs() {
         if (stripRef.current) offsetsRef.current = runFlip(stripRef.current, offsetsRef.current);
     });
 
+    const channelId = getCurrentChannelMemId();
+    const ctxActive = isContextActive(channelId);
     const activeId = getActiveWindowId();
+    // A file tab is "active" only when the context tab is NOT the active view.
+    const fileActiveId = ctxActive ? null : activeId;
+    const contextTab = channelId != null ? [contextTabElement(channelId, ctxActive)] : [];
     return React.createElement(
         "div",
         { className: "dockview-tabs", role: "tablist", ref: stripRef },
+        ...contextTab,
         ...getWindows().filter(isRealTab).map(w => {
-            const isActive = w.id === activeId;
+            const isActive = w.id === fileActiveId;
             // An empty window (no file yet) shows the short product name, not the long
             // empty-card sentence.
             const label = (w.content.name as string | null) || STRINGS.tabs.untitled;
@@ -170,7 +224,16 @@ export function DockTabs() {
                     "aria-selected": isActive,
                     title: label,
                     draggable: true,
-                    onClick: () => switchToWindow(w.id),
+                    onClick: () => {
+                        // Selecting a file tab makes it the active view (clears the
+                        // context-tab default for this channel).
+                        setContextActive(channelId, false);
+                        switchToWindow(w.id);
+                        // switchToWindow no-ops if this window is already the active
+                        // binding (e.g. we were on the context tab over the same window);
+                        // force the repaint so the view swaps off the context tab.
+                        requestRender();
+                    },
                     onContextMenu,
                     onDragStart: (e: any) => {
                         dragId = w.id;

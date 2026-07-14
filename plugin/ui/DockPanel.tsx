@@ -36,6 +36,9 @@ import { getLiveController, requestRender, isRenderer, setRenderer } from "../en
 import { LS_WIDTH, lsSet } from "../engine/persist";
 import { consumePendingScroll } from "../engine/viewState";
 import { getActiveWindow } from "../engine/window";
+import { getCurrentChannelMemId } from "../engine/channelMemory";
+import { isContextActive } from "../engine/contextTab";
+import { ContextTabBody } from "./ContextTabBody";
 import { applyHostWidth, clampDockDrag } from "../host/layout";
 import { applyOpenState } from "../host/mount";
 import { getViewer } from "../viewers/registry";
@@ -57,6 +60,8 @@ function findCtx(win = getActiveWindow()): ViewerContext {
  *  FindBarModel from findModel() only while its find bar is open; the slot is
  *  empty otherwise (no viewer, or find closed). */
 function renderFindBar() {
+    // The context tab (member list / profile) has no find bar.
+    if (isContextActive(getCurrentChannelMemId())) return null;
     const win = getActiveWindow();
     if (win.content.name == null || win.content.loading || win.content.error) return null;
     const model = getViewer(win.content.type)?.findModel?.(findCtx(win));
@@ -93,10 +98,16 @@ const CLS = {
     title: `${defaultColor} ${textMd} ${headMod.title || "title__9293f"}`
 };
 
-/** The body dispatcher. Routes content.type to its viewer's Body; with no viewer
- *  registered (Phase 2) it falls to the shared state cards. The order — empty, then
- *  error, then loading, then viewer/unsupported — matches the old renderBody. */
+/** The body dispatcher. When the CONTEXT tab is the active view for the current channel,
+ *  render the context body (member list / profile). Otherwise route content.type to its
+ *  viewer's Body; with no viewer registered it falls to the shared state cards. The order
+ *  — context, empty, error, loading, viewer/unsupported. Keyed on the channel id (via the
+ *  caller) so a channel switch remounts the captured component with fresh props. */
 function renderBody() {
+    const channelId = getCurrentChannelMemId();
+    if (isContextActive(channelId)) {
+        return React.createElement(ContextTabBody, { key: `ctx-${channelId ?? "none"}` });
+    }
     const win = getActiveWindow();
     if (win.content.name == null) return renderEmptyBody();
     if (win.content.error != null) return renderErrorBody(win.content.error);
@@ -219,14 +230,15 @@ export function DockPanel() {
     }, []);
 
     const win = getActiveWindow();
-    const hasContent = win.content.name != null;
+    const ctxActive = isContextActive(getCurrentChannelMemId());
+    const hasContent = win.content.name != null && !ctxActive;
 
     // The header grows to TWO rows for the second-row strip: the attach filename bar
     // (when the user picked "Attach to message") OVERRIDES the viewer controls strip;
     // otherwise the active viewer's controls show when it has any. An empty/loading/
-    // errored body has no controls row.
+    // errored body — and the context tab (member list / profile) — has no controls row.
     const showAttachBar = isAttachBarOpen() && hasContent;
-    const showViewerRow = !showAttachBar && hasViewerControls();
+    const showViewerRow = !showAttachBar && !ctxActive && hasViewerControls();
     const twoRow = showAttachBar || showViewerRow;
 
     return React.createElement(

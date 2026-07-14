@@ -17,6 +17,7 @@
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
 import { snapshotActiveView } from "./viewState";
+import { clearSealBypass, isSealBypassed, setContextActive } from "./contextTab";
 import {
     activeIdFor, focusEmptyShell, getActiveWindow, reconcileActiveFromCache, setActiveWindow,
     setWindowChannelId
@@ -43,6 +44,10 @@ export function onChannelSelect(newId: string | null): void {
     if (newId === currentChannelId) return;
     const host = hostActions();
 
+    // 0. A seal bypass ("Open native panel" from the context error card) is one-shot —
+    //    consumed on the next channel switch, so the seal reseals normally from here on.
+    clearSealBypass();
+
     // 1. Snapshot the outgoing active window's live view so returning to whatever tab
     //    it was reopens where it was.
     snapshotActiveView(getActiveWindow());
@@ -52,9 +57,10 @@ export function onChannelSelect(newId: string | null): void {
     setWindowChannelId(newId);
 
     // 3. Re-point the active window to the entering channel's last-active tab (or its
-    //    strip's last tab). An empty channel (no tabs — incl. @me) gets a fresh content-
-    //    less scratch window so the empty-state body renders cleanly, not the previous
-    //    channel's file.
+    //    strip's last tab). An empty channel (no file tabs — incl. @me) gets a fresh
+    //    content-less scratch window backing the body when a file tab is the active view.
+    //    The CONTEXT tab is the DEFAULT view for a channel with no remembered file tab, so
+    //    a fresh channel shows the member list / profile, not the empty-state card.
     const activeId = activeIdFor(newId);
     if (activeId != null) {
         setActiveWindow(activeId);
@@ -62,6 +68,11 @@ export function onChannelSelect(newId: string | null): void {
         if (reconcileActiveFromCache()) getActiveWindow().content.seq += 1;
     } else {
         focusEmptyShell(newId);
+        // No file tab here → the context tab is the active view (its default). Only force
+        // this when the channel has never recorded a file selection; isContextActive
+        // already defaults true for an unseen channel, so a channel the user explicitly
+        // put on a file tab keeps that choice if it still has tabs.
+        setContextActive(newId, true);
     }
 
     if (newId == null) {
@@ -72,11 +83,16 @@ export function onChannelSelect(newId: string | null): void {
     }
 
     // 4. The dock is always open here: keep the native member list / profile sidebar
-    //    collapsed (the dock holds the right slot) and reflect the layout.
+    //    collapsed (the dock holds the right slot) and reflect the layout. Skip the
+    //    reseal for a channel whose native panel the user re-opened via the context
+    //    error card's escape (until they leave — already cleared above for the NEW id,
+    //    so this only matters if they re-armed it this session).
     host.closeNativeChannelSidebar();
     host.ensureHost();
     host.applyOpenState();
-    host.syncNativeMemberList(true);
-    host.syncNativeProfileSidebar(true);
+    if (!isSealBypassed(newId)) {
+        host.syncNativeMemberList(true);
+        host.syncNativeProfileSidebar(true);
+    }
     requestRender();
 }

@@ -13,6 +13,7 @@
  */
 
 import { getCacheEntry } from "./cache";
+import { setContextActive } from "./contextTab";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
 import { bump } from "./loadToken";
@@ -64,10 +65,13 @@ export function closeTab(id: string): void {
     const rest = getWindows();
 
     if (rest.length === 0) {
-        // Last tab closed → the dock stays open showing the empty-state body. Focus a
-        // fresh content-less window (NOT a tab) so the empty card renders cleanly.
+        // Last file tab closed → the CONTEXT tab becomes the active view (its default for
+        // a channel with no file tabs — member list / profile, not the empty-state card).
+        // Focus a fresh content-less window so nothing stale backs the (now hidden) file
+        // body, and flag the context tab active for this channel.
         bump(); // any in-flight loader from the closed window must not write back
         focusEmptyShell(getWindowChannelId());
+        setContextActive(getWindowChannelId(), true);
         hostActions().applyOpenState();
         requestRender();
         return;

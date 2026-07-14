@@ -588,6 +588,58 @@ html.dockview-open .dockview-page-inner {
     scrollbar-gutter: stable;
 }
 
+/* CONTEXT TAB body (member list / profile sidebar captured from Discord and rendered in
+   our own React root). The captured component is the CONTENT ONLY — the native parent
+   that gave it a background / sizing card is gone — so the dock container supplies that
+   wrapper here, using SEMANTIC theme variables (no hardcoded colours) for parity with the
+   native right rail. The member list sits flush on the near-black chat surface (the same
+   --background-base-lower the dock body uses); the profile sidebar brings its own banner /
+   button cards, so the wrapper stays a plain flush surface for both. */
+.dockview-context-body {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--background-base-lower, #1a1a1e);
+}
+/* The captured component (member list) fills the wrapper. Discord's own inner scroller
+   handles overflow, so we let the child own the full box and never impose our own scroll
+   here (a nested scroll would double-bar). The className we hand the member list
+   (dockview-context-native) is a positioning hook only — no colour overrides. */
+.dockview-context-body > * {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+}
+.dockview-context-native {
+    height: 100%;
+    min-height: 0;
+}
+
+/* The context tab in the strip is a normal-looking tab (uniform-tab rule) that is simply
+   never closable / draggable. It carries no ✕, so it needs none of the inactive-✕ hover
+   affordance; its icon + name follow the same active/inactive colour states as file tabs
+   (those rules key off .dockview-tab / .dockview-tab-active, which it also carries).
+   It PARTICIPATES in the strip's shrink budget exactly like a file tab (same flex-shrink)
+   so a crowded strip narrows it (label ellipsises, icon stays) instead of overflowing —
+   it just always keeps index 0 (rendered first, never draggable, reorderTab can't move
+   it). It is content-sized rather than fixed 150px (its label is a short word, "Members" /
+   "Profile"), so at rest it takes only what it needs and leaves file tabs their space. */
+.dockview-tab-context {
+    flex: 0 8 auto;
+    max-width: 150px;
+    cursor: pointer;
+}
+/* The context label ellipsises under crowding (icon stays visible via min-width:30px from
+   the base rule). */
+.dockview-tab-context .dockview-tab-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* Dock-viewer scrollbars: paint the bar in Discord's DARK "thin" scroller colour
    so it reads as part of the app instead of a white UA default. We never styled the
    UA scrollbar before, so the PDF/code/MD body showed a glaring light scrollbar over
