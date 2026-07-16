@@ -22,6 +22,14 @@ export interface HostActions {
     applyOpenState(): void;
     /** Apply the persisted/active dock width to the host node. */
     applyHostWidth(): void;
+    /** Synchronously hide the mounted context body (member list / profile). The DockPanel
+     *  swaps the body via a React re-render, which lands on a later commit; when the active
+     *  view flips from the context tab to a heavier view (a thread portal), that commit can
+     *  spill past a paint and the stale member list flashes in the dock for a frame. The
+     *  view-switch call sites invoke this to hide the outgoing context body in the SAME
+     *  synchronous turn the state flips, so the transition is visually atomic; React then
+     *  unmounts the node on its own commit. No-op when no context body is mounted. */
+    hideContextBody(): void;
 }
 
 const noop = () => { };
@@ -29,7 +37,8 @@ const noop = () => { };
 let host: HostActions = {
     ensureHost: noop,
     applyOpenState: noop,
-    applyHostWidth: noop
+    applyHostWidth: noop,
+    hideContextBody: noop
 };
 
 /** Phase 2 host registers its real DOM actions here. */

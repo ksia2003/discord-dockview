@@ -65,7 +65,8 @@ export function openThreadTab(threadId: string, parentId?: string | null): void 
 
     // Opening a thread tab makes it the active VIEW for its parent channel (yields the
     // context tab) — but only when the parent is the channel we're actually looking at.
-    if ((parent ?? null) === getWindowChannelId()) {
+    const takesOverView = (parent ?? null) === getWindowChannelId();
+    if (takesOverView) {
         setContextActive(getWindowChannelId(), false);
     }
 
@@ -74,6 +75,9 @@ export function openThreadTab(threadId: string, parentId?: string | null): void 
     const host = hostActions();
     host.ensureHost();
     host.applyOpenState();
+    // When this thread takes over the view, hide the outgoing context body NOW so React's
+    // (later) body swap can't flash the stale member list in the dock as the portal opens.
+    if (takesOverView) host.hideContextBody();
     requestRender();
 }
 

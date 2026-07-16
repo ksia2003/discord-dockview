@@ -11,7 +11,7 @@ import { registerHostActions } from "../engine/hostBridge";
 import { setCurrentChannelMemId } from "../engine/channelMemory";
 import { getCurrentChannelId } from "./channel";
 import { applyHostWidth } from "./layout";
-import { applyOpenState, ensureHost, startHost, stopHost } from "./mount";
+import { applyOpenState, ensureHost, hideContextBody, startHost, stopHost } from "./mount";
 
 /** Register the host with the engine bridge + seed the channel-memory id. Called once
  *  from index.tsx start() after the host starts. After this the engine's open/channel/
@@ -20,7 +20,8 @@ export function registerHost(): void {
     registerHostActions({
         ensureHost,
         applyOpenState,
-        applyHostWidth
+        applyHostWidth,
+        hideContextBody
     });
     // seed the per-channel memory with the channel we boot into (so the first save
     // targets the right channel, not "null").

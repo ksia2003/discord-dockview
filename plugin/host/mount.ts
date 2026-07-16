@@ -279,6 +279,22 @@ export function applyOpenState(): void {
     hideExclusiveRightSlot(inner);
 }
 
+/** Hide the mounted context body (member list / profile) in the SAME synchronous turn a
+ *  view switch flips the active view away from the context tab. The DockPanel swaps its
+ *  body by re-rendering; that commit lands on a later frame and — because the member list
+ *  is Discord's heavy component — can spill past a paint, flashing the stale member list in
+ *  the dock for a frame right as a thread portal opens (rig-proven via screencast). Setting
+ *  display:none on the live node closes that paint race; React unmounts the node on its own
+ *  commit (it never re-shows this node — the next render mounts a different body), and our
+ *  inline style is on a node React is about to discard, so there's nothing to fight. No-op
+ *  when the context body isn't mounted. Scoped to the LIVE host (a hidden E3 duplicate's
+ *  own body is left alone). */
+export function hideContextBody(): void {
+    const dock = (rootHost && rootHost.isConnected) ? rootHost : document.getElementById(HOST_ID);
+    const body = dock?.querySelector<HTMLElement>(".dockview-context-body");
+    if (body) body.style.display = "none";
+}
+
 // ---------------------------------------------------------------------------
 // FALLBACK PATH — DOM injection (the historical host). Heartbeat + observer live
 // HERE ONLY; engaged when the patch never rendered the host.
