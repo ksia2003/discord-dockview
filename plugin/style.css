@@ -675,6 +675,21 @@ html.dockview-open .dockview-page-inner {
     color-scheme: dark;
 }
 
+/* COMPOSER BOTTOM MARGIN parity. Discord's composer reads its bottom gap from
+   `.channelTextArea_* { margin-bottom: var(--custom-chat-input-margin-bottom); }`, and that
+   variable is set (to var(--space-xs) = 8px) on Discord's chat LAYOUT container — an ancestor
+   of the main chat column. The thread portal is an isolated document.body-level root OUTSIDE
+   that container, so it never inherits the variable: the composer's margin-bottom falls back
+   to 0 and the input jams flush against the dock body's bottom edge (which, since Batch F put
+   the dock body flush to the window bottom, reads as "the chat sits too low / the composer is
+   clipped"). Re-declare the SAME variable on the portal so the composer inherits Discord's own
+   token value — --space-xs is a global design token that DOES reach the portal — restoring the
+   native 8px breathing margin. Scoped to the portal, no hardcoded pixel, tracks the token if
+   Discord retunes it. */
+.dockview-thread-portal {
+    --custom-chat-input-margin-bottom: var(--space-xs);
+}
+
 /* The context tab in the strip is a normal-looking tab (uniform-tab rule) that is simply
    never closable / draggable. It carries no ✕, so it needs none of the inactive-✕ hover
    affordance; its icon + name follow the same active/inactive colour states as file tabs
