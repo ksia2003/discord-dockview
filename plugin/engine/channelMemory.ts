@@ -17,7 +17,7 @@
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
 import { snapshotActiveView } from "./viewState";
-import { clearSealBypass, isSealBypassed, setContextActive } from "./contextTab";
+import { clearSealBypass, setContextActive } from "./contextTab";
 import {
     activeIdFor, focusEmptyShell, getActiveWindow, reconcileActiveFromCache, setActiveWindow,
     setWindowChannelId
@@ -82,17 +82,12 @@ export function onChannelSelect(newId: string | null): void {
         return;
     }
 
-    // 4. The dock is always open here: keep the native member list / profile sidebar
-    //    collapsed (the dock holds the right slot) and reflect the layout. Skip the
-    //    reseal for a channel whose native panel the user re-opened via the context
-    //    error card's escape (until they leave — already cleared above for the NEW id,
-    //    so this only matters if they re-armed it this session).
-    host.closeNativeChannelSidebar();
+    // 4. The dock is always open here: mount + reflect the layout. There is no native
+    //    right slot to collapse any more — host/interception.ts swallows the actions that
+    //    would open it, so Discord's state never becomes "sidebar open". applyOpenState
+    //    still hide-marks any native member list Discord renders by DEFAULT (a fresh
+    //    client), which the seal bypass leaves visible for the one escaped channel.
     host.ensureHost();
     host.applyOpenState();
-    if (!isSealBypassed(newId)) {
-        host.syncNativeMemberList(true);
-        host.syncNativeProfileSidebar(true);
-    }
     requestRender();
 }

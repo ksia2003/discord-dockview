@@ -23,6 +23,9 @@ import { armSealBypass } from "../engine/contextTab";
 import { hostActions } from "../engine/hostBridge";
 import { getCurrentChannelMemId } from "../engine/channelMemory";
 import {
+    currentSection, dispatchMemberListToggle, dispatchUserProfileSidebarToggle
+} from "../host/nativePanels";
+import {
     captureMemberList, captureProfile, contextKindFor, getChannelObject, getMemberListType,
     getProfileType, primeMemberList, primeProfile
 } from "../host/slotComponents";
@@ -50,17 +53,21 @@ function renderProfile(channel: any) {
  *  so the user can still reach the native member list / profile. */
 function ErrorCard({ channelId, kind }: { channelId: string | null; kind: ContextKind }) {
     const openNative = () => {
-        // Arm the one-shot bypass FIRST so the subsequent applyOpenState leaves the native
-        // panel's node un-hidden (hideExclusiveRightSlot skips marking while bypassed).
+        // Arm the one-shot bypass FIRST so (1) host/interception lets the native toggle
+        // below through instead of swallowing it, and (2) the subsequent applyOpenState
+        // leaves the native panel un-hidden (hideExclusiveRightSlot skips marking while
+        // bypassed). The bypass is cleared on the next channel select, so the seal resumes.
         armSealBypass(channelId);
-        const host = hostActions();
-        // Un-collapse the native panel this one time (store section → open)...
-        if (kind === "profile") host.syncNativeProfileSidebar(false);
-        else host.syncNativeMemberList(false);
-        // ...and re-apply the layout so the existing display:none hide-mark on the native
-        // node is cleared (and not re-applied while the bypass holds) — otherwise the store
-        // says "open" but the node stays hidden and the escape reveals nothing.
-        host.applyOpenState();
+        // Open the native section this one time (toggle it on only if it isn't already).
+        if (kind === "profile") {
+            if (currentSection(true) !== "PROFILE") dispatchUserProfileSidebarToggle();
+        } else if (currentSection() !== "MEMBERS") {
+            dispatchMemberListToggle();
+        }
+        // Re-apply the layout so any display:none hide-mark on the native node is cleared
+        // (and not re-applied while the bypass holds) — otherwise the store says "open" but
+        // the node stays hidden and the escape reveals nothing.
+        hostActions().applyOpenState();
         requestRender();
     };
     return React.createElement(
@@ -164,19 +171,28 @@ export function ContextTabBody() {
 
 /** After a prime attempt resolves, decide loading vs error. We give the prime a short
  *  grace before declaring failure so a slow (but succeeding) capture shows loading, not a
- *  flash of the error card. */
+ *  flash of the error card. On SUCCESS it bumps a local counter so THIS component re-renders
+ *  and the parent (ContextTabBody) re-evaluates — the captured type is now cached, so the
+ *  member list / profile actually renders instead of staying stuck on the loading card
+ *  (a prime that resolves after the first render never re-rendered the parent otherwise). */
 function ContextFallback({ channelId, kind }: { channelId: string | null; kind: ContextKind }) {
     const { useEffect, useState } = React;
     const [failed, setFailed] = useState(false);
+    const [, bump] = useState(0);
     useEffect(() => {
         let alive = true;
         const prime = kind === "profile" ? primeProfile() : primeMemberList();
-        prime.then(ok => { if (alive && !ok) setFailed(true); });
+        prime.then(ok => {
+            if (!alive) return;
+            if (ok) { requestRender(); bump((n: number) => n + 1); } // captured → repaint so the body shows
+            else setFailed(true);
+        });
         // A hard ceiling: if the prime never resolves, still surface the error card.
         const t = setTimeout(() => {
             if (!alive) return;
             const ty = kind === "profile" ? getProfileType() : getMemberListType();
             if (!ty) setFailed(true);
+            else { requestRender(); bump((n: number) => n + 1); }
         }, 4000);
         return () => { alive = false; clearTimeout(t); };
     }, [channelId, kind]);

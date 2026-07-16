@@ -46,7 +46,8 @@ export type ContentType =
     | "raw"
     | "dicom"
     | "postscript"
-    | "web";
+    | "web"
+    | "thread";
 
 // ── panel content ───────────────────────────────────────────────────────────
 
@@ -121,6 +122,9 @@ export interface PanelContent {
     code: string | null;
     codeLang: string;
     url: string | null;
+    /** For a "thread" tab: the thread channel's id (the tab renders Discord's chat
+     *  component bound to this channel). null for every non-thread content type. */
+    threadChannelId: string | null;
     loading: boolean;
     /** Optional label shown by LoadingBody while a heavy viewer library spins up
      *  ("Loading HEIC decoder…"). null → the generic "Loading…" copy. Set via

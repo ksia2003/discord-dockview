@@ -18,15 +18,17 @@
  * test would grab a wrapping provider higher up the tree (many ancestors carry a
  * channel). The exact-set match pins the leaf render component the native parent wraps.
  *
- * PRIMING (the bootstrap problem): fiber capture needs the native panel to have
- * rendered at least once, but the interim seal (exclusivity.ts) collapses the native
- * panels so they never render → no fiber. So on plugin start we PRIME: ensure the
- * native section is open in the store, let it render while our CSS hide-mark keeps it
- * invisible (a hidden render still builds fibers), capture the TYPE, then re-collapse.
- * The member list is open by default in the store, so its prime is usually a no-op
- * capture with no toggle at all; the profile sidebar is not, so it needs a brief
- * hidden toggle. All of this is measured flash-free on the rig (the competing node
- * carries data-dockview-exclusive-hidden → display:none the whole time).
+ * PRIMING (the bootstrap problem): member/profile fiber capture needs the native panel to
+ * have rendered at least once, but action interception (host/interception.ts) swallows the
+ * user toggles so the sections never open → no fiber. So on plugin start we PRIME through
+ * host/nativePanels' FLAGGED toggle dispatchers (the self-flag makes interception let OUR
+ * toggle through): open the section, let it render while our hide-mark keeps it invisible
+ * (a hidden render still builds fibers), capture the TYPE, then toggle it back off. All of
+ * this is measured flash-free on the rig (the primed node carries
+ * data-dockview-exclusive-hidden → display:none the whole time).
+ *
+ * The CHAT capture (thread tabs) needs NO priming: the main chat is always in the tree, so
+ * captureChat reads its type + a props snapshot straight from the always-rendered fiber.
  *
  * NO module-top webpack access: every findByProps/React touch is inside a function.
  */
@@ -34,12 +36,20 @@
 import { findByProps } from "@webpack";
 
 import { getCurrentChannelId } from "./channel";
+import { dispatchMemberListToggle, dispatchUserProfileSidebarToggle } from "./nativePanels";
 
 // The captured component TYPES, cached for the session. A capture is a plain function
 // reference; it survives the native tree unmounting, so once captured we never need the
 // native panel again — we render our own elements of these types.
 let memberListType: any = null;
 let profileType: any = null;
+// The chat component TYPE, captured from the MAIN chat's fiber (always rendered — no
+// priming needed). Rendered with a THREAD's channel props to become a dock thread tab.
+let chatType: any = null;
+// A snapshot of the main chat's memoizedProps at capture time — the frozen "shape" of a
+// channel-view's props. A thread tab clones this and swaps the channel-identity fields, so
+// every prop the chat component expects (guild, layout, gating flags, …) is present.
+let chatBaseProps: any = null;
 
 // --- fiber plumbing ---------------------------------------------------------
 
@@ -99,6 +109,12 @@ function profileAnchor(): Element | null {
     return document.querySelector('aside[aria-labelledby^="user-profile-sidebar-heading"]');
 }
 
+/** The MAIN chat DOM anchor (the `chat_`-classed element Discord always renders on a
+ *  channel page). Always present in a channel — no priming needed to capture from it. */
+function chatAnchor(): Element | null {
+    return document.querySelector('[class*="chatContent"], [class*="chat_"]');
+}
+
 const EXCLUSIVE_HIDDEN_ATTR = "data-dockview-exclusive-hidden";
 const HOST_ID = "dockview-root";
 
@@ -147,11 +163,92 @@ export function captureProfile(): boolean {
 export function getMemberListType(): any { return memberListType; }
 export function getProfileType(): any { return profileType; }
 
+// --- chat capture (thread tabs) ---------------------------------------------
+// The thread chat is Discord's channel-view chat component. It's the SAME component the
+// main chat renders (always in the tree), so we capture its TYPE + a props snapshot from
+// the main chat with no priming, then render it with a THREAD's channel props. The spike
+// proved this yields a live thread chat (messages + working composer) — the captured
+// component subscribes to the thread's message store, we just have to fetch its messages.
+
+/** The main chat component's prop SIGNATURE — the exact leaf channel-view is pinned by
+ *  requiring these keys all present (a wrapper higher up carries only a subset). */
+const CHAT_SIGNATURE = ["guildId", "channelId", "channel", "channelName", "parentChannel"];
+
+/** Capture the chat component TYPE + a base-props snapshot from the MAIN chat's fiber.
+ *  The main chat is always rendered, so this needs no priming. Caches module-level on
+ *  success (the type survives re-renders; the props snapshot is refreshed each capture so
+ *  it stays a current channel-view shape). Returns true once the type is cached. */
+export function captureChat(): boolean {
+    const fiber = fiberOf(chatAnchor());
+    if (!fiber) return chatType != null;
+    // Walk for the leaf channel-view: a function component carrying the full signature.
+    let f = fiber;
+    let hops = 0;
+    while (f && hops++ < 45) {
+        const t = f.type;
+        const props = f.memoizedProps;
+        if (typeof t === "function" && props && typeof props === "object"
+            && CHAT_SIGNATURE.every(k => k in props)) {
+            chatType = t;
+            chatBaseProps = props;
+            return true;
+        }
+        f = f.return;
+    }
+    return chatType != null;
+}
+
+export function getChatType(): any { return chatType; }
+
+/** Build the props to render the chat component for a THREAD. Clones the captured main-
+ *  chat props (so every flag/context the component reads is present) and swaps the
+ *  channel-identity fields to the thread + its parent. Returns null if we haven't captured
+ *  a base-props shape yet (the caller shows a loading card until capture lands). */
+export function buildThreadProps(threadId: string | null): any {
+    if (!threadId || !chatBaseProps) return null;
+    const thread = getChannelObject(threadId);
+    if (!thread) return null;
+    const parent = getChannelObject(thread.parent_id ?? null);
+    return {
+        ...chatBaseProps,
+        channel: thread,
+        channelId: thread.id,
+        channelName: thread.name,
+        formattedChannelName: thread.name,
+        parentChannel: parent ?? chatBaseProps.parentChannel ?? null,
+        guildId: thread.guild_id ?? chatBaseProps.guildId,
+        // The thread tab is its own chat surface, not a sidebar-of-a-channel view — drop
+        // any inherited sidebar section so the component renders as a full channel chat.
+        section: undefined,
+        channelSidebarState: undefined
+    };
+}
+
+/** Ensure the thread's messages are loaded into Discord's MessageStore. The captured chat
+ *  component subscribes to the store but does NOT auto-fetch when it isn't the *selected*
+ *  channel (the native thread sidebar triggers this on open) — so on thread-tab open we
+ *  drive the same fetch. Idempotent + safe: a no-op if already loaded / mid-fetch. */
+export function loadThreadMessages(threadId: string | null): void {
+    if (!threadId) return;
+    try {
+        const store = (findByProps as any)?.("getMessages", "getMessage");
+        const msgs = store?.getMessages?.(threadId);
+        // `ready` is true once a fetch has landed; skip a redundant re-fetch.
+        if (msgs && msgs.ready) return;
+    } catch { /* fall through — attempt the fetch */ }
+    try {
+        const fetcher = (findByProps as any)?.("fetchMessages");
+        fetcher?.fetchMessages?.({ channelId: threadId, limit: 50 });
+    } catch { /* the chat still renders its chrome + composer; messages fill when reachable */ }
+}
+
 /** Drop the cached types (plugin stop, or a self-test that wants a fresh acquisition).
  *  A re-capture happens lazily on the next context-tab render / prime. */
 export function invalidateSlotComponents(): void {
     memberListType = null;
     profileType = null;
+    chatType = null;
+    chatBaseProps = null;
 }
 
 // --- channel resolution -----------------------------------------------------
@@ -187,73 +284,53 @@ export function contextKindFor(channelId: string | null): ContextKind {
 }
 
 // --- priming ----------------------------------------------------------------
-// The store + toggle actions live in exclusivity.ts's world; we re-resolve them here so
-// this module owns its own priming and doesn't couple to the seal's internals. Both are
-// plain findByProps lookups (the exact modules the seal drives).
-
-function sectionStore(): any {
-    try { return (findByProps as any)?.("getSection", "getGuildSidebarState") ?? null; }
-    catch { return null; }
-}
-function memberToggle(): any {
-    try { return (findByProps as any)?.("toggleMembersSection") ?? null; }
-    catch { return null; }
-}
-function profileToggle(): any {
-    try { return (findByProps as any)?.("toggleUserProfileSidebarSection") ?? null; }
-    catch { return null; }
-}
+// Fiber capture needs the native section to have rendered once. With interception
+// swallowing user toggles, priming drives the toggle through host/nativePanels' FLAGGED
+// dispatchers (dispatchMemberListToggle / dispatchUserProfileSidebarToggle) — the self-flag
+// makes host/interception.ts let our toggle through, and the hide-mark keeps the toggled
+// panel display:none so it never flashes. The store read is a plain findByProps lookup.
 
 /** The current channel's store section ("MEMBERS" / "PROFILE" / null). `withProfile`
  *  passes getSection's second arg (required truthy before it reports PROFILE). */
 function storeSection(withProfile = false): string | null {
     const cid = getCurrentChannelId();
     if (!cid) return null;
-    const store = sectionStore();
-    try { return store?.getSection?.(cid, withProfile) ?? null; }
-    catch { return null; }
+    try {
+        const store = (findByProps as any)?.("getSection", "getGuildSidebarState");
+        return store?.getSection?.(cid, withProfile) ?? null;
+    } catch { return null; }
 }
 
-/** Prime + capture the member list. If the store section isn't MEMBERS, toggle it on
- *  (a HIDDEN render — the seal's data-attribute keeps the node display:none), poll a few
- *  frames for the anchor to mount, capture, then restore the store to its prior state.
- *  Resolves true once the type is cached (or immediately if already cached). The member
- *  list is usually open by default (a straight capture, no toggle). */
+/** Prime + capture the member list. If the store section isn't MEMBERS, toggle it on via
+ *  the flagged dispatcher (a HIDDEN render — the hide-mark keeps the node display:none),
+ *  poll a few frames for the anchor to mount, capture, then restore the store to its prior
+ *  state. Resolves true once the type is cached (or immediately if already cached). */
 export async function primeMemberList(): Promise<boolean> {
     if (memberListType) return true;
     if (captureMemberList()) return true;
 
-    const toggle = memberToggle();
     const wasOpen = storeSection() === "MEMBERS";
-    if (!wasOpen && toggle?.toggleMembersSection) {
-        try { toggle.toggleMembersSection(); } catch { /* fall through */ }
-    }
+    if (!wasOpen) dispatchMemberListToggle();
+    hidePrimedAnchors(); // hide immediately so a toggled-on panel can't paint visible
     const ok = await pollCapture(captureMemberList);
-    // Restore the store to its prior state (the seal re-collapses on channel select
-    // anyway, but leave the store as we found it here to avoid a visible flip).
-    if (!wasOpen && toggle?.toggleMembersSection && storeSection() === "MEMBERS") {
-        try { toggle.toggleMembersSection(); } catch { /* ignore */ }
-    }
+    // Restore the store to its prior state (leave it as we found it — interception keeps
+    // the store from flipping otherwise, so we must undo our own priming toggle).
+    if (!wasOpen && storeSection() === "MEMBERS") dispatchMemberListToggle();
     return ok;
 }
 
-/** Prime + capture the DM profile sidebar. The profile section is NOT open by default,
- *  so this nearly always needs a brief hidden toggle, then a poll for the aside to mount
- *  (the profile card takes a few commits to render). Same shape as primeMemberList. */
+/** Prime + capture the DM profile sidebar. The profile section is NOT open by default, so
+ *  this nearly always needs a brief flagged hidden toggle, then a poll for the aside to
+ *  mount (the profile card takes a few commits to render). Same shape as primeMemberList. */
 export async function primeProfile(): Promise<boolean> {
     if (profileType) return true;
     if (captureProfile()) return true;
 
-    const toggle = profileToggle();
     const wasOpen = storeSection(true) === "PROFILE";
-    if (!wasOpen && toggle?.toggleUserProfileSidebarSection) {
-        try { toggle.toggleUserProfileSidebarSection(); } catch { /* fall through */ }
-    }
+    if (!wasOpen) dispatchUserProfileSidebarToggle();
     hidePrimedAnchors(); // mark hidden immediately so the toggled panel can't paint visible
     const ok = await pollCapture(captureProfile);
-    if (!wasOpen && toggle?.toggleUserProfileSidebarSection && storeSection(true) === "PROFILE") {
-        try { toggle.toggleUserProfileSidebarSection(); } catch { /* ignore */ }
-    }
+    if (!wasOpen && storeSection(true) === "PROFILE") dispatchUserProfileSidebarToggle();
     return ok;
 }
 

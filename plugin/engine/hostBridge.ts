@@ -17,14 +17,9 @@
 export interface HostActions {
     /** Ensure the dock host node exists / is mounted. */
     ensureHost(): void;
-    /** Reflect the active window into the DOM (mount + apply the always-open layout). */
+    /** Reflect the active window into the DOM (mount + apply the always-open layout, which
+     *  hide-marks any native right-slot Discord renders by default). */
     applyOpenState(): void;
-    /** Collapse Discord's native channel/thread sidebar so the dock holds the slot. */
-    closeNativeChannelSidebar(): void;
-    /** Collapse/restore the native member list to mirror a thread (true = collapse). */
-    syncNativeMemberList(open: boolean): void;
-    /** Collapse/restore the native user-profile sidebar (DMs) (true = collapse). */
-    syncNativeProfileSidebar(open: boolean): void;
     /** Apply the persisted/active dock width to the host node. */
     applyHostWidth(): void;
 }
@@ -34,9 +29,6 @@ const noop = () => { };
 let host: HostActions = {
     ensureHost: noop,
     applyOpenState: noop,
-    closeNativeChannelSidebar: noop,
-    syncNativeMemberList: noop,
-    syncNativeProfileSidebar: noop,
     applyHostWidth: noop
 };
 

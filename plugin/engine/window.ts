@@ -74,6 +74,7 @@ export function makeWindow(opts: { ownerChannelId: string | null }): DockWindow 
             code: null,
             codeLang: "plaintext",
             url: null,
+            threadChannelId: null,
             loading: false,
             loadingLabel: null,
             error: null,
@@ -245,6 +246,39 @@ export function openTab(url: string | null, type: string): DockWindow {
     ownTabs(currentChannelId).push(w);
     if (activeWindow) snapshotActiveView(activeWindow);
     setActiveWindow(w);
+    return w;
+}
+
+/** Find an existing THREAD tab (content.type "thread") for `threadId` in `channelId`'s
+ *  strip — the thread-tab dedup: reopening the same thread focuses its existing tab
+ *  instead of adding a second. */
+export function findThreadTab(channelId: string | null, threadId: string): DockWindow | null {
+    for (const w of stripFor(channelId)) {
+        if (w.content.type === "thread" && w.content.threadChannelId === threadId) return w;
+    }
+    return null;
+}
+
+/** OPEN (or focus) a THREAD tab in `parentChannelId`'s strip. Dedup: an existing tab for
+ *  the same thread is focused and returned (the strip doesn't grow). Otherwise a fresh
+ *  window owned by the parent channel is appended and made active. Unlike openTab (which
+ *  targets the CURRENT channel), this targets the thread's PARENT channel explicitly, so a
+ *  thread opened from anywhere lands in the right strip. The caller fills the returned
+ *  window's thread content; the outgoing active view is snapshotted before the bind swap. */
+export function openThreadWindow(parentChannelId: string | null, threadId: string): DockWindow {
+    const existing = findThreadTab(parentChannelId, threadId);
+    if (existing) {
+        if (activeWindow !== existing) snapshotActiveView(activeWindow);
+        setActiveWindow(existing);
+        return existing;
+    }
+    const w = makeWindow({ ownerChannelId: parentChannelId });
+    ownTabs(parentChannelId).push(w);
+    if (activeWindow) snapshotActiveView(activeWindow);
+    // Bind active only when the parent channel is the current one — opening a thread whose
+    // parent isn't the current channel still records the tab in the parent's strip (it
+    // shows when the user returns there), but must not hijack the current view.
+    if (parentChannelId === currentChannelId) setActiveWindow(w);
     return w;
 }
 

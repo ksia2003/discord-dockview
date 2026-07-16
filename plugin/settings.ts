@@ -22,15 +22,6 @@ import { OptionType } from "@utils/types";
 
 export const settings = definePluginSettings({
     // --- General page -------------------------------------------------------
-    // Collapse the member list / profile sidebar while the dock is open (the
-    // native-thread exclusivity). ON = current behaviour. OFF = the dock opens
-    // WITHOUT touching the member list; the open path skips syncNativeMemberList/
-    // syncNativeProfileSidebar so nothing is collapsed and nothing is owed a restore.
-    dockExclusivity: {
-        type: OptionType.BOOLEAN,
-        description: "Collapse the member list while the dock is open",
-        default: true
-    },
     // Autoplay audio/video when a media file opens in the dock. OFF (default) = the
     // element mounts paused with controls; the user presses play. ON = the media body
     // requests autoplay (muted-fallback if the browser blocks unmuted autoplay).

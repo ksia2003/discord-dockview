@@ -12,6 +12,7 @@
  * user-facing tab verbs.
  */
 
+import { destroyThreadPortal } from "../viewers/thread/threadPortal";
 import { getCacheEntry } from "./cache";
 import { setContextActive } from "./contextTab";
 import { requestRender } from "./forceRender";
@@ -58,6 +59,12 @@ export function closeTab(id: string): void {
     const wasActive = win.id === getActiveWindowId();
     // snapshot the active window's view before any binding change.
     if (wasActive) snapshotActiveView(getActiveWindow());
+
+    // A thread tab owns an isolated chat portal (document.body root) — tear it down so the
+    // captured chat unmounts + its overlay node is removed (no leak / no ghost overlay).
+    if (win.content.type === "thread" && win.content.threadChannelId) {
+        destroyThreadPortal(win.content.threadChannelId);
+    }
 
     removeWindowEverywhere(win);
 

@@ -41,15 +41,17 @@ import {
 } from "./engine/window";
 import { getCurrentChannelId } from "./host/channel";
 import {
-    closeNativeChannelSidebar, getMemberListRestorePending, getProfileSidebarRestorePending,
     getSelfMemberToggle, getSelfProfileToggle, isMemberListShown, isUserProfileSidebarShown
-} from "./host/exclusivity";
+} from "./host/nativePanels";
+import { interceptionInstalled, startInterception, stopInterception } from "./host/interception";
 import { applyHostWidth, clampWidth } from "./host/layout";
 import { applyOpenState, ensureHost, renderDockRail } from "./host/mount";
 import { registerHost, startHost, stopHost } from "./host/open";
 import {
     getMemberListType, getProfileType, invalidateSlotComponents, primeMemberList, primeProfile
 } from "./host/slotComponents";
+import { destroyAllThreadPortals, livePortalThreads } from "./viewers/thread/threadPortal";
+import { openThreadTab } from "./engine/threadTab";
 import { openExternalLink } from "./external/openExternal";
 import { openInVesktopWindow, popoutArtifact, vesktopWindowHtml } from "./external/vesktopWindow";
 import { markdownHasToc, mdState } from "./viewers/doc/MarkdownViewer";
@@ -113,14 +115,13 @@ function exposeDebug(): void {
         load, retry: retryActiveLoad, clear: clearArtifact, detectType,
         onChannelSelect, getCurrentChannelId,
 
-        // exclusivity (member list / profile sidebar) — the interim collapse-only seal.
-        closeNativeChannelSidebar,
+        // action interception (Batch D): the member list / profile sidebar / thread sidebar
+        // never open natively — the store stays put + user toggles become dock actions.
         get memberListShown() { return isMemberListShown(); },
-        get memberListRestorePending() { return getMemberListRestorePending(); },
         get profileSidebarShown() { return isUserProfileSidebarShown(); },
-        get profileSidebarRestorePending() { return getProfileSidebarRestorePending(); },
         get selfMemberToggle() { return getSelfMemberToggle(); },
         get selfProfileToggle() { return getSelfProfileToggle(); },
+        get interceptionInstalled() { return interceptionInstalled(); },
 
         // browser-like tabs: the current-channel flat strip + the raw per-channel store +
         // the tab verbs. `windows` is the CURRENT channel's strip; `channelTabs(id)`
@@ -137,6 +138,11 @@ function exposeDebug(): void {
         get memberListCaptured() { return !!getMemberListType(); },
         get profileCaptured() { return !!getProfileType(); },
         primeMemberList, primeProfile, invalidateSlotComponents,
+
+        // thread tabs (a thread opened as a dock tab): drive the opener + assert the live
+        // isolated chat portals (one document.body root per open thread).
+        openThreadTab,
+        get livePortalThreads() { return livePortalThreads(); },
 
         // edit-mode (the cross-cutting capability): drive the view↔edit toggle +
         // assert the temporary buffer / re-render loop.
@@ -178,7 +184,7 @@ function unexposeDebug(): void {
 
 export default definePlugin({
     name: "DockView",
-    description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images. The dock is always the right rail (channel-bound tabs; collapses the native member list; PDF refits on resize).",
+    description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images. The dock is always the right rail (channel-bound tabs; the member list / profile / threads become dock tabs; PDF refits on resize).",
     authors: [{ name: "seonin", id: 0n }],
     target: "DESKTOP",
 
@@ -251,9 +257,10 @@ export default definePlugin({
     managedStyle,
 
     // Per-channel panel memory. CHANNEL_SELECT re-points the active tab for the entered
-    // channel and reseals the native member list / profile sidebar. The dock is always
-    // open, so there is no reverse-takeover: the member-list/thread/profile toggle
-    // subscriptions are gone (proper action interception lands in Batch D).
+    // channel + clears the one-shot seal bypass. This is the ONLY flux subscription: the
+    // native member-list / profile / thread-sidebar actions are handled by the dispatch
+    // WRAP in host/interception.ts (installed in start()), not a flux subscription here —
+    // they are SWALLOWED (converted to dock actions) so Discord never opens a native slot.
     flux: {
         CHANNEL_SELECT({ channelId }: { channelId: string | null; }) {
             onChannelSelect(channelId ?? null);
@@ -299,6 +306,11 @@ export default definePlugin({
         //    open/close/channel/tab paths drive real DOM) + seed the channel mem.
         startHost();
         registerHost();
+        // 1b. arm the action interception (the dispatch wrap) BEFORE anything can open a
+        //     native right slot: it swallows the member-list / profile / thread-sidebar
+        //     open actions and converts them to dock actions, so Discord never enters
+        //     "sidebar open" state. Our own priming toggles pass through (self-flagged).
+        startInterception();
         // 2. restore persisted width/open from DataStore (async; applies on resolve).
         applyPersisted();
 
@@ -440,8 +452,11 @@ export default definePlugin({
         if (onResize) { window.removeEventListener("resize", onResize); onResize = null; }
         if (onMessage) { window.removeEventListener("message", onMessage); onMessage = null; }
         stopEmbed();
+        // 1b. restore FluxDispatcher.dispatch to the exact original (the interception wrap),
+        //     so a disable/enable cycle leaves Discord's dispatch untouched.
+        stopInterception();
         // 2. tear down the host (heartbeat/observer/React unmount + triple sweep +
-        //    native-sidebar restore). Marks inactive first so no callback re-injects.
+        //    hide-mark cleanup). Marks inactive first so no callback re-injects.
         stopHost();
         // 3. clear the whole tab collection (both channel stores) so a re-start begins
         //    from a clean empty state + drop the content cache (in-memory only). We do
@@ -449,6 +464,9 @@ export default definePlugin({
         //    width stays in DataStore so a re-start restores it.
         resetCollection();
         clearContentCache();
+        // Tear down every thread-chat portal (their document.body roots + overlay nodes) so
+        // no captured chat / ghost overlay survives the stop.
+        destroyAllThreadPortals();
         // Clear the context-tab per-channel flags + drop the captured slot component types
         // (a re-start re-primes/re-acquires them lazily).
         resetContextTab();

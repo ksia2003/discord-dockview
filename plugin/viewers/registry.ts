@@ -178,3 +178,12 @@ registerViewer(PsViewer);
 // session partition isolated from Discord; the HeaderControls are the minimal chrome.
 import { WebViewer } from "./web/WebViewer";
 registerViewer(WebViewer);
+
+// thread/ — a Discord thread opened as a dock tab (replaces the native thread sidebar,
+// which interception now swallows). Rides the tab model like a file (channel-bound to the
+// thread's PARENT channel, dedup on the thread id, multiple threads open at once). The
+// plugin fetches nothing: the Body renders Discord's OWN chat component (captured by fiber
+// from the always-rendered main chat, host/slotComponents.ts) bound to the thread channel,
+// so messages + the composer work live. Opened by engine/threadTab.ts.
+import { ThreadViewer } from "./thread/ThreadViewer";
+registerViewer(ThreadViewer);

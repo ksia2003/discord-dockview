@@ -10,7 +10,6 @@
 import { registerHostActions } from "../engine/hostBridge";
 import { setCurrentChannelMemId } from "../engine/channelMemory";
 import { getCurrentChannelId } from "./channel";
-import { closeNativeChannelSidebar, syncNativeMemberList, syncNativeProfileSidebar } from "./exclusivity";
 import { applyHostWidth } from "./layout";
 import { applyOpenState, ensureHost, startHost, stopHost } from "./mount";
 
@@ -21,9 +20,6 @@ export function registerHost(): void {
     registerHostActions({
         ensureHost,
         applyOpenState,
-        closeNativeChannelSidebar,
-        syncNativeMemberList,
-        syncNativeProfileSidebar,
         applyHostWidth
     });
     // seed the per-channel memory with the channel we boot into (so the first save

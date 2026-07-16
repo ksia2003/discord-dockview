@@ -6,12 +6,10 @@
  *     width the edge-drag resizes and persists, layout.ts). Dragging it resizes the
  *     dock live and writes through the same DataStore persistence; there is no second
  *     "default width" concept.
- *   - Collapse the member list while the dock is open (sidebar exclusivity).
  *   - Autoplay media when opened.
- *   - Remember the open file per channel.
- * The three switches bind to the reactive settings store (settings.use) so a flip
- * persists and re-renders; each behaviour reads the same store live at the moment it
- * runs, so a toggle applies with no reload.
+ * The switch binds to the reactive settings store (settings.use) so a flip persists and
+ * re-renders; each behaviour reads the same store live at the moment it runs, so a toggle
+ * applies with no reload.
  *
  * GRAMMAR — mirrors AboutPanel.tsx / UpdatePanel.tsx: plain React.createElement over
  * @webpack/common primitives (no JSX), semantic CSS variables only, so it matches the
@@ -95,10 +93,9 @@ function WidthSlider() {
 }
 
 export function GeneralPanel() {
-    // Subscribe to the three behaviour keys; `use()` returns the live proxied store, so
+    // Subscribe to the behaviour keys; `use()` returns the live proxied store, so
     // assignments below persist AND fire the option listeners, and a change re-renders.
     const store = settings.use([
-        "dockExclusivity",
         "dockMediaAutoplay"
     ]);
 
@@ -112,7 +109,6 @@ export function GeneralPanel() {
         h(Forms.FormDivider, { style: { margin: "20px 0" } }),
 
         // --- Behaviour switches --------------------------------------------
-        switchRow(store, "dockExclusivity", G.exclusivityTitle, G.exclusivityNote),
         switchRow(store, "dockMediaAutoplay", G.autoplayTitle, G.autoplayNote)
     );
 }

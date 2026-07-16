@@ -618,6 +618,42 @@ html.dockview-open .dockview-page-inner {
     min-height: 0;
 }
 
+/* A THREAD tab: Discord's own chat component (captured from the main chat, bound to the
+   thread channel) rendered in an ISOLATED document.body React root, positioned as a fixed
+   overlay over the dock body (a nested-in-dock render wedges the renderer — see
+   viewers/thread/threadPortal). The dock-body BACKDROP is a plain flush surface drawn under
+   the overlay so the body never flashes empty during a repaint frame. */
+.dockview-thread-backdrop {
+    height: 100%;
+    min-height: 0;
+    background: var(--background-base-lower, #1a1a1e);
+}
+/* The fixed overlay node (a child of document.body). Its rect is JS-synced to the dock body
+   each frame while visible; here we only set the layout box + surface. z-index sits just
+   ABOVE the dock host (z-index:200) so the chat paints over the dock body, but well below
+   Discord's own popouts (emoji / mention / member cards the chat spawns render at document
+   .body with far higher z-indexes, so they still appear above the portal). */
+.dockview-thread-portal {
+    position: fixed;
+    z-index: 210;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--background-base-lower, #1a1a1e);
+}
+/* The chat fills the overlay; Discord's own message scroller handles overflow, so we never
+   impose our own scroll here (a nested scroll would double-bar). */
+.dockview-thread-portal-inner,
+.dockview-thread-portal-inner > * {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+    width: 100%;
+}
+
 /* The context tab in the strip is a normal-looking tab (uniform-tab rule) that is simply
    never closable / draggable. It carries no ✕, so it needs none of the inactive-✕ hover
    affordance; its icon + name follow the same active/inactive colour states as file tabs

@@ -374,6 +374,14 @@ export const STRINGS = {
         openNative: "Open native panel"
     },
 
+    // --- thread tab (a Discord thread opened as a dock tab) -----------------
+    // A thread tab renders Discord's own chat component bound to the thread. This drives
+    // its honest failure card (reuses context.failTitle/failSub) if the chat capture drifts
+    // after a Discord update — never a silent break. {what} feeds context.failSub.
+    thread: {
+        failWhat: "thread"
+    },
+
     // --- attach (after edit) filename input ---------------------------------
     // Staging an edited file as a new upload offers a native filename field (the
     // Discord "new thread name" pattern, grammar rule 6): the file's own name is
@@ -404,20 +412,14 @@ export const STRINGS = {
     },
 
     // --- General settings page ----------------------------------------------
-    // The dock's behaviour preferences: width, sidebar exclusivity, media autoplay,
-    // per-channel memory. Each row is a native-style switch (or the width slider) with a
-    // one-line note under it. Changes apply live.
+    // The dock's behaviour preferences: width + media autoplay. Each row is a native-style
+    // switch (or the width slider) with a one-line note under it. Changes apply live.
     general: {
         // Width slider group.
         widthTitle: "Dock width",
         widthNote: "How wide the dock opens. Drag the dock's edge for the same effect.",
         // {px} -> the current width in pixels.
         widthValue: (px: number) => `${px}px`,
-        // Sidebar exclusivity switch.
-        exclusivityTitle: "Collapse the member list while the dock is open",
-        exclusivityNote:
-            "The dock takes the member-list slot like a thread, then restores it on close. " +
-            "Turn off to keep the member list open beside the dock.",
         // Media autoplay switch.
         autoplayTitle: "Autoplay media when opened",
         autoplayNote:

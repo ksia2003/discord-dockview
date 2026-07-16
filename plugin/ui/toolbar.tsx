@@ -145,6 +145,11 @@ export const FILE_TYPE_ICON: Record<string, IconPath[]> = {
     video: [
         ["M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Zm6.4 2.6a1 1 0 0 0-1.4.9v4a1 1 0 0 0 1.5.87l3.5-2a1 1 0 0 0 0-1.74l-3.6-2.03Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
     ],
+    // Thread: Discord's own thread glyph (a speech line branching into a reply), so a
+    // thread tab reads as a thread at a glance, matching the native thread affordance.
+    thread: [
+        ["M12 2.81a9.19 9.19 0 0 0-8.05 13.6l-1.2 3.63a1 1 0 0 0 1.27 1.27l3.63-1.2A9.19 9.19 0 1 0 12 2.8Zm-4 6.94h8a1 1 0 1 1 0 2H8a1 1 0 1 1 0-2Zm0 3.5h5a1 1 0 1 1 0 2H8a1 1 0 1 1 0-2Z", { "fillRule": "evenodd", "clipRule": "evenodd" }]
+    ],
     // Fallback (unknown / binary): a plain document frame.
     unknown: [[DOC_FRAME]]
 };

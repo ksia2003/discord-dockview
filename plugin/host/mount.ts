@@ -30,7 +30,7 @@ import type { Root } from "react-dom/client";
 import { DockPanel } from "../ui/DockPanel";
 import {
     hideExclusiveRightSlot, nodeMayContainExclusiveRightSlot, restoreHiddenMembers
-} from "./exclusivity";
+} from "./nativePanels";
 import { applyDockLayout, findChat, findPageInner } from "./layout";
 
 const HOST_ID = "dockview-root";

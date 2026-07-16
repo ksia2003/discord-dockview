@@ -73,18 +73,15 @@ export function loadInPlace(next: { name: string; url: string; type?: ContentTyp
     if (result !== "noop") requestRender();
 }
 
-/** The shared "make sure the dock is mounted + sealed" side-effects, run by load()
- *  (chip click) and onNewFile() (P8). The dock is always visible, so this just ensures
- *  the host is mounted and keeps the native thread/channel sidebar + member list /
- *  profile sidebar collapsed so the dock holds the exclusive right slot. Does NOT
- *  render — the caller decides if the body changed. */
+/** The shared "make sure the dock is mounted" side-effect, run by load() (chip click) and
+ *  onNewFile() (P8). The dock is always visible, so this just ensures the host is mounted
+ *  and reflects the layout. There is no native right slot to collapse — host/interception
+ *  swallows the actions that would open one. Does NOT render — the caller decides if the
+ *  body changed. */
 export function openPanelChrome(): void {
     const host = hostActions();
-    host.closeNativeChannelSidebar();
     host.ensureHost();
     host.applyOpenState();
-    host.syncNativeMemberList(true); // collapse the member list like a thread
-    host.syncNativeProfileSidebar(true);
 }
 
 /** Re-fetch the file currently shown, bypassing both the in-memory content cache
