@@ -654,6 +654,27 @@ html.dockview-open .dockview-page-inner {
     width: 100%;
 }
 
+/* E2 — THREAD-HEADER SUPPRESSION (visual parity). The captured chat renders its OWN full
+   channel-header bar (subtitleContainer_: breadcrumb "# parent >", + the notification /
+   pin / member-list / search toolbar) at the top of the portal. That chrome is DUPLICATE:
+   our dock tab strip already shows the thread name + close ✕, and a native thread sidebar
+   never shows a second header. Worse, in this build that bar renders with theme-light /
+   images-light classes, so it painted as a jarring WHITE strip over the dark dock. We hide
+   it — SCOPED to our portal so no global Discord class is touched — which both removes the
+   duplicate chrome AND kills the light-theme leak, and lets the messages + composer fill the
+   tab from the top (the content_ column reclaims the freed 48px, verified on the rig). The
+   thread's own INTRO header (the big thread name + "Started by", inside the message scroller)
+   is Discord's normal thread-open affordance and stays — it is not this top bar. */
+.dockview-thread-portal div[class*="subtitleContainer"] {
+    display: none !important;
+}
+/* Belt-and-suspenders: if any child inside the portal still resolves the LIGHT theme
+   (the header carried theme-light/images-light), force the dark theme tokens back on so
+   nothing paints white beside the dark dock. Scoped to the portal — never global. */
+.dockview-thread-portal .theme-light {
+    color-scheme: dark;
+}
+
 /* The context tab in the strip is a normal-looking tab (uniform-tab rule) that is simply
    never closable / draggable. It carries no ✕, so it needs none of the inactive-✕ hover
    affordance; its icon + name follow the same active/inactive colour states as file tabs

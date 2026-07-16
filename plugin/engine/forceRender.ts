@@ -39,6 +39,13 @@ export function isRenderer(fn: (() => void) | null): boolean {
     return renderer === fn;
 }
 
+/** Is a live renderer published (the DockPanel is mounted)? The E3 canary: if this is
+ *  false while the dock host is present, the panel's root was torn down without a rebind,
+ *  so requestRender() is a dead write and the strip DOM is frozen stale. */
+export function isRendererLive(): boolean {
+    return renderer !== null;
+}
+
 /** Schedule a panel repaint. A no-op before the panel mounts (the old
  *  `forceRender?.()`), so engine code can call it unconditionally. */
 export function requestRender(): void {

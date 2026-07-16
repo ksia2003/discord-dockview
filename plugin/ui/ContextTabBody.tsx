@@ -27,7 +27,7 @@ import {
 } from "../host/nativePanels";
 import {
     captureMemberList, captureProfile, contextKindFor, getChannelObject, getMemberListType,
-    getProfileType, primeMemberList, primeProfile
+    getProfileType, isProfileSectionUnavailable, primeMemberList, primeProfile
 } from "../host/slotComponents";
 import type { ContextKind } from "../host/slotComponents";
 import { STRINGS } from "../strings";
@@ -196,6 +196,20 @@ function ContextFallback({ channelId, kind }: { channelId: string | null; kind: 
         }, 4000);
         return () => { alive = false; clearTimeout(t); };
     }, [channelId, kind]);
-    if (failed) return React.createElement(ErrorCard, { channelId, kind });
+    if (failed) {
+        // A profile prime that failed because Discord itself has the DM profile sidebar
+        // DISABLED (the header button reads "(Unavailable)"; even naked Discord can't open
+        // it) is NOT acquisition drift — native shows nothing, so parity is the calm empty
+        // card, not an error with a bypass that couldn't work anyway. Behaviour-detected
+        // in primeProfile; self-heals if Discord re-enables the panel.
+        if (kind === "profile" && isProfileSectionUnavailable()) {
+            return React.createElement(
+                "div",
+                { className: "dockview-empty" },
+                React.createElement("div", { className: "dockview-empty-text" }, STRINGS.empty.text)
+            );
+        }
+        return React.createElement(ErrorCard, { channelId, kind });
+    }
     return React.createElement(LoadingCard, null);
 }

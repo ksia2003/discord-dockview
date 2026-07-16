@@ -164,6 +164,13 @@ function allLiveWindows(): DockWindow[] {
 }
 export { allLiveWindows };
 
+/** Every THREAD tab across all channels' strips (content.type "thread"). The thread-tab
+ *  lifecycle events (external delete / rename) act on tabs that may live in a channel that
+ *  isn't the current one, so they scan this fuller set rather than the current strip. */
+export function allThreadTabs(): DockWindow[] {
+    return allLiveWindows().filter(w => w.content.type === "thread" && w.content.threadChannelId != null);
+}
+
 /** Ensure `activeWindow` points at a real window. With no windows anywhere it stays a
  *  harmless sentinel-free binding: callers guard via getActiveWindow()'s content
  *  fields. We lazily fabricate a detached scratch window so getActiveWindow() never

@@ -47,36 +47,173 @@ let rootHost: HTMLElement | null = null; // the node `root` is bound to
 // flight when stop() ran must NOT re-inject the host afterwards.
 let active = false;
 
+// Lightweight lifecycle counters (the E3 churn-soak canary + the debug surface). A
+// healthy session keeps rootCreates + rootAdopts - rootUnmounts == 1 live binding; drift
+// is the "blank dock / ghost tab" fingerprint. refIgnored counts hidden-duplicate
+// placeholder attaches we deliberately did NOT bind (see the steal guard). Read via
+// __dockView.mountStats.
+const stats = { rootCreates: 0, rootAdopts: 0, rootUnmounts: 0, refAttach: 0, refDetach: 0, refIgnored: 0 };
+export function mountStats(): { rootCreates: number; rootAdopts: number; rootUnmounts: number; refAttach: number; refDetach: number; refIgnored: number } {
+    return { ...stats };
+}
+
+// A small op ring-buffer (__dockView.mountDebug) — the E3 family of races was only
+// diagnosable with exact op ordering, and a createRoot throw must be VISIBLE (it used to
+// tear the binding down silently: root null, rootHost stale, dead dock until reload).
+const mountLog: string[] = [];
+function mlog(op: string): void {
+    mountLog.push(`${Date.now() % 100000} ${op}`);
+    if (mountLog.length > 40) mountLog.shift();
+}
+export function mountDebugLog(): string[] { return [...mountLog]; }
+
+// container → its live React root. React 18 FORBIDS createRoot() twice on the same
+// container while the first root is mounted — and our retire unmounts are DEFERRED, so a
+// rebind back to a container whose old root hasn't unmounted yet must ADOPT the resident
+// root (re-render into it) instead of re-creating. Without this the second createRoot
+// throws and strands the binding (rig-hit: dead dock, rendererLive=false, empty spacer).
+const containerRoots = new Map<HTMLElement, Root>();
+
+/** Is `el` actually laid out (no display:none ancestor)? Discord keeps a CACHED /
+ *  preloaded channel-view instance MOUNTED under display:none (rig-proven: a thread-open
+ *  flash navigation mounts a hidden duplicate whose placeholder ref fires like the real
+ *  one). display:none ⇒ offsetParent === null (our host is never position:fixed), so this
+ *  cheaply separates the dock the user SEES from a hidden duplicate. */
+function isDisplayed(el: HTMLElement): boolean {
+    return el.isConnected && el.offsetParent !== null;
+}
+
 export function isActive(): boolean { return active; }
 export function setActive(v: boolean): void { active = v; }
 
-/** Bind (or rebind) our React root onto `host` and render the dock. Idempotent: only
- *  (re)creates the root when it isn't already bound to THIS node — leaves React's
- *  async first-commit gap alone. Shared by both paths. */
+/** The node our live React root is currently bound to (null when unbound). The thread
+ *  portal tracks THIS node's `.dockview-body` — during a two-instance overlap (below)
+ *  `getElementById` can return the OTHER, stale placeholder. */
+export function liveHost(): HTMLElement | null {
+    return rootHost;
+}
+
+/** Bind (or rebind) our React root onto `host` and render the dock. Idempotent: no-op
+ *  when already bound to THIS node — leaves React's async first-commit gap alone.
+ *
+ *  E3 ROOT-CAUSE FIX (rig-proven, mountStats trace 2026-07-16): Discord CAN mount a
+ *  SECOND channel-view instance whose render carries a second placeholder while the first
+ *  stays mounted (observed on a thread-open flash navigation: refAttach 2, refDetach 0,
+ *  TWO strips in the document). The old bindRoot left the previous root mounted forever —
+ *  two live DockPanels, and the single setRenderer slot means only the newest repaints;
+ *  the older panel's DOM FREEZES (the "ghost tab with an empty store"), and when the
+ *  newer instance later unmounts, that frozen strip is what remains visible while
+ *  requestRender() writes into a detached tree (the "stale dock" / "blank dock").
+ *  So on a node switch we RETIRE the old root: deferred unmount (a ref callback runs
+ *  mid-commit; React forbids unmounting a root synchronously there), which also clears
+ *  the old node's children so no frozen strip can survive. Shared by both paths. */
 function bindRoot(host: HTMLElement): void {
-    if (!root || rootHost !== host) {
-        root = createRoot(host);
+    if (root && rootHost === host) return; // already bound to THIS node
+    if (root) retireRoot(root, rootHost);
+    const resident = containerRoots.get(host);
+    if (resident) {
+        // The container already carries a root (its retire hasn't landed, or a past bind
+        // left it mounted). createRoot again would THROW — adopt it and re-render.
+        root = resident;
         rootHost = host;
+        stats.rootAdopts++;
+        mlog("adopt");
         root.render(React.createElement(DockPanel));
+        return;
     }
+    try {
+        root = createRoot(host);
+    } catch (e) {
+        // Never strand the binding on a throw — log it loudly and leave root/rootHost
+        // null so the next ensureHost retries cleanly.
+        root = null;
+        rootHost = null;
+        mlog(`createRoot threw: ${String(e).slice(0, 80)}`);
+        console.error("[DockView] createRoot failed", e);
+        return;
+    }
+    containerRoots.set(host, root);
+    rootHost = host;
+    stats.rootCreates++;
+    mlog("create");
+    root.render(React.createElement(DockPanel));
+}
+
+/** Retire a root: deferred unmount (a ref callback runs mid-commit; React forbids a
+ *  synchronous root unmount there), CANCELLED if the same root is re-adopted before the
+ *  microtask runs (a bounce back to the same container must not unmount what it just
+ *  re-rendered). Cleans the container registry on a real unmount. */
+function retireRoot(stale: Root, staleHost: HTMLElement | null): void {
+    root = null;
+    Promise.resolve().then(() => {
+        if (stale === root) return; // re-adopted since — still the live root
+        try { stale.unmount(); } catch { /* already unmounted */ }
+        if (staleHost && containerRoots.get(staleHost) === stale) containerRoots.delete(staleHost);
+        stats.rootUnmounts++;
+        mlog("retired");
+    });
 }
 
 // ---------------------------------------------------------------------------
 // PRIMARY PATH — the patched React child.
 // ---------------------------------------------------------------------------
 
+/** The bound placeholder DETACHED from Discord's tree (its ref fired null). Deferred
+ *  (mid-commit), verify it really left the document — a same-node re-render fires
+ *  null+el in one commit and a reconciler move keeps it connected; both must NOT tear
+ *  the root down. When it's genuinely gone (the overlapped channel-view instance that
+ *  owned it unmounted), retire the root and IMMEDIATELY rebind to any surviving
+ *  placeholder (the cached first instance Discord just re-showed renders no new ref —
+ *  ensureHost's id lookup is the only way back, and waiting for the next engine action
+ *  would leave the dock blank until then). */
+function onPlaceholderDetach(node: HTMLElement): void {
+    Promise.resolve().then(() => {
+        if (!active) return;            // stopHost owns teardown
+        if (rootHost !== node) return;  // already rebound elsewhere
+        if (node.isConnected) return;   // re-attach in the same commit (move) — still live
+        const stale = root;
+        rootHost = null;
+        if (stale) retireRoot(stale, node);
+        else root = null;
+        mlog("detach-retire");
+        ensureHost();
+    });
+}
+
 /** The patched channel-view render appends this as the chat/sidebar row's last flex
- *  child. It's a stable placeholder host div; its ref callback binds our own React
- *  root the first (and, since the channel-view never remounts, only) time it attaches.
- *  Rendered unconditionally by the patch — the dock's own open/close is the
- *  `dockview-open` class, applied by applyOpenState, not element presence. */
+ *  child. It's a placeholder host div; its ref callback binds our own React root when it
+ *  attaches. Rendered unconditionally by the patch — the dock's open state is the
+ *  `dockview-open` class, applied by applyOpenState, not element presence.
+ *
+ *  The ref closure captures ITS element (each channel-view render creates a fresh
+ *  closure), so the detach call can tell WHICH node left — the E3 fix needs that to
+ *  ignore detaches of nodes we already rebound away from. */
 export function renderDockRail(): any {
+    let bound: HTMLElement | null = null;
     return React.createElement("div", {
         id: HOST_ID,
         key: HOST_ID,
         ref: (el: HTMLElement | null) => {
-            if (!el || !active) return;
+            if (!el) {
+                stats.refDetach++;
+                const node = bound;
+                bound = null;
+                if (node && active) onPlaceholderDetach(node);
+                return;
+            }
+            if (!active) return;
+            bound = el;
+            stats.refAttach++;
             mode = "patched";
+            // STEAL GUARD (E3): a HIDDEN duplicate instance's placeholder must not take
+            // the root away from a healthy, displayed dock — binding it would empty the
+            // dock the user is looking at and render into the hidden tree (rig-proven).
+            // A hidden attach with NO live displayed root still binds (something over
+            // nothing; ensureHost rebinds to a displayed node the moment one exists).
+            if (root && rootHost && rootHost !== el && isDisplayed(rootHost) && !isDisplayed(el)) {
+                stats.refIgnored++;
+                return;
+            }
             bindRoot(el);
             applyOpenState();
         }
@@ -84,18 +221,34 @@ export function renderDockRail(): any {
 }
 
 /** Ensure the host carries a bound root and reflects open state. In the patched path
- *  the host is always present (React owns it) so this is just "bind if needed + apply
- *  state"; in the fallback path it re-injects the node. Cheap + idempotent — engine
- *  call sites (load / channel switch / open) and the fallback heartbeat call it freely.
- *  Returns true once the host is mounted. */
+ *  the patch owns the node, so this is "bind if needed + apply state"; in the fallback
+ *  path it re-injects the node. Cheap + idempotent — engine call sites (load / channel
+ *  switch / open) and the fallback heartbeat call it freely. Returns true once the host
+ *  is mounted.
+ *
+ *  BINDING STABILITY + DISPLAYED-NODE PREFERENCE (E3): while our bound node is connected
+ *  AND laid out, keep it — never rebind by lookup (during a two-instance overlap the
+ *  document holds TWO #dockview-root placeholders; hopping between them would ping-pong
+ *  the root). When the bound node is gone OR hidden (Discord swapped which instance is
+ *  visible — the cached-view flip), rebind to a DISPLAYED placeholder; a hidden one is
+ *  the last resort so the dock still exists if Discord hides the whole page. */
 export function ensureHost(): boolean {
     if (!active) return false;
 
     if (mode === "fallback") return ensureHostInjected();
 
-    // pending / patched: the patch owns the node. Bind the root if the host is already
-    // in the tree (covers ensureHost racing ahead of the ref callback) and apply state.
-    const host = document.getElementById(HOST_ID);
+    // Bound, in the document, and actually laid out → keep it, just reflect state.
+    if (root && rootHost && isDisplayed(rootHost)) {
+        if (mode === "pending") mode = "patched";
+        applyOpenState();
+        return true;
+    }
+
+    // No healthy binding: pick the best placeholder — a DISPLAYED one first (the dock
+    // the user can see), else any connected one (covers ensureHost racing ahead of the
+    // ref callback, the post-detach rebind, and the hidden-instance flip).
+    const nodes = Array.from(document.querySelectorAll<HTMLElement>(`#${HOST_ID}`));
+    const host = nodes.find(isDisplayed) ?? nodes[0] ?? null;
     if (host) {
         if (mode === "pending") mode = "patched";
         bindRoot(host);
@@ -243,6 +396,10 @@ export function stopHost(): void {
     if (r) {
         try { r.unmount(); } catch { /* ignore */ }
     }
+    // Drop every container→root association: the roots are unmounted (r above, and any
+    // pending retirement lands via its own microtask) — a restart must CREATE fresh roots,
+    // never adopt an unmounted one (render into it throws).
+    containerRoots.clear();
     if (!wasFallback) return; // patched: leave Discord's placeholder node for a fast rebind.
     const removeHosts = () => {
         document.querySelectorAll(`#${HOST_ID}`).forEach(el => el.remove());

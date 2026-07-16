@@ -36,6 +36,7 @@
 import { findByProps } from "@webpack";
 
 import { getCurrentChannelId } from "./channel";
+import { findPageInner } from "./layout";
 import { dispatchMemberListToggle, dispatchUserProfileSidebarToggle } from "./nativePanels";
 
 // The captured component TYPES, cached for the session. A capture is a plain function
@@ -123,10 +124,11 @@ const HOST_ID = "dockview-root";
  *  keys off this attribute). Never marks our own host. In patched mount mode there is no
  *  MutationObserver, so priming hides the primed panel itself here. Idempotent. */
 function hidePrimedAnchors(): void {
-    const host = document.getElementById(HOST_ID);
+    // closest() exclusion (not getElementById+contains): with two overlapped dock
+    // placeholders (E3) the member list inside the SECOND dock must not be marked.
     const mark = (el: Element | null) => {
         if (!(el instanceof HTMLElement)) return;
-        if (el.id === HOST_ID || (host && host.contains(el))) return;
+        if (el.id === HOST_ID || el.closest(`#${HOST_ID}`)) return;
         el.setAttribute(EXCLUSIVE_HIDDEN_ATTR, "true");
     };
     mark(memberAnchor());
@@ -181,6 +183,10 @@ const CHAT_SIGNATURE = ["guildId", "channelId", "channel", "channelName", "paren
 export function captureChat(): boolean {
     const fiber = fiberOf(chatAnchor());
     if (!fiber) return chatType != null;
+    // The Mana provider rides along (needed for popouts inside the portal chat) — same
+    // anchor, so capture it in the same pass. Failure is non-fatal (chat still renders;
+    // popouts just stay unavailable until a later capture lands).
+    try { captureProviderStack(); } catch { /* ignore */ }
     // Walk for the leaf channel-view: a function component carrying the full signature.
     let f = fiber;
     let hops = 0;
@@ -199,6 +205,51 @@ export function captureChat(): boolean {
 }
 
 export function getChatType(): any { return chatType; }
+
+// --- provider-stack capture (portal popout support) ---------------------------
+// The captured chat renders fine bare, but Discord's POPOUT-opening paths (user popout,
+// expression picker) read React CONTEXTS the app shell provides — the Mana design-system
+// context (its absence warns "useManaContext must be used within a ManaContext.Provider"
+// and no-ops the click, rig-proven), plus the window/app contexts that route a popout to
+// its window's layer containers. Rather than name-match individual contexts (drift-prone,
+// and the misses fail silently), we capture the ENTIRE provider ancestry above the main
+// chat — every context-provider fiber's TYPE + its live value — and the portal re-wraps
+// the chat in the same stack, innermost-first, exactly replicating the environment the
+// chat had in place. The values are the app's LIVE objects (layer containers, history,
+// theme...), so popouts mount into the app's own layers (z≈1002), far above the portal
+// overlay by construction. Values are refreshed on every capture pass.
+let providerStack: Array<{ type: any; value: any }> | null = null;
+
+// The React fiber tag for a ContextProvider fiber — stable across React 16→19. Matching
+// by TAG (not by the type object's shape) is the authoritative test: a shape test that
+// admits react.context objects catches CONSUMERS too, and re-rendering a consumer as an
+// element type crashes the portal render (rig-proven: the whole portal root unmounted).
+const CONTEXT_PROVIDER_TAG = 10;
+
+/** Capture the provider ancestry above the main chat (nearest-first). Cached; refreshed
+ *  per pass so the values stay current. Only fibers whose TAG says ContextProvider are
+ *  taken; re-rendering the exact captured fiber type reproduces what React itself did. */
+export function captureProviderStack(): boolean {
+    const fiber = fiberOf(chatAnchor());
+    if (!fiber) return providerStack != null;
+    const found: Array<{ type: any; value: any }> = [];
+    let f = fiber.return;
+    let hops = 0;
+    while (f && hops++ < 400) {
+        if (f.tag === CONTEXT_PROVIDER_TAG && f.type) {
+            found.push({ type: f.type, value: f.memoizedProps ? f.memoizedProps.value : undefined });
+        }
+        f = f.return;
+    }
+    if (found.length) { providerStack = found; return true; }
+    return providerStack != null;
+}
+
+/** The captured provider stack, NEAREST-first (wrap iteratively to put the root-most
+ *  provider outermost), or null before capture. */
+export function getProviderStack(): Array<{ type: any; value: any }> | null {
+    return providerStack;
+}
 
 /** Build the props to render the chat component for a THREAD. Clones the captured main-
  *  chat props (so every flag/context the component reads is present) and swaps the
@@ -249,6 +300,8 @@ export function invalidateSlotComponents(): void {
     profileType = null;
     chatType = null;
     chatBaseProps = null;
+    providerStack = null;
+    profileSectionUnavailableFlag = false;
 }
 
 // --- channel resolution -----------------------------------------------------
@@ -322,15 +375,52 @@ export async function primeMemberList(): Promise<boolean> {
 /** Prime + capture the DM profile sidebar. The profile section is NOT open by default, so
  *  this nearly always needs a brief flagged hidden toggle, then a poll for the aside to
  *  mount (the profile card takes a few commits to render). Same shape as primeMemberList. */
+// Capability flag: Discord currently ships the DM profile sidebar DISABLED for some
+// builds/accounts (the DM header button reads "Show User Profile (Unavailable)", and even
+// with no plugin installed the toggle dispatch doesn't flip ChannelSectionStore — verified
+// naked on the rig 2026-07-16). That is NOT signature drift: there is no native panel to
+// mirror, so the context tab should show the calm empty state, not the error card. The
+// flag is detected behaviourally (our flagged toggle passed interception yet the store
+// never entered PROFILE and no aside mounted) — no locale strings, no experiment names —
+// and self-heals: a later prime that succeeds clears it.
+let profileSectionUnavailableFlag = false;
+export function isProfileSectionUnavailable(): boolean { return profileSectionUnavailableFlag; }
+
+// Prime-verdict trace (debug surface primeLog) — the unavailable-detection misfired
+// silently once; keep the last few verdicts inspectable.
+const primeTrace: string[] = [];
+export function primeDebugLog(): string[] { return [...primeTrace]; }
+function plog(s: string): void {
+    primeTrace.push(`${Date.now() % 100000} ${s}`);
+    if (primeTrace.length > 20) primeTrace.shift();
+}
+
 export async function primeProfile(): Promise<boolean> {
-    if (profileType) return true;
-    if (captureProfile()) return true;
+    if (profileType) { plog("profile: cached"); return true; }
+    if (captureProfile()) { plog("profile: direct-capture"); return true; }
+
+    // Snapshot the panel surface BEFORE toggling: the unavailable-vs-drift discriminator
+    // is whether the toggle mounts ANY new panel node at all. On this Discord the section
+    // store happily flips to PROFILE while the RENDER site is gated off ("(Unavailable)")
+    // and nothing mounts — that's unavailability. A signature/anchor DRIFT still mounts
+    // SOMETHING (a panel whose class/aria we no longer match) — that's drift, keep the
+    // error card + native bypass.
+    const inner = findPageInner();
+    const kidsBefore = inner ? inner.children.length : -1;
+    const asidesBefore = document.querySelectorAll("aside").length;
 
     const wasOpen = storeSection(true) === "PROFILE";
     if (!wasOpen) dispatchUserProfileSidebarToggle();
     hidePrimedAnchors(); // mark hidden immediately so the toggled panel can't paint visible
     const ok = await pollCapture(captureProfile);
-    if (!wasOpen && storeSection(true) === "PROFILE") dispatchUserProfileSidebarToggle();
+    const flipped = storeSection(true) === "PROFILE";
+    // Measure growth BEFORE restoring the toggle (the restore unmounts what mounted).
+    const grewPanel = document.querySelectorAll("aside").length > asidesBefore
+        || (kidsBefore >= 0 && inner != null && inner.isConnected && inner.children.length > kidsBefore);
+    plog(`profile: ok=${ok} wasOpen=${wasOpen} flipped=${flipped} grew=${grewPanel} anchor=${!!profileAnchor()}`);
+    if (ok) profileSectionUnavailableFlag = false;
+    else if (!wasOpen && !grewPanel) profileSectionUnavailableFlag = true;
+    if (!wasOpen && flipped) dispatchUserProfileSidebarToggle();
     return ok;
 }
 

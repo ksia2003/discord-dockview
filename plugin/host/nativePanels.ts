@@ -130,10 +130,13 @@ export function hideExclusiveRightSlot(inner: HTMLElement | null = findPageInner
     if (isSealBypassed(getCurrentChannelId())) return; // leave the escaped native panel visible
     if (!inner) return;
 
-    const host = document.getElementById(HOST_ID);
+    // Exclusion by closest() (not a single getElementById+contains): the document can
+    // briefly hold TWO #dockview-root placeholders during a channel-view instance overlap
+    // (E3), and the member list the context tab renders INSIDE the second dock must never
+    // be hide-marked. closest() covers a node inside ANY dock host.
     const mark = (el: Element | null) => {
         if (!(el instanceof HTMLElement)) return;
-        if (el.id === HOST_ID || (host && host.contains(el))) return;
+        if (el.id === HOST_ID || el.closest(`#${HOST_ID}`)) return;
         el.setAttribute(EXCLUSIVE_HIDDEN_ATTR, "true");
     };
 

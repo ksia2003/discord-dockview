@@ -15,11 +15,17 @@
  * fetch/descriptor/cache), then reflects the layout + renders.
  */
 
+import { destroyThreadPortal } from "../viewers/thread/threadPortal";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
 import { isContextActive, setContextActive } from "./contextTab";
-import { getActiveWindow, getWindowChannelId, openThreadWindow } from "./window";
+import { bump as bumpLoadToken } from "./loadToken";
+import {
+    allThreadTabs, focusEmptyShell, getActiveWindow, getActiveWindowId, getWindowChannelId,
+    openThreadWindow, reconcileActiveFromCache, removeWindowEverywhere, setActiveWindow, stripFor
+} from "./window";
 import { getChannelObject } from "../host/slotComponents";
+import type { DockWindow } from "./types";
 
 /** Open (or focus) a dock tab for `threadId`. `parentId` is the thread's parent channel
  *  (from the SIDEBAR_VIEW_CHANNEL payload's baseChannelId); when absent we resolve it from
@@ -69,4 +75,82 @@ export function openThreadTab(threadId: string, parentId?: string | null): void 
     host.ensureHost();
     host.applyOpenState();
     requestRender();
+}
+
+/** Close the tab(s) for `threadId` wherever they live (any channel's strip), destroying
+ *  the isolated chat portal and repointing the active view if the closed tab WAS the one
+ *  currently shown. Idempotent — a no-op when no thread tab holds this id.
+ *
+ *  E1: a thread deleted OUTSIDE the app (THREAD_DELETE, or its parent channel going away)
+ *  leaves a ghost tab in the strip; this removes it. Unlike the user-facing closeTab (which
+ *  only ever touches the CURRENT strip), this searches every strip — the deleted thread may
+ *  belong to a channel that isn't the one on screen (its tab just quietly disappears there).
+ *  Returns true if anything was closed. */
+export function closeThreadTabEverywhere(threadId: string): boolean {
+    if (!threadId) return false;
+    const matches = allThreadTabs().filter(w => w.content.threadChannelId === threadId);
+    if (matches.length === 0) return false;
+
+    const activeId = getActiveWindowId();
+    let closedActive = false;
+    let activeStrip: DockWindow[] | null = null;
+    let activeIdx = -1;
+
+    for (const win of matches) {
+        if (win.id === activeId) {
+            // Record where the active tab sat in the CURRENT strip so we can activate its
+            // neighbour after removal (matches closeTab's right-else-left rule).
+            activeStrip = stripFor(getWindowChannelId());
+            activeIdx = activeStrip.indexOf(win);
+            closedActive = true;
+        }
+        // Tear down the isolated chat portal (document.body root + overlay node).
+        destroyThreadPortal(threadId);
+        removeWindowEverywhere(win);
+    }
+
+    if (!closedActive) {
+        // The closed tab(s) were in a background channel's strip — nothing on screen
+        // changed, but repaint so a strip that IS visible drops the ghost tab.
+        requestRender();
+        return true;
+    }
+
+    // The active view was the closed thread — repoint within the CURRENT strip, mirroring
+    // closeTab's neighbour selection / empty-state fallback.
+    const rest = stripFor(getWindowChannelId());
+    if (rest.length === 0) {
+        bumpLoadToken();
+        focusEmptyShell(getWindowChannelId());
+        setContextActive(getWindowChannelId(), true);
+    } else if (activeStrip) {
+        const next = rest[activeIdx] ?? rest[Math.max(0, activeIdx - 1)];
+        if (next) {
+            setActiveWindow(next);
+            bumpLoadToken();
+            reconcileActiveFromCache();
+            getActiveWindow().content.seq += 1;
+        }
+    }
+    hostActions().applyOpenState();
+    requestRender();
+    return true;
+}
+
+/** Rename the strip tab(s) for `threadId` to `name` (E1 — a thread renamed externally,
+ *  THREAD_UPDATE). The ThreadBody already self-heals its own label from the store, but a
+ *  thread whose tab is NOT the active view never mounts a ThreadBody, so its strip label
+ *  would stay stale; this updates every strip's tab directly. Repaints only when a label
+ *  actually changed. Returns true if anything was renamed. */
+export function renameThreadTab(threadId: string, name: string | null): boolean {
+    if (!threadId || !name) return false;
+    let changed = false;
+    for (const w of allThreadTabs()) {
+        if (w.content.threadChannelId === threadId && w.content.name !== name) {
+            w.content.name = name;
+            changed = true;
+        }
+    }
+    if (changed) requestRender();
+    return changed;
 }

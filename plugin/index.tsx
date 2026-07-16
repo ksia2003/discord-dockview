@@ -30,7 +30,7 @@ import { preloadDecoders } from "./engine/decoderModes";
 import { fallbackCopy } from "./engine/fetch";
 import { loadLib } from "./engine/lazyLib";
 import { detectType } from "./engine/detectType";
-import { requestRender } from "./engine/forceRender";
+import { isRendererLive, requestRender } from "./engine/forceRender";
 import { onChannelSelect, setCurrentChannelMemId } from "./engine/channelMemory";
 import { isContextActive, resetContextTab, setContextActive } from "./engine/contextTab";
 import { loadPersistedState } from "./engine/persist";
@@ -45,13 +45,16 @@ import {
 } from "./host/nativePanels";
 import { interceptionInstalled, startInterception, stopInterception } from "./host/interception";
 import { applyHostWidth, clampWidth } from "./host/layout";
-import { applyOpenState, ensureHost, renderDockRail } from "./host/mount";
+import { applyOpenState, ensureHost, liveHost, mountDebugLog, mountStats, renderDockRail } from "./host/mount";
 import { registerHost, startHost, stopHost } from "./host/open";
 import {
-    getMemberListType, getProfileType, invalidateSlotComponents, primeMemberList, primeProfile
+    captureChat, getChatType, getMemberListType, getProfileType, getProviderStack,
+    invalidateSlotComponents, isProfileSectionUnavailable, primeDebugLog, primeMemberList,
+    primeProfile
 } from "./host/slotComponents";
-import { destroyAllThreadPortals, livePortalThreads } from "./viewers/thread/threadPortal";
-import { openThreadTab } from "./engine/threadTab";
+import { destroyAllThreadPortals, livePortalThreads, portalDebugLog } from "./viewers/thread/threadPortal";
+import { closeThreadTabEverywhere, openThreadTab } from "./engine/threadTab";
+import { onChannelDelete, onThreadDelete, onThreadUpdate } from "./engine/threadEvents";
 import { openExternalLink } from "./external/openExternal";
 import { openInVesktopWindow, popoutArtifact, vesktopWindowHtml } from "./external/vesktopWindow";
 import { markdownHasToc, mdState } from "./viewers/doc/MarkdownViewer";
@@ -110,6 +113,14 @@ function exposeDebug(): void {
         // host mount. The dock is always open — no toggle/close (dockOpen is always true).
         ensureHost, applyOpenState,
         get dockOpen() { return true; },
+        // E3 repaint canary: the mount lifecycle counters + whether a live renderer is
+        // published + whether the bound host node is still in the document.
+        // rendererLive=false or rootBound=false while a dock is on screen == the "frozen
+        // stale strip" fingerprint (requestRender is a dead write into a torn-down root).
+        get mountStats() { return mountStats(); },
+        get mountDebug() { return mountDebugLog(); },
+        get rendererLive() { return isRendererLive(); },
+        get rootBound() { const h = liveHost(); return !!(h && h.isConnected); },
 
         // content router + channel switch.
         load, retry: retryActiveLoad, clear: clearArtifact, detectType,
@@ -137,12 +148,18 @@ function exposeDebug(): void {
         get contextActive() { return isContextActive(getCurrentChannelId()); },
         get memberListCaptured() { return !!getMemberListType(); },
         get profileCaptured() { return !!getProfileType(); },
-        primeMemberList, primeProfile, invalidateSlotComponents,
+        get chatCaptured() { return !!getChatType(); },
+        get providerStackCaptured() { return !!getProviderStack(); },
+        get profileSectionUnavailable() { return isProfileSectionUnavailable(); },
+        get primeLog() { return primeDebugLog(); },
+        captureChat, primeMemberList, primeProfile, invalidateSlotComponents,
 
-        // thread tabs (a thread opened as a dock tab): drive the opener + assert the live
-        // isolated chat portals (one document.body root per open thread).
-        openThreadTab,
+        // thread tabs (a thread opened as a dock tab): drive the opener + the external-close
+        // path (E1) + assert the live isolated chat portals (one document.body root per open
+        // thread).
+        openThreadTab, closeThreadTabEverywhere,
         get livePortalThreads() { return livePortalThreads(); },
+        get portalDebug() { return portalDebugLog(); },
 
         // edit-mode (the cross-cutting capability): drive the view↔edit toggle +
         // assert the temporary buffer / re-render loop.
@@ -256,14 +273,26 @@ export default definePlugin({
     // disables it on stop.
     managedStyle,
 
-    // Per-channel panel memory. CHANNEL_SELECT re-points the active tab for the entered
-    // channel + clears the one-shot seal bypass. This is the ONLY flux subscription: the
-    // native member-list / profile / thread-sidebar actions are handled by the dispatch
-    // WRAP in host/interception.ts (installed in start()), not a flux subscription here —
-    // they are SWALLOWED (converted to dock actions) so Discord never opens a native slot.
+    // Flux subscriptions. CHANNEL_SELECT re-points the active tab for the entered channel +
+    // clears the one-shot seal bypass. THREAD_DELETE / THREAD_UPDATE / CHANNEL_DELETE keep
+    // the thread tabs honest (E1): a thread deleted or its parent removed externally must
+    // not leave a ghost tab; a rename follows the strip label. These are OBSERVED (not
+    // swallowed) — the store still processes the real event; we only reconcile our tabs.
+    // (The native member-list / profile / thread-sidebar OPEN actions are handled by the
+    // dispatch WRAP in host/interception.ts — installed in start() — which SWALLOWS them so
+    // Discord never opens a native slot; those are deliberately NOT here.)
     flux: {
         CHANNEL_SELECT({ channelId }: { channelId: string | null; }) {
             onChannelSelect(channelId ?? null);
+        },
+        THREAD_DELETE(payload: any) {
+            onThreadDelete(payload);
+        },
+        THREAD_UPDATE(payload: any) {
+            onThreadUpdate(payload);
+        },
+        CHANNEL_DELETE(payload: any) {
+            onChannelDelete(payload);
         }
     },
 
