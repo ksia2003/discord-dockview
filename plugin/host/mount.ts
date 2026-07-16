@@ -2,10 +2,12 @@
  * Host mount + the open-state DOM reflection.
  *
  * PRIMARY PATH (patch): the dock host is a legitimate child of Discord's React tree.
- * A Vencord patch on the channel-view component (the PureComponent that renders the
- * chat/sidebar flex row) appends $self.renderDockRail() as the row's last flex child,
- * so the host sits beside chat_ exactly like a native thread sidebar AND Discord's
- * reconciler owns it — it is never torn out on re-render. renderDockRail returns a
+ * A Vencord patch on the channel-view component appends $self.renderDockRail() right
+ * after this.renderThreadSidebar() in the render Fragment, so the host takes the native
+ * thread-sidebar's slot: a full-height flex sibling of the WHOLE chat column (header +
+ * messages + composer) in the page-inner row, its top edge level with the channel header
+ * (the header then spans only the chat column). Discord's reconciler owns it — it is
+ * never torn out on re-render. renderDockRail returns a
  * stable placeholder <div id="dockview-root"> whose ref binds our own createRoot;
  * we keep a separate root (not render DockPanel through the patch directly) so the
  * whole engine render pipeline — setRenderer/requestRender, viewState, viewers — is

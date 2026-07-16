@@ -250,20 +250,28 @@ export default definePlugin({
                 replace: "=$1=>$self.rewriteInvidiousEmbed($2)"
             }
         },
-        // Mount the dock as a real child of Discord's React tree. The channel-view
-        // component renders the chat/sidebar flex row as `[this.renderChat(),
-        // this.renderSidebar()]`; we append our host as that row's last flex child, so
-        // it sits beside chat_ like a native thread sidebar and the reconciler never
-        // tears it out. `maybePreloadChannelCall` is a method name unique to this
-        // component (locates the module); the chat/sidebar pair is the structural
-        // anchor (both are `this.`-called methods, stable across recent builds). If the
-        // anchor drifts, the patch is a no-op and the host falls back to DOM injection
-        // (host/mount.ts startHost) — so the dock keeps working, hence noWarn.
+        // Mount the dock as a real child of Discord's React tree, at the FULL-HEIGHT
+        // COLUMN position — a sibling of the whole chat column, exactly where the native
+        // thread sidebar mounts. The channel-view render() is a Fragment whose children
+        // are `[<location tracker>, <div chat-column (header + messages + member slot)>,
+        // this.renderThreadSidebar()]`; the thread sidebar (rV.A resizable wrapper) is the
+        // LAST Fragment child, a flex sibling of the chat column in the page-inner row, so
+        // its top edge is level with the channel header and the header spans only the chat
+        // column. We append our host right AFTER renderThreadSidebar() so it takes that
+        // same sibling-of-chat slot (renderThreadSidebar returns null while sealed, so the
+        // slot is ours). This replaced the old anchor that put the host INSIDE the chat
+        // column's inner row (beside the member list, BELOW the header) — 선인's one
+        // remaining verdict. `maybePreloadChannelCall` is a method name unique to this
+        // component (locates the module); `this.renderThreadSidebar()` is the structural
+        // anchor — a `this.`-called method rendered once at the Fragment tail, stable
+        // across recent builds. If the anchor drifts, the patch is a no-op and the host
+        // falls back to DOM injection (host/mount.ts startHost, which injects at the same
+        // page-inner sibling-of-chat position) — so the dock keeps working, hence noWarn.
         {
             find: "maybePreloadChannelCall",
             noWarn: true,
             replacement: {
-                match: /(this\.renderChat\(\),this\.renderSidebar\(\))/,
+                match: /(this\.renderThreadSidebar\(\))/,
                 replace: "$1,$self.renderDockRail()"
             }
         }
@@ -322,8 +330,9 @@ export default definePlugin({
         return rewriteEmbedSrc(src);
     },
 
-    // The dock host, appended as the last flex child of the channel-view's chat/sidebar
-    // row by the layout patch above. Returns a stable placeholder <div> whose ref binds
+    // The dock host, appended after the channel-view's renderThreadSidebar() by the layout
+    // patch above so it takes the native thread-sidebar's full-height column slot (a flex
+    // sibling of the whole chat column). Returns a stable placeholder <div> whose ref binds
     // our own React root (host/mount.ts); all dock logic lives there, this is just the
     // reachable-from-$self seam.
     renderDockRail() {
