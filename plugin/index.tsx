@@ -50,7 +50,7 @@ import { registerHost, startHost, stopHost } from "./host/open";
 import {
     captureChat, getChatType, getMemberListType, getProfileType, getProviderStack,
     invalidateSlotComponents, isProfileSectionUnavailable, primeDebugLog, primeMemberList,
-    primeProfile
+    primeProfile, setForceProfileSidebarUnavailable
 } from "./host/slotComponents";
 import { destroyAllThreadPortals, livePortalThreads, portalDebugLog } from "./viewers/thread/threadPortal";
 import { closeThreadTabEverywhere, openThreadTab } from "./engine/threadTab";
@@ -153,6 +153,9 @@ function exposeDebug(): void {
         get profileSectionUnavailable() { return isProfileSectionUnavailable(); },
         get primeLog() { return primeDebugLog(); },
         captureChat, primeMemberList, primeProfile, invalidateSlotComponents,
+        // TEST SEAM (rig only): force the DM sidebar route off to prove the cached generic
+        // profile type still renders a real profile through a simulated off-window.
+        setForceProfileSidebarUnavailable,
 
         // thread tabs (a thread opened as a dock tab): drive the opener + the external-close
         // path (E1) + assert the live isolated chat portals (one document.body root per open

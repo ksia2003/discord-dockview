@@ -10,10 +10,21 @@
  * we hand it our own wrapper class so the native card styling (background/sizing) comes
  * from the dock container via SEMANTIC CSS variables, not the native parent wrapper.
  *
- * FALLBACK: if acquisition fails (signature drift after a Discord update), we render an
- * honest error card (the StateCards visual grammar) with a subtle "Open native panel"
- * action that one-shot bypasses the seal — never a silent break, never a crash that
- * takes the dock down.
+ * DM PROFILE — session cache + self-heal, NO placeholder: the profile TYPE (the sidebar
+ * wrapper captured from the native aside) is GENERIC — it renders ANY DM's profile — and is
+ * cached module-level for the session on the FIRST DM view. So once any DM is opened while
+ * Discord has the sidebar enabled, EVERY DM (including ones opened later during a transient
+ * "(Unavailable)" window) renders a real profile from that cache. When Discord ships the
+ * sidebar disabled AND no type is cached yet (a session whose first-ever DM view lands inside
+ * the off-window), the body shows a calm LOADING state that SELF-HEALS — it re-attempts the
+ * capture every few seconds and becomes a real profile the instant the sidebar is re-enabled.
+ * The old "Discord turned it off → empty card" placeholder is gone; that state is now either a
+ * real cached profile or a self-healing loading, never a dead-end message.
+ *
+ * FALLBACK CARD: the honest error card (StateCards grammar, "Open native panel" escape) is the
+ * TRUE last resort ONLY — the capture SIGNATURE genuinely drifted after a Discord update (a
+ * different, honest failure). Never shown for the calm "sidebar unavailable" state. Never a
+ * silent break, never a crash that takes the dock down.
  */
 
 import { React } from "@webpack/common";
@@ -185,31 +196,42 @@ function ContextFallback({ channelId, kind }: { channelId: string | null; kind: 
         prime.then(ok => {
             if (!alive) return;
             if (ok) { requestRender(); bump((n: number) => n + 1); } // captured → repaint so the body shows
-            else setFailed(true);
+            // A profile prime that failed because Discord has the DM profile sidebar DISABLED
+            // ("(Unavailable)") is NOT drift — do NOT surface the error card. The profile TYPE
+            // is generic + cached for the session, so if ANY DM was viewed while the sidebar
+            // was available this session the parent already rendered a real profile and we
+            // never got here; when it wasn't, keep a calm LOADING state and RETRY (below) so
+            // the moment Discord re-enables the sidebar (or a store re-check succeeds) a real
+            // profile appears. The old "→ empty card" placeholder for this state is gone.
+            else if (!(kind === "profile" && isProfileSectionUnavailable())) setFailed(true);
         });
-        // A hard ceiling: if the prime never resolves, still surface the error card.
+        // A hard ceiling: if the prime never resolves and the type still isn't captured, it's a
+        // genuine drift (not the calm unavailable state) → surface the error card.
         const t = setTimeout(() => {
             if (!alive) return;
             const ty = kind === "profile" ? getProfileType() : getMemberListType();
-            if (!ty) setFailed(true);
-            else { requestRender(); bump((n: number) => n + 1); }
+            if (ty) { requestRender(); bump((n: number) => n + 1); }
+            else if (!(kind === "profile" && isProfileSectionUnavailable())) setFailed(true);
         }, 4000);
-        return () => { alive = false; clearTimeout(t); };
-    }, [channelId, kind]);
-    if (failed) {
-        // A profile prime that failed because Discord itself has the DM profile sidebar
-        // DISABLED (the header button reads "(Unavailable)"; even naked Discord can't open
-        // it) is NOT acquisition drift — native shows nothing, so parity is the calm empty
-        // card, not an error with a bypass that couldn't work anyway. Behaviour-detected
-        // in primeProfile; self-heals if Discord re-enables the panel.
-        if (kind === "profile" && isProfileSectionUnavailable()) {
-            return React.createElement(
-                "div",
-                { className: "dockview-empty" },
-                React.createElement("div", { className: "dockview-empty-text" }, STRINGS.empty.text)
-            );
+        // SELF-HEAL RETRY (profile-unavailable only): while Discord has the DM sidebar gated
+        // off and no profile type is cached, re-attempt the prime every few seconds. The
+        // instant Discord re-enables the sidebar the prime captures the type and the profile
+        // renders — no reload, no manual step, and never a placeholder in the meantime.
+        let retry: ReturnType<typeof setInterval> | null = null;
+        if (kind === "profile") {
+            retry = setInterval(() => {
+                if (!alive) return;
+                if (getProfileType()) { requestRender(); bump((n: number) => n + 1); return; }
+                if (!isProfileSectionUnavailable()) return; // a drift path handles itself
+                primeProfile().then(ok => {
+                    if (alive && ok) { requestRender(); bump((n: number) => n + 1); }
+                });
+            }, 3000);
         }
-        return React.createElement(ErrorCard, { channelId, kind });
-    }
+        return () => { alive = false; clearTimeout(t); if (retry) clearInterval(retry); };
+    }, [channelId, kind]);
+    if (failed) return React.createElement(ErrorCard, { channelId, kind });
+    // Loading — and, for the sidebar-unavailable profile state, a self-healing loading that
+    // becomes a real profile the moment the sidebar is re-enabled (never an empty placeholder).
     return React.createElement(LoadingCard, null);
 }

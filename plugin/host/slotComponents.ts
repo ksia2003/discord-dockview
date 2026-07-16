@@ -155,6 +155,7 @@ export function captureMemberList(): boolean {
 /** Try to capture the DM profile-sidebar component from the live tree. */
 export function captureProfile(): boolean {
     if (profileType) return true;
+    if (forceSidebarUnavailable) return false; // test seam: sidebar route forced off
     const fiber = fiberOf(profileAnchor());
     if (!fiber) return false;
     const type = walkForComponent(fiber, keys => keysAre(keys, ["channel"]));
@@ -375,16 +376,32 @@ export async function primeMemberList(): Promise<boolean> {
 /** Prime + capture the DM profile sidebar. The profile section is NOT open by default, so
  *  this nearly always needs a brief flagged hidden toggle, then a poll for the aside to
  *  mount (the profile card takes a few commits to render). Same shape as primeMemberList. */
-// Capability flag: Discord currently ships the DM profile sidebar DISABLED for some
+// Capability flag: Discord sometimes ships the DM profile sidebar DISABLED for some
 // builds/accounts (the DM header button reads "Show User Profile (Unavailable)", and even
 // with no plugin installed the toggle dispatch doesn't flip ChannelSectionStore — verified
-// naked on the rig 2026-07-16). That is NOT signature drift: there is no native panel to
-// mirror, so the context tab should show the calm empty state, not the error card. The
-// flag is detected behaviourally (our flagged toggle passed interception yet the store
-// never entered PROFILE and no aside mounted) — no locale strings, no experiment names —
-// and self-heals: a later prime that succeeds clears it.
+// naked on the rig 2026-07-16). That is NOT signature drift: the sidebar MOUNT SITE is gated
+// off, so priming can't capture from it. It is NOT an error state either — the captured
+// profile TYPE is generic and cached for the session, so any DM viewed while the sidebar was
+// enabled leaves a type that renders every DM's profile through the off-window; only a session
+// whose FIRST DM view lands inside the off-window has no type yet, and that shows a calm
+// self-healing LOADING (ContextTabBody), never a placeholder. The flag is detected
+// behaviourally (our flagged toggle passed interception yet the store never entered PROFILE and
+// no aside mounted) — no locale strings, no experiment names — and self-heals: a later prime
+// that succeeds clears it.
 let profileSectionUnavailableFlag = false;
 export function isProfileSectionUnavailable(): boolean { return profileSectionUnavailableFlag; }
+
+// TEST SEAM (not a production path): the sidebar off-state is Discord-controlled and not
+// reproducible on demand, so the rig suite forces it. When on, primeProfile reports the
+// sidebar UNAVAILABLE without perturbing Discord's DOM/stores (patching those breaks the
+// channel-view the dock is patched onto). It deliberately does NOT clear an already-captured
+// profileType — that is the whole point: it proves the CACHED generic type still renders a
+// real profile through the off-window. Off in all normal use; only the debug surface flips it.
+let forceSidebarUnavailable = false;
+export function setForceProfileSidebarUnavailable(on: boolean): void {
+    forceSidebarUnavailable = !!on;
+    if (on) profileSectionUnavailableFlag = true;
+}
 
 // Prime-verdict trace (debug surface primeLog) — the unavailable-detection misfired
 // silently once; keep the last few verdicts inspectable.
@@ -397,6 +414,9 @@ function plog(s: string): void {
 
 export async function primeProfile(): Promise<boolean> {
     if (profileType) { plog("profile: cached"); return true; }
+    // Test seam: sidebar forced off — report unavailable (the calm self-healing state), no
+    // capture attempt, no Discord perturbation. A cached type would have returned above.
+    if (forceSidebarUnavailable) { profileSectionUnavailableFlag = true; plog("profile: forced-unavailable"); return false; }
     if (captureProfile()) { plog("profile: direct-capture"); return true; }
 
     // Snapshot the panel surface BEFORE toggling: the unavailable-vs-drift discriminator
