@@ -616,6 +616,29 @@ html.dockview-open .dockview-page-inner {
 .dockview-context-native {
     height: 100%;
     min-height: 0;
+    width: 100%;
+}
+
+/* WIDTH FLUIDITY (member list + profile fill the dock, no dead gutter). Discord's own
+   right-rail components carry their native FIXED widths — the member-list scroller is
+   ~264px, the profile sidebar body ~300px — and their flex parent CENTRES them, so at any
+   dock width wider than that they leave dead gutters on both sides (the dock width is
+   user-adjustable, so this is very visible). We stretch the inner Discord element to the
+   full container width so the rows / banner / buttons reflow to the dock's width and follow
+   a live width drag. SCOPED to our context containers (never a global Discord class); the
+   hash-suffixed class names are matched by prefix so a Discord build bump can't unpin them.
+   The inner layouts are already fluid (verified on the rig: rows, banner, mutuals, and the
+   View-Full-Profile button all reflow, no horizontal scrollbar, no clipped content). */
+.dockview-context-native > [class*="membersWrap"],
+.dockview-context-native [class*="members_"][class*="scrollerBase"],
+.dockview-context-native [class*="members_"] {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+.dockview-context-body aside [class*="outer_"],
+.dockview-context-body aside [class*="inner_"] {
+    width: 100% !important;
+    max-width: 100% !important;
 }
 
 /* A THREAD tab: Discord's own chat component (captured from the main chat, bound to the

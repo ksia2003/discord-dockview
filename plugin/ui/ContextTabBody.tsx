@@ -38,10 +38,27 @@ import {
 } from "../host/nativePanels";
 import {
     captureMemberList, captureProfile, contextKindFor, getChannelObject, getMemberListType,
-    getProfileType, isProfileSectionUnavailable, primeMemberList, primeProfile
+    getProfileType, getThemeContextType, getThemeContextValue, isProfileSectionUnavailable,
+    primeMemberList, primeProfile
 } from "../host/slotComponents";
 import type { ContextKind } from "../host/slotComponents";
 import { STRINGS } from "../strings";
+
+/** Wrap a captured Discord component in the app's own ThemeContext.Provider so the
+ *  components resolve the SAME theme they do natively. The redesigned DM profile reads its
+ *  light/dark base from `useThemeContext().theme`; in our detached root that provider is
+ *  absent, so React falls back to the context DEFAULT (theme "light") and the profile paints
+ *  a white body. Re-supplying Discord's context + its LIVE value (dark for a default account,
+ *  carrying adaptive profile colours when the user has a custom theme) makes ours match native
+ *  exactly — no hardcoded colour, Discord's own value verbatim. If the context/value isn't
+ *  captured yet we render the element bare (its prior behaviour) — the effect below drives the
+ *  capture and re-renders once it lands. */
+function withAppTheme(el: any) {
+    const ctx = getThemeContextType();
+    const value = getThemeContextValue();
+    if (!ctx || value == null) return el;
+    return React.createElement(ctx.Provider, { value }, el);
+}
 
 /** Render the guild member list for `channel` from the captured type, or null if the
  *  type isn't acquired yet (the caller falls to loading/error). */
@@ -49,14 +66,14 @@ function renderMembers(channel: any) {
     const type = getMemberListType();
     if (!type || !channel) return null;
     // Our own wrapper class so the container (not the native parent) supplies styling.
-    return React.createElement(type, { channel, className: "dockview-context-native" });
+    return withAppTheme(React.createElement(type, { channel, className: "dockview-context-native" }));
 }
 
 /** Render the DM profile sidebar for `channel` from the captured type, or null. */
 function renderProfile(channel: any) {
     const type = getProfileType();
     if (!type || !channel) return null;
-    return React.createElement(type, { channel });
+    return withAppTheme(React.createElement(type, { channel }));
 }
 
 /** The honest failure card (acquisition drifted). Mirrors StateCards' centred glyph/
@@ -153,8 +170,16 @@ export function ContextTabBody() {
     useEffect(() => {
         if (kind === "empty") return;
         let alive = true;
+        // Ensure the app ThemeContext value is captured for the profile theming wrap. It
+        // reads off the always-present main chat, so this normally lands synchronously on the
+        // first render (renderProfile → withAppTheme already pulls it); this re-render guards
+        // the case where the value only becomes available a frame later.
+        const hadTheme = getThemeContextValue() != null;
         const need = kind === "profile" ? getProfileType() : getMemberListType();
-        if (need) return;
+        if (need) {
+            if (!hadTheme && getThemeContextValue() != null) bump((n: number) => n + 1);
+            return;
+        }
         // Try a straight capture first (the native panel may already be in the tree).
         const captured = kind === "profile" ? captureProfile() : captureMemberList();
         if (captured) { bump((n: number) => n + 1); return; }

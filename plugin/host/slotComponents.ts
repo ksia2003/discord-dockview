@@ -252,6 +252,79 @@ export function getProviderStack(): Array<{ type: any; value: any }> | null {
     return providerStack;
 }
 
+// --- theme-context capture (profile theming parity) ---------------------------
+// The redesigned DM profile sidebar derives its light/dark base from the APP theme, not
+// from a prop: its `themeOverride` is `useThemeContext().theme` (Discord's ThemeContext).
+// Rendered in OUR detached root that ThemeContext.Provider is absent, so React's
+// `useContext` falls back to the context's DEFAULT value — whose `theme` is "light" — and
+// the profile paints a WHITE body that clashes with the dark app (rig-proven: the
+// `themeContainer` gets `theme-light images-light` → `--profile-gradient-*` resolve white).
+// We fix it at the root the same way the portal fixes popouts: capture Discord's own
+// ThemeContext + its LIVE value from the app tree, and wrap our captured profile in that
+// provider. The live value is the app's real theme object — its `theme` field is dark for a
+// default account, and it carries the ambient adaptive `primaryColor`/`secondaryColor`/
+// `gradient` when the profile has a custom theme — so the profile renders EXACTLY as native:
+// custom-theme users keep their colours, default users follow the dark app theme. No
+// hardcoded colour, no theme string we invent — Discord's own context value verbatim.
+let themeContextType: any = null;
+let themeContextValue: any = null;
+
+/** Resolve Discord's ThemeContext object (the thing you pass to `React.createElement(ctx
+ *  .Provider, …)`). Module signature: exports the hook `wR` + the context `Dx` + the default
+ *  value `PQ`. Cached once resolved (the module reference is stable for the session). */
+function resolveThemeContext(): any {
+    if (themeContextType) return themeContextType;
+    try {
+        const mod = (findByProps as any)?.("wR", "Dx", "PQ");
+        const ctx = mod?.Dx;
+        // A React context object is identified by its $$typeof + a Provider — never by a
+        // minified key alone.
+        if (ctx && ctx.$$typeof && ctx.Provider) { themeContextType = ctx; return ctx; }
+    } catch { /* fall through — profile still renders bare (its old behaviour) */ }
+    return null;
+}
+
+/** True when the app's live ThemeContext value has been captured. */
+function isThemeValue(v: any): boolean {
+    return !!v && typeof v === "object" && "theme" in v
+        && ("primaryColor" in v || "gradient" in v || "density" in v);
+}
+
+/** Capture the app's LIVE ThemeContext value by walking a live fiber's ancestry for the
+ *  ThemeContext.Provider (matched by TAG + the theme value shape, not a minified name).
+ *  Prefers the main chat anchor (always present); falls back to the profile aside if the
+ *  chat isn't found. Refreshed each pass so the value tracks a live theme change. Returns
+ *  true once a value is cached. */
+export function captureThemeContext(): boolean {
+    resolveThemeContext();
+    const anchor = chatAnchor() || profileAnchor() || memberAnchor();
+    const fiber = fiberOf(anchor);
+    if (!fiber) return themeContextValue != null;
+    let f = fiber;
+    let hops = 0;
+    while (f && hops++ < 400) {
+        if (f.tag === CONTEXT_PROVIDER_TAG && f.type && f.memoizedProps) {
+            const v = f.memoizedProps.value;
+            if (isThemeValue(v)) { themeContextValue = v; return true; }
+        }
+        f = f.return;
+    }
+    return themeContextValue != null;
+}
+
+/** Discord's ThemeContext object (for wrapping our captured profile in its Provider), or
+ *  null before it resolves. */
+export function getThemeContextType(): any { return resolveThemeContext(); }
+
+/** The app's live ThemeContext value (dark for a default account, carrying adaptive
+ *  profile colours when present), or null before capture. */
+export function getThemeContextValue(): any {
+    // Refresh opportunistically so a theme change (or a first render before any capture)
+    // still lands a current value; cheap (one fiber walk) and only on the context-tab path.
+    captureThemeContext();
+    return themeContextValue;
+}
+
 /** Build the props to render the chat component for a THREAD. Clones the captured main-
  *  chat props (so every flag/context the component reads is present) and swaps the
  *  channel-identity fields to the thread + its parent. Returns null if we haven't captured
@@ -302,6 +375,8 @@ export function invalidateSlotComponents(): void {
     chatType = null;
     chatBaseProps = null;
     providerStack = null;
+    themeContextType = null;
+    themeContextValue = null;
     profileSectionUnavailableFlag = false;
 }
 
