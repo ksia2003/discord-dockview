@@ -4,9 +4,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { DockViewIpcEvents } from "dockview/shared/IpcEvents";
+
 export const enum IpcEvents {
     GET_VENCORD_PRELOAD_SCRIPT = "VCD_GET_VC_PRELOAD_SCRIPT",
-    DEPRECATED_GET_VENCORD_PRELOAD_SCRIPT_PATH = "DEPRECATED_GET_VENCORD_PRELOAD_SCRIPT_PATH",
+    DEPRECATED_GET_VENCORD_PRELOAD_SCRIPT_PATH = DockViewIpcEvents.DEPRECATED_GET_VENCORD_PRELOAD_SCRIPT_PATH,
     GET_VENCORD_RENDERER_SCRIPT = "VCD_GET_VC_RENDERER_SCRIPT",
 
     GET_VESKTOP_RENDERER_SCRIPT = "VCD_GET_RENDERER_SCRIPT",
@@ -29,7 +31,7 @@ export const enum IpcEvents {
     IS_USING_CUSTOM_VENCORD_DIR = "VCD_IS_USING_CUSTOM_VENCORD_DIR",
     SHOW_CUSTOM_VENCORD_DIR = "VCD_SHOW_CUSTOM_VENCORD_DIR",
     SELECT_VENCORD_DIR = "VCD_SELECT_VENCORD_DIR",
-    GET_VENCORD_FILES_DIR = "VCD_GET_VENCORD_FILES_DIR",
+    GET_VENCORD_FILES_DIR = DockViewIpcEvents.GET_VENCORD_FILES_DIR,
 
     UPDATER_IS_OUTDATED = "VCD_UPDATER_IS_OUTDATED",
     UPDATER_OPEN = "VCD_UPDATER_OPEN",
@@ -71,19 +73,19 @@ export const enum IpcEvents {
 
     CHOOSE_USER_ASSET = "VCD_CHOOSE_USER_ASSET",
 
-    SET_FIREWALL_ENABLED = "VCD_SET_FIREWALL_ENABLED",
-    SET_PROXY = "VCD_SET_PROXY",
+    SET_FIREWALL_ENABLED = DockViewIpcEvents.SET_FIREWALL_ENABLED,
+    SET_PROXY = DockViewIpcEvents.SET_PROXY,
 
-    SET_VOICE_FIX_ENABLED = "VCD_SET_VOICE_FIX_ENABLED",
+    SET_VOICE_FIX_ENABLED = DockViewIpcEvents.SET_VOICE_FIX_ENABLED,
 
     // A download fired on the dock's embedded web <webview>: the page was only ever a
     // file, not something to browse. Main sends the guest webContents id so the renderer
     // can close the web tab backing that webview (see webDownloadGuard.ts).
-    WEB_TAB_DOWNLOAD = "VCD_WEB_TAB_DOWNLOAD",
+    WEB_TAB_DOWNLOAD = DockViewIpcEvents.WEB_TAB_DOWNLOAD,
 
     // A user clicked an external web link: main tells the renderer to open it as a dock web
     // tab instead of the OS browser (the arg is the url). See makeLinksOpenExternally.ts.
-    WEB_TAB_OPEN = "VCD_WEB_TAB_OPEN"
+    WEB_TAB_OPEN = DockViewIpcEvents.WEB_TAB_OPEN
 }
 
 export const enum UpdaterIpcEvents {

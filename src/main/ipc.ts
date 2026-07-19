@@ -7,6 +7,7 @@
 if (process.platform === "linux") import("./venmic");
 
 import { execFile } from "child_process";
+import { registerDockViewIpcHandlers } from "dockview/main/registerIpc";
 import {
     app,
     BrowserWindow,
@@ -29,7 +30,6 @@ import { IpcEvents } from "../shared/IpcEvents";
 import { setBadgeCount } from "./appBadge";
 import { autoStart } from "./autoStart";
 import { mainWin } from "./mainWindow";
-import { applyProxy, ProxyConfig, setFirewallEnabled } from "./networkPrivacy";
 import { Settings, State } from "./settings";
 import { applyShellUpdate, getShellUpdateInfo } from "./shellUpdate";
 import { handle, handleSync } from "./utils/ipcWrappers";
@@ -37,11 +37,8 @@ import { PopoutWindows } from "./utils/popout";
 import { isDeckGameMode, showGamePage } from "./utils/steamOS";
 import { isValidVencordInstall } from "./utils/vencordLoader";
 import { VENCORD_FILES_DIR } from "./vencordFilesDir";
-import { setVoiceFixEnabled } from "./voiceFix";
 
-handleSync(IpcEvents.DEPRECATED_GET_VENCORD_PRELOAD_SCRIPT_PATH, () =>
-    join(VENCORD_FILES_DIR, "vencordDesktopPreload.js")
-);
+registerDockViewIpcHandlers("compatibility");
 handleSync(IpcEvents.GET_VENCORD_PRELOAD_SCRIPT, () =>
     readFileSync(join(VENCORD_FILES_DIR, "vencordDesktopPreload.js"), "utf-8")
 );
@@ -103,7 +100,7 @@ handle(IpcEvents.SHELL_UPDATE_INFO, () => getShellUpdateInfo());
 handle(IpcEvents.SHELL_UPDATE_APPLY, (_, shell: any, baseUrl: string) => applyShellUpdate(shell, baseUrl));
 
 handleSync(IpcEvents.IS_USING_CUSTOM_VENCORD_DIR, () => !!State.store.vencordDir);
-handleSync(IpcEvents.GET_VENCORD_FILES_DIR, () => VENCORD_FILES_DIR);
+registerDockViewIpcHandlers("vencordFiles");
 handle(IpcEvents.SHOW_CUSTOM_VENCORD_DIR, async () => {
     const { vencordDir } = State.store;
     if (!vencordDir) return;
@@ -196,12 +193,4 @@ function openDebugPage(page: string) {
 handle(IpcEvents.DEBUG_LAUNCH_GPU, () => openDebugPage("chrome://gpu"));
 handle(IpcEvents.DEBUG_LAUNCH_WEBRTC_INTERNALS, () => openDebugPage("chrome://webrtc-internals"));
 
-// Network privacy (Privacy settings page). The renderer pushes the current firewall
-// state + proxy config on load and on every change; main holds only the live config.
-handle(IpcEvents.SET_FIREWALL_ENABLED, (_, enabled: boolean) => setFirewallEnabled(enabled));
-handle(IpcEvents.SET_PROXY, (_, config: ProxyConfig) => applyProxy(config));
-
-// Voice connection fix (Performance page). Opt-in WebRTC IP-handling policy so calls
-// stop hanging on "DTLS Connecting" over a VPN. The renderer pushes the current state
-// on start and on every flip; main applies it to every web contents.
-handle(IpcEvents.SET_VOICE_FIX_ENABLED, (_, enabled: boolean) => setVoiceFixEnabled(enabled));
+registerDockViewIpcHandlers("privacy");

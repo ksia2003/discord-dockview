@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { DockViewIpcEvents } from "dockview/shared/IpcEvents";
 import { ipcMain, IpcMainEvent, IpcMainInvokeEvent, WebFrameMain } from "electron";
 import { DISCORD_HOSTNAMES } from "main/constants";
 import { IpcEvents, UpdaterIpcEvents } from "shared/IpcEvents";
@@ -25,14 +26,20 @@ export function validateSender(frame: WebFrameMain | null, event: string) {
     }
 }
 
-export function handleSync(event: IpcEvents | UpdaterIpcEvents, cb: (e: IpcMainEvent, ...args: any[]) => any) {
+export function handleSync(
+    event: IpcEvents | UpdaterIpcEvents | DockViewIpcEvents,
+    cb: (e: IpcMainEvent, ...args: any[]) => any
+) {
     ipcMain.on(event, (e, ...args) => {
         validateSender(e.senderFrame, event);
         e.returnValue = cb(e, ...args);
     });
 }
 
-export function handle(event: IpcEvents | UpdaterIpcEvents, cb: (e: IpcMainInvokeEvent, ...args: any[]) => any) {
+export function handle(
+    event: IpcEvents | UpdaterIpcEvents | DockViewIpcEvents,
+    cb: (e: IpcMainInvokeEvent, ...args: any[]) => any
+) {
     ipcMain.handle(event, (e, ...args) => {
         validateSender(e.senderFrame, event);
         return cb(e, ...args);

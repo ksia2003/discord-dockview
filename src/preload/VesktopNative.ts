@@ -5,6 +5,7 @@
  */
 
 import type { Node } from "@vencord/venmic";
+import { extendVesktopNative } from "dockview/preload/nativeBridge";
 import { ipcRenderer } from "electron/renderer";
 import type { IpcMessage, IpcResponse } from "main/ipcCommands";
 import type { Settings } from "shared/settings";
@@ -26,7 +27,7 @@ let onDevtoolsClose = () => {};
 ipcRenderer.on(IpcEvents.DEVTOOLS_OPENED, () => onDevtoolsOpen());
 ipcRenderer.on(IpcEvents.DEVTOOLS_CLOSED, () => onDevtoolsClose());
 
-export const VesktopNative = {
+export const VesktopNative = extendVesktopNative({
     app: {
         relaunch: () => invoke<void>(IpcEvents.RELAUNCH),
         getVersion: () => sendSync<void>(IpcEvents.GET_VERSION),
@@ -67,7 +68,6 @@ export const VesktopNative = {
     },
     fileManager: {
         isUsingCustomVencordDir: () => sendSync<boolean>(IpcEvents.IS_USING_CUSTOM_VENCORD_DIR),
-        getVencordDir: () => sendSync<string>(IpcEvents.GET_VENCORD_FILES_DIR),
         showCustomVencordDir: () => invoke<void>(IpcEvents.SHOW_CUSTOM_VENCORD_DIR),
         selectVencordDir: (value?: null) => invoke<"cancelled" | "invalid" | "ok">(IpcEvents.SELECT_VENCORD_DIR, value),
         chooseUserAsset: (asset: string, value?: null) =>
@@ -116,28 +116,9 @@ export const VesktopNative = {
         copyImage: (imageBuffer: Uint8Array, imageSrc: string) =>
             invoke<void>(IpcEvents.CLIPBOARD_COPY_IMAGE, imageBuffer, imageSrc)
     },
-    networkPrivacy: {
-        setFirewallEnabled: (enabled: boolean) => invoke<void>(IpcEvents.SET_FIREWALL_ENABLED, enabled),
-        setProxy: (config: { enabled: boolean; rules: string; bypass: string }) =>
-            invoke<void>(IpcEvents.SET_PROXY, config),
-        setVoiceFixEnabled: (enabled: boolean) => invoke<void>(IpcEvents.SET_VOICE_FIX_ENABLED, enabled)
-    },
     debug: {
         launchGpu: () => invoke<void>(IpcEvents.DEBUG_LAUNCH_GPU),
         launchWebrtcInternals: () => invoke<void>(IpcEvents.DEBUG_LAUNCH_WEBRTC_INTERNALS)
-    },
-    dockView: {
-        /** Main tells the renderer a download fired on a dock web <webview> (the arg is
-         *  the guest webContents id). The DockView plugin closes the web tab backing that
-         *  webview if the page was never anything but this download. */
-        onWebTabDownload: (cb: (guestWebContentsId: number) => void) => {
-            ipcRenderer.on(IpcEvents.WEB_TAB_DOWNLOAD, (_e, id: number) => cb(id));
-        },
-        /** Main tells the renderer a user clicked an external web link — open it as a dock
-         *  web tab instead of the browser (the arg is the url). */
-        onOpenWebTab: (cb: (url: string) => void) => {
-            ipcRenderer.on(IpcEvents.WEB_TAB_OPEN, (_e, url: string) => cb(url));
-        }
     },
     commands: {
         onCommand(cb: (message: IpcMessage) => void) {
@@ -145,4 +126,4 @@ export const VesktopNative = {
         },
         respond: (response: IpcResponse) => ipcRenderer.send(IpcEvents.IPC_COMMAND, response)
     }
-};
+});
