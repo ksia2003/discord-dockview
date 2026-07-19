@@ -10,6 +10,7 @@ import "./ipc";
 import "./userAssets";
 import "./vesktopProtocol";
 
+import { applyDockViewGpuBlocklistBypass, registerDockViewReadyHooks } from "dockview/main/earlyBootstrap";
 import { app, BrowserWindow, nativeTheme } from "electron";
 
 import { DATA_DIR } from "./constants";
@@ -55,17 +56,7 @@ function init() {
                 enabledFeatures.add("AcceleratedVideoDecodeLinuxZeroCopyGL");
             }
 
-            // Chromium keeps VAAPI on its GPU blocklist for most drivers, so the accel
-            // features above silently no-op there. Force past the blocklist and skip the
-            // driver-version check so the decoder actually binds. Off by default — this
-            // can destabilise flaky drivers, so it's an explicit opt-in read at startup
-            // (a live toggle can't move a command-line switch; the UI flags a restart).
-            if (ignoreGpuBlocklist) {
-                app.commandLine.appendSwitch("ignore-gpu-blocklist");
-                enabledFeatures.add("VaapiIgnoreDriverChecks");
-                app.commandLine.appendSwitch("enable-gpu-rasterization");
-                app.commandLine.appendSwitch("enable-zero-copy");
-            }
+            applyDockViewGpuBlocklistBypass(ignoreGpuBlocklist === true, enabledFeatures);
         }
     }
 
@@ -135,13 +126,7 @@ function init() {
         registerScreenShareHandler();
         registerMediaPermissionsHandler();
 
-        // Block trackers/telemetry from the first request, before the renderer
-        // connects to push its Privacy settings. Default ON; the toggle flips it live.
-        initFirewall();
-
-        // Register the WebRTC voice-fix hook so it covers popouts too. Default OFF;
-        // the renderer enables it when the Performance toggle is on.
-        initVoiceFix();
+        registerDockViewReadyHooks(initFirewall, initVoiceFix);
 
         bootstrap();
 
