@@ -56,7 +56,7 @@ function init() {
                 enabledFeatures.add("AcceleratedVideoDecodeLinuxZeroCopyGL");
             }
 
-            applyDockViewGpuBlocklistBypass(ignoreGpuBlocklist === true, enabledFeatures);
+            applyDockViewGpuBlocklistBypass(ignoreGpuBlocklist, enabledFeatures);
         }
     }
 

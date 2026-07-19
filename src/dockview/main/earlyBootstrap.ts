@@ -30,7 +30,7 @@ export function resolveDockViewDataPaths({
     };
 }
 
-export function applyDockViewGpuBlocklistBypass(ignoreGpuBlocklist: boolean, enabledFeatures: Set<string>) {
+export function applyDockViewGpuBlocklistBypass(ignoreGpuBlocklist: boolean | undefined, enabledFeatures: Set<string>) {
     if (!ignoreGpuBlocklist) return;
 
     app.commandLine.appendSwitch("ignore-gpu-blocklist");
