@@ -18,7 +18,7 @@ import { Button, Forms, React, Text } from "@webpack/common";
 
 import { openExternalLink } from "../external/openExternal";
 import { STRINGS } from "../strings";
-import { DOCKVIEW_PLUGIN_VERSION } from "../version";
+import { DOCKVIEW_PLUGIN_VERSION, DOCKVIEW_RELEASE_REPOSITORY } from "../version";
 
 // Lazy createElement wrapper — resolving the webpack React proxy at module-top would
 // throw before Vencord is ready and drop the plugin. Defer it to call time.
@@ -26,7 +26,7 @@ const h = (...args: any[]) => (React.createElement as any)(...args);
 
 const A = STRINGS.about;
 
-const GITHUB_URL = "https://github.com/ksia2003/discord-dockview";
+const GITHUB_URL = `https://github.com/${DOCKVIEW_RELEASE_REPOSITORY}`;
 
 /** The Vesktop base version off VesktopNative (the app IS Vesktop). null if the
  *  bridge isn't present in this build (e.g. plain web). */

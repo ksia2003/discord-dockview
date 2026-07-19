@@ -6,6 +6,7 @@
 
 import { app } from "electron";
 import { getProfileDataDir } from "main/profiles";
+import { DOCKVIEW_RELEASE_REPOSITORY } from "shared/dockviewRelease";
 
 export interface DockViewDataPaths {
     baseDataDir: string;
@@ -45,5 +46,5 @@ export function registerDockViewReadyHooks(initFirewall: () => void, initVoiceFi
 }
 
 export function getDockViewUserAgent(version: string) {
-    return `DockView/${version} (https://github.com/ksia2003/discord-dockview)`;
+    return `DockView/${version} (https://github.com/${DOCKVIEW_RELEASE_REPOSITORY})`;
 }

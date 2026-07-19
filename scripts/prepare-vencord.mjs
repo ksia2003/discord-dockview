@@ -26,6 +26,7 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 import { chunkExternalPackages, chunkFileNames } from "./chunkList.mjs";
+import { readDockViewReleaseMetadata } from "./lib/readDockViewReleaseMetadata.mjs";
 
 // Node builtins (with and without the "node:" prefix). The plugin runs in the
 // renderer and shouldn't import these, but guard against future drift.
@@ -33,6 +34,7 @@ const NODE_BUILTINS = new Set([...builtinModules, ...builtinModules.map(m => `no
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
+const RELEASE_METADATA = readDockViewReleaseMetadata(ROOT);
 
 const VENCORD_REPO = "https://github.com/Vendicated/Vencord";
 const VENCORD_REF = process.env.VENCORD_REF || "v1.14.13";
@@ -41,16 +43,6 @@ const PNPM = "pnpm";
 
 // DockView userplugin source, shipped in this repo.
 const PLUGIN_SRC = join(ROOT, "plugin");
-
-// plugin/version.ts is the SINGLE home of the running plugin version. This is a
-// .mjs and can't import a .ts, so read the literal as text and regex it out.
-// Keeps the build the SOLE writer of version.txt with version.ts the one source.
-function readPluginVersion() {
-    const src = readFileSync(join(PLUGIN_SRC, "version.ts"), "utf-8");
-    const m = src.match(/DOCKVIEW_PLUGIN_VERSION\s*=\s*["']([^"']+)["']/);
-    if (!m) throw new Error("Could not extract DOCKVIEW_PLUGIN_VERSION from plugin/version.ts");
-    return m[1];
-}
 
 // Import prefixes that Vencord already provides — never `pnpm add` these.
 // (Vencord aliases + the React runtime + node builtins.)
@@ -252,7 +244,7 @@ try {
     } catch {
         /* not a git checkout (e.g. source tarball) — fall back to "local" */
     }
-    const ver = readPluginVersion();
+    const ver = RELEASE_METADATA.pluginVersion;
     writeFileSync(join(OUT_DIR, "version.txt"), `dockview:${ver} ${VENCORD_REF} ${pluginRev}\n`);
 
     // 6. Verify DockView made it in.

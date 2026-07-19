@@ -47,7 +47,7 @@
  *   [outPath]     where to write the manifest (default: ./bridge-manifest.json).
  *
  * Env:
- *   DOCKVIEW_REPO   owner/repo (default: ksia2003/discord-dockview).
+ *   DOCKVIEW_REPO   owner/repo (default: validated release metadata).
  *   GH_TOKEN        optional; raises the GitHub API rate limit for the asset list.
  *
  * Then publish it as the ONLY asset on a plugin-v* release (example for v0.1.25):
@@ -65,6 +65,10 @@
 
 import { createHash } from "crypto";
 import { writeFileSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+
+import { readDockViewReleaseMetadata } from "./lib/readDockViewReleaseMetadata.mjs";
 
 // The legacy client fetches EXACTLY these names out of its manifest (the four
 // desktop bundle files + version.txt). The legacy applyUpdate iterated the manifest
@@ -81,7 +85,8 @@ const CORE_FILES = [
 
 const VERSION_FILE = "version.txt";
 
-const repo = process.env.DOCKVIEW_REPO || "ksia2003/discord-dockview";
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const repo = process.env.DOCKVIEW_REPO || readDockViewReleaseMetadata(ROOT).repository.slug;
 const targetTag = process.argv[2];
 const outPath = process.argv[3] || "bridge-manifest.json";
 

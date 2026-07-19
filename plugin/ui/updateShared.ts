@@ -13,11 +13,10 @@
  * same discipline UpdatePanel already uses.
  */
 
-import { compareDockviewVersions } from "../version";
+import { compareDockviewVersions, DOCKVIEW_RELEASE_REPOSITORY } from "../version";
 
 /** The public repo the updater checks. */
-export const OWNER = "ksia2003";
-export const REPO = "discord-dockview";
+export const [OWNER, REPO] = DOCKVIEW_RELEASE_REPOSITORY.split("/") as [string, string];
 
 /** The discriminated result native.ts's discoverManifest returns. Mirrors the
  *  DiscoverResult union there (main + renderer share the shape by contract, not by

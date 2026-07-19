@@ -24,6 +24,12 @@
 /** The compiled/running plugin patch version. Bump this per patch release. */
 export const DOCKVIEW_PLUGIN_VERSION = "0.1.36";
 
+/**
+ * Intentional mirror of the app-domain release repository. The plugin compiles
+ * in Vencord's separate source domain, so it cannot import src/shared here.
+ */
+export const DOCKVIEW_RELEASE_REPOSITORY = "ksia2003/discord-dockview";
+
 export interface ParsedVersionTxt {
     plugin: string | null;
     vencordRef: string | null;
