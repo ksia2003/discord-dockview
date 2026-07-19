@@ -9,6 +9,7 @@ import { currentSettings } from "renderer/components/ScreenSharePicker";
 import { State } from "renderer/settings";
 import { isLinux } from "renderer/utils";
 import { isCurrentScreenShareGeneration, requestsLinuxScreenShareAudio } from "shared/screenShareAudio";
+import { getScreenShareQualityValues } from "shared/screenShareQuality";
 
 const logger = new Logger("VesktopStreamFixes");
 
@@ -99,9 +100,10 @@ if (isLinux) {
             throw error;
         }
 
-        const frameRate = Number(State.store.screenshareQuality?.frameRate ?? 30);
-        const height = Number(State.store.screenshareQuality?.resolution ?? 720);
-        const width = Math.round(height * (16 / 9));
+        const quality = getScreenShareQualityValues(
+            Number(State.store.screenshareQuality?.resolution),
+            Number(State.store.screenshareQuality?.frameRate)
+        );
         const track = stream.getVideoTracks()[0];
 
         if (!track) {
@@ -115,21 +117,46 @@ if (isLinux) {
 
         track.contentHint = String(generation.settings?.contentHint);
 
-        const constraints = {
+        const constraints: MediaTrackConstraints & { resizeMode?: string } = {
             ...track.getConstraints(),
-            frameRate: { min: frameRate, ideal: frameRate },
-            width: { min: 640, ideal: width, max: width },
-            height: { min: 480, ideal: height, max: height },
-            advanced: [{ width: width, height: height }],
-            resizeMode: "none"
+            frameRate: { ideal: quality.framerate, max: quality.framerate },
+            width: { ideal: quality.width, max: quality.width },
+            height: { ideal: quality.height, max: quality.height }
         };
+        delete constraints.advanced;
+        delete constraints.resizeMode;
 
-        track
-            .applyConstraints(constraints)
-            .then(() => {
-                logger.info("Applied constraints successfully. New constraints: ", track.getConstraints());
-            })
-            .catch(e => logger.error("Failed to apply constraints.", e));
+        const supportedConstraints =
+            navigator.mediaDevices.getSupportedConstraints() as MediaTrackSupportedConstraints & {
+                resizeMode?: boolean;
+            };
+        const supportsResizeMode = supportedConstraints.resizeMode === true;
+        if (supportsResizeMode) {
+            constraints.resizeMode = "crop-and-scale";
+        }
+
+        try {
+            await track.applyConstraints(constraints);
+            logger.info("Applied screen-share constraints successfully. New constraints: ", track.getConstraints());
+        } catch (error) {
+            if (!supportsResizeMode) {
+                logger.error("Failed to apply screen-share constraints; continuing with the capture stream.", error);
+            } else {
+                delete constraints.resizeMode;
+                try {
+                    await track.applyConstraints(constraints);
+                    logger.info(
+                        "Applied screen-share constraints without resizeMode. New constraints:",
+                        track.getConstraints()
+                    );
+                } catch (fallbackError) {
+                    logger.error(
+                        "Failed to apply screen-share constraints with and without resizeMode; continuing with the capture stream.",
+                        fallbackError
+                    );
+                }
+            }
+        }
 
         if (!generation.audioRequested) {
             removeAudioTracks(stream);

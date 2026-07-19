@@ -38,6 +38,7 @@ import { addPatch } from "renderer/patches/shared";
 import { State, useSettings, useVesktopState } from "renderer/settings";
 import { isLinux, isWindows } from "renderer/utils";
 import { requestsLinuxScreenShareAudio } from "shared/screenShareAudio";
+import { getAdaptiveScreenShareBitrate, getScreenShareQualityValues } from "shared/screenShareQuality";
 
 import { SimpleErrorBoundary } from "./SimpleErrorBoundary";
 
@@ -94,28 +95,26 @@ addPatch({
         const { screenshareQuality } = State.store;
         if (!screenshareQuality) return opts;
 
-        const framerate = Number(screenshareQuality.frameRate);
-        const height = Number(screenshareQuality.resolution);
-        const width = Math.round(height * (16 / 9));
+        const quality = getScreenShareQualityValues(
+            Number(screenshareQuality.resolution),
+            Number(screenshareQuality.frameRate)
+        );
+        const bitrate = getAdaptiveScreenShareBitrate(quality, opts);
 
-        Object.assign(opts, {
-            bitrateMin: 500000,
-            bitrateMax: 8000000,
-            bitrateTarget: 600000
-        });
+        Object.assign(opts, bitrate);
         if (opts?.encode) {
             Object.assign(opts.encode, {
-                framerate,
-                width,
-                height,
-                pixelCount: height * width
+                framerate: quality.framerate,
+                width: quality.width,
+                height: quality.height,
+                pixelCount: quality.pixelCount
             });
         }
         Object.assign(opts.capture, {
-            framerate,
-            width,
-            height,
-            pixelCount: height * width
+            framerate: quality.framerate,
+            width: quality.width,
+            height: quality.height,
+            pixelCount: quality.pixelCount
         });
         return opts;
     }
@@ -756,55 +755,26 @@ function ModalComponent({
                     onClick={() => {
                         currentSettings = settings;
                         try {
-                            const frameRate = Number(qualitySettings.frameRate);
-                            const height = Number(qualitySettings.resolution);
-                            const width = Math.round(height * (16 / 9));
+                            const quality = getScreenShareQualityValues(
+                                Number(qualitySettings.resolution),
+                                Number(qualitySettings.frameRate)
+                            );
 
                             const conn = [...MediaEngineStore.getMediaEngine().connections].find(
                                 connection => connection.streamUserId === UserStore.getCurrentUser().id
                             );
 
                             if (conn) {
-                                conn.videoStreamParameters[0].maxFrameRate = frameRate;
+                                conn.videoStreamParameters[0].maxFrameRate = quality.framerate;
                                 conn.videoStreamParameters[0].maxResolution ??= { width: 0, height: 0 };
-                                conn.videoStreamParameters[0].maxResolution.height = height;
-                                conn.videoStreamParameters[0].maxResolution.width = width;
+                                conn.videoStreamParameters[0].maxResolution.height = quality.height;
+                                conn.videoStreamParameters[0].maxResolution.width = quality.width;
                             }
 
                             submit({
                                 id: selected!,
                                 ...settings
                             });
-
-                            setTimeout(async () => {
-                                const conn = [...MediaEngineStore.getMediaEngine().connections].find(
-                                    connection => connection.streamUserId === UserStore.getCurrentUser().id
-                                );
-                                if (!conn) return;
-
-                                // @ts-expect-error incorrect type
-                                const track = conn.input.stream.getVideoTracks()[0];
-
-                                const constraints = {
-                                    ...track.getConstraints(),
-                                    frameRate: { min: frameRate, ideal: frameRate },
-                                    width: { min: 640, ideal: width, max: width },
-                                    height: { min: 480, ideal: height, max: height },
-                                    advanced: [{ width: width, height: height }],
-                                    resizeMode: "none"
-                                };
-
-                                try {
-                                    await track.applyConstraints(constraints);
-
-                                    logger.info(
-                                        "Applied constraints successfully. New constraints:",
-                                        track.getConstraints()
-                                    );
-                                } catch (e) {
-                                    logger.error("Failed to apply constraints.", e);
-                                }
-                            }, 100);
                         } catch (error) {
                             logger.error("Error while submitting stream.", error);
                         }
