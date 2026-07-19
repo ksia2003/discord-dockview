@@ -27,6 +27,9 @@ node scripts/print-dockview-release-metadata.mjs --field tag
 node scripts/verify-dockview-release-metadata.mjs
 ```
 
+On a tag-triggered workflow run, CI rejects a pushed tag that does not equal
+the validated metadata tag. Manual dispatch continues to use the metadata tag.
+
 The schema-2 OTA `manifest.json` remains backwards compatible and now additively
 includes `vesktop: { version, commit }`. Existing 0.1.35 clients ignore that
 unknown field; all existing plugin, shell, and files fields keep their shape.

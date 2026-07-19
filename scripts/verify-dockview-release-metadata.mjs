@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from "crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { basename, dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
@@ -33,23 +34,86 @@ function file(path, label) {
     if (!statSync(path).isFile()) fail(`${label} is not a file: ${path}`);
 }
 
-function isRelativeArtifactUrl(value) {
-    return (
-        typeof value === "string" &&
-        value.length > 0 &&
-        !/^[a-z][a-z\d+.-]*:/i.test(value) &&
-        !value.startsWith("//") &&
-        !value.startsWith("/") &&
-        !value.split("/").includes("..")
-    );
+function sha256Hex(path) {
+    return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function relativeArtifactPath(value) {
+    if (
+        typeof value !== "string" ||
+        !value ||
+        /^[a-z][a-z\d+.-]*:/i.test(value) ||
+        value.startsWith("/") ||
+        value.includes("?") ||
+        value.includes("#")
+    ) {
+        return false;
+    }
+    return value.split("/").every(segment => {
+        if (!segment || segment === "." || segment === "..") return false;
+        try {
+            const decoded = decodeURIComponent(segment);
+            return decoded && decoded !== "." && decoded !== ".." && !decoded.includes("/") && !decoded.includes("\\");
+        } catch {
+            return false;
+        }
+    });
+}
+
+function safeUrlPathname(pathname) {
+    return pathname.split("/").every(segment => {
+        if (!segment) return true;
+        try {
+            const decoded = decodeURIComponent(segment);
+            return decoded !== "." && decoded !== ".." && !decoded.includes("/") && !decoded.includes("\\");
+        } catch {
+            return false;
+        }
+    });
+}
+
+function normalizedReleaseBase(value) {
+    if (typeof value !== "string" || !value) fail("--release-base must be a non-empty absolute URL");
+    let parsed;
+    try {
+        parsed = new URL(value);
+    } catch {
+        fail(`--release-base is not a valid absolute URL: ${value}`);
+    }
+    if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+        fail("--release-base must be an http(s) URL without credentials, query, or fragment");
+    }
+    const pathname = parsed.pathname.replace(/\/+$/, "");
+    if (!pathname || pathname === "/") fail("--release-base must include a release pathname");
+    if (!safeUrlPathname(pathname)) fail("--release-base must not contain encoded traversal or separators");
+    return { origin: parsed.origin, pathname };
 }
 
 function checkArtifactUrl(value, label, releaseBase) {
-    if (isRelativeArtifactUrl(value)) return;
+    if (relativeArtifactPath(value)) return;
     if (typeof value !== "string") fail(`${label} URL must be a string`);
-    if (!releaseBase) fail(`${label} URL is absolute; pass --release-base to verify its release root`);
-    const base = releaseBase.replace(/\/$/, "");
-    if (!value.startsWith(`${base}/`)) fail(`${label} URL must be relative or start with ${base}/, got ${value}`);
+    if (value.startsWith("//")) fail(`${label} URL must not be protocol-relative`);
+    if (!releaseBase) fail(`${label} URL is not a bare relative path; pass --release-base to verify it`);
+
+    let artifact;
+    try {
+        artifact = new URL(value);
+    } catch {
+        fail(`${label} URL is malformed: ${value}`);
+    }
+    if (
+        !/^https?:$/.test(artifact.protocol) ||
+        artifact.username ||
+        artifact.password ||
+        artifact.search ||
+        artifact.hash
+    ) {
+        fail(`${label} URL must be an http(s) URL without credentials, query, or fragment`);
+    }
+    if (!safeUrlPathname(artifact.pathname)) fail(`${label} URL must not contain encoded traversal or separators`);
+    if (artifact.origin !== releaseBase.origin || !artifact.pathname.startsWith(`${releaseBase.pathname}/`)) {
+        fail(`${label} URL must remain strictly beneath ${releaseBase.origin}${releaseBase.pathname}/, got ${value}`);
+    }
 }
 
 function checkVersionFile(path, metadata) {
@@ -60,6 +124,16 @@ function checkVersionFile(path, metadata) {
     if (match[1] !== metadata.pluginVersion)
         fail(`version.txt plugin version is ${match[1]}, expected ${metadata.pluginVersion}`);
 }
+
+const SUPPORTED_INSTALLERS = new Map([
+    ["win-nsis-all", ["win-nsis", "all"]],
+    ["appimage-x64", ["appimage", "x64"]],
+    ["appimage-arm64", ["appimage", "arm64"]],
+    ["deb-x64", ["deb", "x64"]],
+    ["deb-arm64", ["deb", "arm64"]],
+    ["rpm-x64", ["rpm", "x64"]],
+    ["rpm-arm64", ["rpm", "arm64"]]
+]);
 
 function checkManifest(path, metadata, releaseBase, installersDir) {
     file(path, "manifest");
@@ -85,35 +159,52 @@ function checkManifest(path, metadata, releaseBase, installersDir) {
         );
     if (!manifest.files || typeof manifest.files !== "object") fail("manifest files must be an object");
 
+    const normalizedBase = releaseBase ? normalizedReleaseBase(releaseBase) : null;
     for (const [name, entry] of Object.entries(manifest.files)) {
         if (!entry || typeof entry !== "object") fail(`manifest file ${name} must be an object`);
-        checkArtifactUrl(entry.url, `manifest file ${name}`, releaseBase);
+        checkArtifactUrl(entry.url, `manifest file ${name}`, normalizedBase);
     }
 
-    const supported = new Map([
-        ["win-nsis-all", ["win-nsis", "all"]],
-        ["appimage-x64", ["appimage", "x64"]],
-        ["appimage-arm64", ["appimage", "arm64"]],
-        ["deb-x64", ["deb", "x64"]],
-        ["deb-arm64", ["deb", "arm64"]],
-        ["rpm-x64", ["rpm", "x64"]],
-        ["rpm-arm64", ["rpm", "arm64"]]
-    ]);
     const installers = manifest?.shell?.installers;
     if (!installers || typeof installers !== "object" || Array.isArray(installers))
         fail("manifest shell.installers must be an object");
+    const installerKeys = Object.keys(installers);
+    if (
+        installersDir &&
+        (installerKeys.length !== SUPPORTED_INSTALLERS.size ||
+            installerKeys.some(key => !SUPPORTED_INSTALLERS.has(key)))
+    ) {
+        fail(`installer directory validation requires exactly: ${[...SUPPORTED_INSTALLERS.keys()].join(", ")}`);
+    }
     for (const [key, entry] of Object.entries(installers)) {
-        const expected = supported.get(key);
+        const expected = SUPPORTED_INSTALLERS.get(key);
         if (!expected) fail(`unsupported shell installer key ${JSON.stringify(key)}`);
         if (!entry || typeof entry !== "object") fail(`shell installer ${key} must be an object`);
         if (entry.method !== expected[0] || entry.arch !== expected[1]) {
             fail(`shell installer ${key} must use method ${expected[0]} and arch ${expected[1]}`);
         }
-        if (typeof entry.assetName !== "string" || !entry.assetName || basename(entry.assetName) !== entry.assetName) {
+        if (
+            typeof entry.assetName !== "string" ||
+            !entry.assetName ||
+            [".", ".."].includes(entry.assetName) ||
+            basename(entry.assetName) !== entry.assetName
+        ) {
             fail(`shell installer ${key} must have a bare assetName`);
         }
-        checkArtifactUrl(entry.url, `shell installer ${key}`, releaseBase);
-        if (installersDir) file(join(installersDir, entry.assetName), `installer ${key}`);
+        if (typeof entry.sha256 !== "string" || !/^[0-9a-f]{64}$/i.test(entry.sha256)) {
+            fail(`shell installer ${key} must have a 64-hex sha256`);
+        }
+        if (!Number.isInteger(entry.size) || entry.size <= 0)
+            fail(`shell installer ${key} must have a positive integer size`);
+        checkArtifactUrl(entry.url, `shell installer ${key}`, normalizedBase);
+        if (installersDir) {
+            const installerPath = join(installersDir, entry.assetName);
+            file(installerPath, `installer ${key}`);
+            if (statSync(installerPath).size !== entry.size) fail(`installer ${key} size does not match manifest`);
+            if (sha256Hex(installerPath).toLowerCase() !== entry.sha256.toLowerCase()) {
+                fail(`installer ${key} sha256 does not match manifest`);
+            }
+        }
     }
 }
 
