@@ -30,7 +30,7 @@
  *                           that carried the plugin bundle (so a tag-push release is
  *                           correct on its own; uncertainty defaults to false).
  *   DOCKVIEW_REPO           owner/repo used for the auto-detect API + asset fetch
- *                           (default: ksia2003/discord-dockview)
+ *                           (default: the validated repository metadata)
  *   DOCKVIEW_INSTALLERS_DIR the electron-builder output dir (usually dist/) to scan for
  *                           the app INSTALLER artifacts (exe/AppImage/deb/rpm). When set
  *                           and present, each installer's sha256 + size is recorded under
@@ -45,12 +45,13 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
+import { readDockViewReleaseMetadata } from "./lib/readDockViewReleaseMetadata.mjs";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
+const RELEASE_METADATA = readDockViewReleaseMetadata(ROOT);
 
 const DIST = join(ROOT, "static", "vencordDist");
-const PLUGIN_SRC = join(ROOT, "plugin");
-const SHARED_SRC = join(ROOT, "src", "shared");
 
 // The core artifacts in a plugin-only patch release: the four desktop bundle files
 // plus the version stamp. Every one is recorded in the manifest. The out-of-bundle
@@ -76,26 +77,6 @@ const CHUNK_FILES = existsSync(DIST)
 const FILES = [...CORE_FILES, ...CHUNK_FILES];
 
 const VERSION_FILE = "version.txt";
-
-// plugin/version.ts is the SINGLE home of the running plugin version. This is a
-// .mjs and can't import a .ts, so read the literal as text and regex it out —
-// the same approach prepare-vencord.mjs uses, keeping one source of truth.
-function readPluginVersion() {
-    const src = readFileSync(join(PLUGIN_SRC, "version.ts"), "utf-8");
-    const m = src.match(/DOCKVIEW_PLUGIN_VERSION\s*=\s*["']([^"']+)["']/);
-    if (!m) throw new Error("Could not extract DOCKVIEW_PLUGIN_VERSION from plugin/version.ts");
-    return m[1];
-}
-
-// src/shared/dockviewVersion.ts is the SINGLE home of the app-SHELL version (the
-// Vesktop main/preload layer that ships in app.asar and only an installer can update).
-// Same regex-off-the-literal trick as the plugin version — one source of truth.
-function readShellVersion() {
-    const src = readFileSync(join(SHARED_SRC, "dockviewVersion.ts"), "utf-8");
-    const m = src.match(/DOCKVIEW_SHELL_VERSION\s*=\s*["']([^"']+)["']/);
-    if (!m) throw new Error("Could not extract DOCKVIEW_SHELL_VERSION from src/shared/dockviewVersion.ts");
-    return m[1];
-}
 
 // Pull the Vencord ref out of version.txt. The build writes the new shape
 // "dockview:<plugin> <vencordRef> <gitHash>"; tolerate the legacy/bare shapes
@@ -157,7 +138,7 @@ async function detectNeedsRelaunch(version, builtFiles) {
         console.warn(`(needsRelaunch: can't parse version "${version}"; defaulting to false)`);
         return false;
     }
-    const repo = process.env.DOCKVIEW_REPO || "ksia2003/discord-dockview";
+    const repo = process.env.DOCKVIEW_REPO || RELEASE_METADATA.repository.slug;
     const headers = { Accept: "application/vnd.github+json", "User-Agent": "dockview-make-manifest" };
     if (process.env.GH_TOKEN) headers.Authorization = `Bearer ${process.env.GH_TOKEN}`;
 
@@ -232,7 +213,7 @@ for (const name of FILES) {
     };
 }
 
-const pluginVersion = readPluginVersion();
+const pluginVersion = RELEASE_METADATA.pluginVersion;
 const needsRelaunch = await detectNeedsRelaunch(pluginVersion, files);
 
 // ---- Shell (app) update block -------------------------------------------------
@@ -249,7 +230,7 @@ const needsRelaunch = await detectNeedsRelaunch(pluginVersion, files);
 // The .exe.blockmap, -win.zip, tar.gz and latest*.yml are NOT installers we drive —
 // they're skipped here. Per-arch installers are keyed by "<method>-<arch>" (arm64
 // vs x64) so a runtime shell-updater downloads the artifact matching its own arch.
-const shellVersion = readShellVersion();
+const shellVersion = RELEASE_METADATA.shellVersion;
 
 /** Classify an electron-builder output filename into a { method, arch } we can drive,
  *  or null to skip it.
@@ -305,6 +286,10 @@ const manifest = {
     schema: 2,
     pluginVersion,
     shellVersion,
+    vesktop: {
+        version: RELEASE_METADATA.appVersion,
+        commit: RELEASE_METADATA.vesktopCommit
+    },
     vencordRef: readVencordRef(),
     needsRelaunch,
     files,
