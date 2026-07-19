@@ -231,16 +231,3 @@ export async function ensureVencordFiles() {
         copyBundledVencordFiles();
     }
 }
-
-// TODO: remove this once enough time has passed
-export function vencordSupportsSandboxing() {
-    const supports = readFileSync(join(VENCORD_FILES_DIR, "vencordDesktopMain.js"), "utf-8").includes(
-        "VencordGetRendererCss"
-    );
-    if (!supports) {
-        console.warn(
-            "⚠️  [VencordLoader] Vencord version is outdated and does not support sandboxing. Please update Vencord to the latest version."
-        );
-    }
-    return supports;
-}

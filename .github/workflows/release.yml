@@ -23,13 +23,13 @@ jobs:
                       platform: windows
 
         steps:
-            - uses: actions/checkout@v4
-            - uses: pnpm/action-setup@v4 # Install pnpm using packageManager key in package.json
+            - uses: actions/checkout@v7
+            - uses: pnpm/action-setup@v6 # Install pnpm using packageManager key in package.json
 
-            - name: Use Node.js 20
-              uses: actions/setup-node@v4
+            - name: Use Node.js 24
+              uses: actions/setup-node@v6
               with:
-                  node-version: 20
+                  node-version: 24
                   cache: "pnpm"
 
             - name: Install dependencies
@@ -91,7 +91,6 @@ jobs:
                   gh release upload "$TAG" "${files[@]}" --clobber
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
     # A final, single-run job that generates manifest.json AFTER both OS legs have
     # uploaded their installers to the release. It DOWNLOADS the assets already on the
     # release — the plugin bundle files the linux leg uploaded and the installers from
@@ -103,12 +102,12 @@ jobs:
         needs: release
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v7
 
-            - name: Use Node.js 20
-              uses: actions/setup-node@v4
+            - name: Use Node.js 24
+              uses: actions/setup-node@v6
               with:
-                  node-version: 20
+                  node-version: 24
 
             - name: Generate + upload the update manifest
               shell: bash
