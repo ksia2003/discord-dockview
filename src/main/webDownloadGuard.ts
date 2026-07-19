@@ -1,4 +1,10 @@
 /*
+ * Vesktop, a desktop app aiming to give you a snappier Discord Experience
+ * Copyright (c) 2023 Vendicated and Vencord contributors
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+/*
  * Download handling for the dock's embedded web-browsing <webview>.
  *
  * The <webview> runs on an isolated session partition (WEB_PARTITION) and is a VIEWER,
@@ -22,8 +28,8 @@
 
 import { BrowserWindow, session, shell } from "electron";
 
-import { WEB_PARTITION } from "./constants";
 import { IpcEvents } from "../shared/IpcEvents";
+import { WEB_PARTITION } from "./constants";
 
 let installed = false;
 
@@ -52,7 +58,9 @@ export function initWebDownloadGuard(win: BrowserWindow) {
         // Hand the file to the OS browser so a real download the user asked for still
         // reaches them (it just doesn't land in the cookie-less guest session).
         if (/^https?:\/\//i.test(url)) {
-            shell.openExternal(url).catch(() => { /* user declined / no handler */ });
+            shell.openExternal(url).catch(() => {
+                /* user declined / no handler */
+            });
         }
 
         // Tell the renderer which webview this fired on; it decides whether the tab was

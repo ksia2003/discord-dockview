@@ -39,6 +39,9 @@ import { isValidVencordInstall } from "./utils/vencordLoader";
 import { VENCORD_FILES_DIR } from "./vencordFilesDir";
 import { setVoiceFixEnabled } from "./voiceFix";
 
+handleSync(IpcEvents.DEPRECATED_GET_VENCORD_PRELOAD_SCRIPT_PATH, () =>
+    join(VENCORD_FILES_DIR, "vencordDesktopPreload.js")
+);
 handleSync(IpcEvents.GET_VENCORD_PRELOAD_SCRIPT, () =>
     readFileSync(join(VENCORD_FILES_DIR, "vencordDesktopPreload.js"), "utf-8")
 );
@@ -161,7 +164,7 @@ handle(IpcEvents.SELECT_VENCORD_DIR, async (_e, value?: null) => {
     if (!res.filePaths.length) return "cancelled";
 
     const dir = res.filePaths[0];
-    if (!isValidVencordInstall(dir)) return "invalid";
+    if (!(await isValidVencordInstall(dir))) return "invalid";
 
     State.store.vencordDir = dir;
 

@@ -91,9 +91,6 @@ importers:
       typescript-eslint:
         specifier: ^8.62.1
         version: 8.62.1(eslint@10.6.0(jiti@2.7.0))(typescript@6.0.3)
-      xml-formatter:
-        specifier: ^3.6.7
-        version: 3.7.0
     optionalDependencies:
       '@vencord/venmic':
         specifier: ^6.1.0
@@ -675,7 +672,7 @@ packages:
     engines: {node: '>= 0.4'}
 
   arrpc@https://codeload.github.com/OpenAsar/arrpc/tar.gz/2234e9c9111f4c42ebcc3aa6a2215bfd979eef77:
-    resolution: {gitHosted: true, tarball: https://codeload.github.com/OpenAsar/arrpc/tar.gz/2234e9c9111f4c42ebcc3aa6a2215bfd979eef77}
+    resolution: {gitHosted: true, integrity: sha512-N5Pmu/oIOozSEynkAVvglxZWGazXQ8J0MfnlhCnzydHGcdthFGeIoMP6UIxrGnlwohpLEHb0k+9yrZiHMZIpsg==, tarball: https://codeload.github.com/OpenAsar/arrpc/tar.gz/2234e9c9111f4c42ebcc3aa6a2215bfd979eef77}
     version: 3.5.0
     hasBin: true
 
@@ -2804,14 +2801,6 @@ packages:
         optional: true
       utf-8-validate:
         optional: true
-
-  xml-formatter@3.7.0:
-    resolution: {integrity: sha512-+8qTc3zv2UcJ1v9IsSIce37Dl4MQG14Cp7tWrwmy202UaI1wqRukw5QMX1JHsV+DX64yw77EgGsj2s5wGvuMbQ==}
-    engines: {node: '>= 16'}
-
-  xml-parser-xo@4.1.6:
-    resolution: {integrity: sha512-mXbSNSM+rIwndoxSwmFa83bOdeP8G/cOGr7XvxA67X7ebCzoAuVez9JYDCDub3zRDNBZxIbfjuXLSsamr7NfwQ==}
-    engines: {node: '>= 20'}
 
   xmlbuilder@15.1.1:
     resolution: {integrity: sha512-yMqGBqtXyeN1e3TGYvgNgDVZ3j84W4cwkOXQswghol6APgZWaff9lnbvN7MHYJOiXsvGPXtjTYJEiC9J2wv9Eg==}
@@ -6059,12 +6048,6 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.21.0: {}
-
-  xml-formatter@3.7.0:
-    dependencies:
-      xml-parser-xo: 4.1.6
-
-  xml-parser-xo@4.1.6: {}
 
   xmlbuilder@15.1.1: {}
 
