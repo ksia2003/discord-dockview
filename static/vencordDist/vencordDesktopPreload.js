@@ -1,4 +1,4 @@
-// Vencord bc25b7e
+// Vencord 117b362
 // Standalone: false
 // Platform: linux
 // Updater Disabled: false

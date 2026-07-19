@@ -14,7 +14,7 @@
  *   node scripts/prepare-vencord.mjs
  *
  * Env overrides:
- *   VENCORD_REF        git ref/tag of Vencord to build      (default: v1.14.13)
+ *   VENCORD_REF        git ref/tag of Vencord to build      (default: v1.14.14)
  *   SKIP_VENCORD_BUILD if set, skip cloning/building and just verify output
  */
 
@@ -37,7 +37,7 @@ const ROOT = join(__dirname, "..");
 const RELEASE_METADATA = readDockViewReleaseMetadata(ROOT);
 
 const VENCORD_REPO = "https://github.com/Vendicated/Vencord";
-const VENCORD_REF = process.env.VENCORD_REF || "v1.14.13";
+const VENCORD_REF = process.env.VENCORD_REF || "v1.14.14";
 
 const PNPM = "pnpm";
 
