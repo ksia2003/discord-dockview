@@ -5,60 +5,86 @@ versions. A release ships two things from one GitHub release: the app installers
 (for a fresh install) and the DockView plugin bundle (which the in-app updater
 fetches to update the panel without reinstalling the app).
 
-The app is Vesktop, so `package.json.version` stays pinned to the Vesktop base
-version — **never** bump it for a DockView change. Releases are versioned by the
-DockView plugin version instead.
+## Version domains and metadata
+
+DockView deliberately has three independent versions:
+
+- `package.json.version` is the authoritative Vesktop/Electron app version. It
+  follows upstream Vesktop and is **never** bumped just for a DockView change.
+- `src/shared/dockviewVersion.ts` owns the DockView shell version. It represents
+  code in the installer/app.asar domain.
+- `plugin/version.ts` owns the DockView plugin/release version and therefore the
+  `v*` release tag used by plugin OTA.
+
+`src/shared/dockviewRelease.ts` pins the DockView repository and Vesktop upstream
+commit. The plugin deliberately mirrors the repository literal because it is
+compiled inside Vencord's separate source domain. Build tooling composes and checks
+these values without collapsing them:
+
+```bash
+node scripts/print-dockview-release-metadata.mjs
+node scripts/print-dockview-release-metadata.mjs --field tag
+node scripts/verify-dockview-release-metadata.mjs
+```
+
+The schema-2 OTA `manifest.json` remains backwards compatible and now additively
+includes `vesktop: { version, commit }`. Existing 0.1.35 clients ignore that
+unknown field; all existing plugin, shell, and files fields keep their shape.
 
 ## Checklist
 
-1. **Bump the plugin version.** Edit `plugin/version.ts` and raise
+1. **Choose the version domain, then bump it if needed.** For a plugin-only
+   release, edit `plugin/version.ts` and raise
    `DOCKVIEW_PLUGIN_VERSION` (e.g. `0.1.25` → `0.1.26`).
+   Shell/native changes also require a `DOCKVIEW_SHELL_VERSION` bump and new
+   installers; they cannot be delivered by plugin OTA alone. Keep
+   `package.json.version` aligned with upstream Vesktop rather than DockView.
 
 2. **Commit it** on its own:
 
-   ```bash
-   git -c user.name=ksia2003 -c user.email=ksia2003@gmail.com \
-       commit -am "Bump DockView to 0.1.26"
-   ```
+    ```bash
+    git -c user.name=ksia2003 -c user.email=ksia2003@gmail.com \
+        commit -am "Bump DockView to 0.1.26"
+    ```
 
 3. **Tag and push.** The tag drives the whole release:
 
-   ```bash
-   git tag v0.1.26
-   git push origin master
-   git push origin v0.1.26
-   ```
+    ```bash
+    git tag v0.1.26
+    git push origin master
+    git push origin v0.1.26
+    ```
 
 4. **Let CI run.** The `Release` workflow (`.github/workflows/release.yml`) builds
    on Linux and Windows, then:
-   - creates the `v0.1.26` release (titled `dockview 0.1.26`),
-   - uploads the installers + `latest*.yml` (Windows `.exe`, Linux
-     `.AppImage`/`.deb`/`.rpm`/`.tar.gz`, x64 and arm64),
-   - regenerates `manifest.json` and uploads the plugin bundle (the four
-     `vencordDesktop*` files, `version.txt`, the `chunk-*.js` files, and
-     `manifest.json`) as extra assets on the same release.
+    - creates the `v0.1.26` release (titled `dockview 0.1.26`),
+    - uploads the installers + `latest*.yml` (Windows `.exe`, Linux
+      `.AppImage`/`.deb`/`.rpm`/`.tar.gz`, x64 and arm64),
+    - regenerates `manifest.json` and uploads the plugin bundle (the four
+      `vencordDesktop*` files, `version.txt`, the `chunk-*.js` files, and
+      `manifest.json`) as extra assets on the same release.
 
 5. **Write the release notes.** CI seeds a one-line placeholder; replace it with
    real notes (template below):
 
-   ```bash
-   gh release edit v0.1.26 --notes-file notes.md
-   ```
+    ```bash
+    gh release edit v0.1.26 --notes-file notes.md
+    ```
 
 6. **Verify the update assets.** Confirm the plugin bundle landed, or the in-app
    updater has nothing to fetch:
 
-   ```bash
-   gh release view v0.1.26 --json assets -q '.assets[].name' | grep manifest.json
-   ```
+    ```bash
+    gh release view v0.1.26 --json assets -q '.assets[].name' | grep manifest.json
+    ```
 
-   You should also see `vencordDesktopRenderer.js` and the `chunk-*.js` files.
+    You should also see `vencordDesktopRenderer.js` and the `chunk-*.js` files.
 
 7. **Mark it latest** (CI usually does, but confirm):
 
-   ```bash
-   gh release edit v0.1.26 --latest
-   ```
+    ```bash
+    gh release edit v0.1.26 --latest
+    ```
 
 ## Release-notes template
 
@@ -88,8 +114,9 @@ below and reinstall over your current install (your login and settings are kept)
 the panel/viewers (renderer), the in-app updater delivers it. If it touches the
 Electron shell — anything under `src/main/` or `src/preload/`, or a new native
 IPC (profiles, tray menus, window handling) — users need the installer to get it.
-The updater's `manifest.json` records this automatically (`needsRelaunch`), but
-say it in the notes too.
+For those shell/native changes, bump the shell version and ship new installers.
+The updater's `manifest.json` records relaunch information automatically
+(`needsRelaunch`), but say it in the notes too.
 
 ## One-time bridge (historical)
 

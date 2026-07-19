@@ -38,11 +38,17 @@ jobs:
             - name: Prepare bundled Vencord (+ DockView plugin)
               run: node scripts/prepare-vencord.mjs
 
+            - name: Verify prepared DockView release metadata
+              run: node scripts/verify-dockview-release-metadata.mjs --version-file static/vencordDist/version.txt
+
             - name: Build
               run: pnpm build
 
             - name: Run Electron Builder
               run: pnpm electron-builder --${{ matrix.platform }} --publish never
+
+            - name: Verify Vesktop updater metadata
+              run: node scripts/verify-dockview-release-metadata.mjs --version-file static/vencordDist/version.txt --latest-yml dist
 
             # electron-builder names a release after the app (Vesktop) version, but our
             # releases are versioned by the DockView plugin — so we don't let it publish.
@@ -54,9 +60,9 @@ jobs:
             - name: Publish the DockView release
               shell: bash
               run: |
-                  VER=$(grep -oE 'DOCKVIEW_PLUGIN_VERSION *= *"[^"]+"' plugin/version.ts | sed -E 's/.*"([^"]+)".*/\1/')
-                  BASE=$(node -p "require('./package.json').version")
-                  TAG="v$VER"
+                  TAG=$(node scripts/print-dockview-release-metadata.mjs --field tag)
+                  BASE=$(node scripts/print-dockview-release-metadata.mjs --field appVersion)
+                  VER=${TAG#v}
                   gh release create "$TAG" --title "dockview $VER" \
                       --notes "DockView $VER — a Discord attachment dock, on Vesktop $BASE." 2>/dev/null \
                       || gh release view "$TAG" >/dev/null
@@ -81,8 +87,7 @@ jobs:
               if: matrix.platform == 'linux'
               shell: bash
               run: |
-                  VER=$(grep -oE 'DOCKVIEW_PLUGIN_VERSION *= *"[^"]+"' plugin/version.ts | sed -E 's/.*"([^"]+)".*/\1/')
-                  TAG="v$VER"
+                  TAG=$(node scripts/print-dockview-release-metadata.mjs --field tag)
                   shopt -s nullglob
                   files=(static/vencordDist/vencordDesktopMain.js static/vencordDist/vencordDesktopPreload.js \
                          static/vencordDist/vencordDesktopRenderer.js static/vencordDist/vencordDesktopRenderer.css \
@@ -112,8 +117,7 @@ jobs:
             - name: Generate + upload the update manifest
               shell: bash
               run: |
-                  VER=$(grep -oE 'DOCKVIEW_PLUGIN_VERSION *= *"[^"]+"' plugin/version.ts | sed -E 's/.*"([^"]+)".*/\1/')
-                  TAG="v$VER"
+                  TAG=$(node scripts/print-dockview-release-metadata.mjs --field tag)
                   # Pull the plugin bundle assets (the manifest generator hashes files out
                   # of static/vencordDist) so their sha256s match the uploaded bytes exactly.
                   # --clobber: the checkout already tracks placeholder copies of these
@@ -125,10 +129,17 @@ jobs:
                   # Pull the installer assets (both legs) so the shell block records each
                   # platform's installer sha256 + size.
                   gh release download "$TAG" --dir installers --clobber \
-                      --pattern "*.exe" --pattern "*.AppImage" --pattern "*.deb" --pattern "*.rpm" || true
+                      --pattern "*.exe" --pattern "*.AppImage" --pattern "*.deb" --pattern "*.rpm" \
+                      --pattern "latest*.yml" || true
                   export DOCKVIEW_RELEASE_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
                   export DOCKVIEW_INSTALLERS_DIR="$PWD/installers"
                   node scripts/make-plugin-manifest.mjs
+                  node scripts/verify-dockview-release-metadata.mjs \
+                      --version-file static/vencordDist/version.txt \
+                      --manifest static/vencordDist/manifest.json \
+                      --installers-dir installers \
+                      --release-base "$DOCKVIEW_RELEASE_BASE" \
+                      --latest-yml installers
                   gh release upload "$TAG" static/vencordDist/manifest.json --clobber
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
