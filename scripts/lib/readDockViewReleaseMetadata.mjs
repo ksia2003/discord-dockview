@@ -22,11 +22,102 @@ function readText(path) {
     }
 }
 
+/**
+ * Blank comments and mask string contents while preserving line structure. This
+ * makes declaration matching ignore lookalikes in comments, strings, and
+ * templates without mistaking comment markers inside quoted text for comments.
+ */
+function commentSafeSource(source) {
+    let cleaned = "";
+    let codeMask = "";
+    let state = "code";
+    let escaped = false;
+
+    for (let index = 0; index < source.length; index++) {
+        const char = source[index];
+        const next = source[index + 1];
+        const keepNewline = char === "\n" || char === "\r";
+
+        if (state === "lineComment") {
+            if (keepNewline) {
+                cleaned += char;
+                codeMask += char;
+                state = "code";
+            } else {
+                cleaned += " ";
+                codeMask += " ";
+            }
+            continue;
+        }
+        if (state === "blockComment") {
+            if (char === "*" && next === "/") {
+                cleaned += "  ";
+                codeMask += "  ";
+                index++;
+                state = "code";
+            } else if (keepNewline) {
+                cleaned += char;
+                codeMask += char;
+            } else {
+                cleaned += " ";
+                codeMask += " ";
+            }
+            continue;
+        }
+        if (state !== "code") {
+            cleaned += char;
+            codeMask += keepNewline || char === state ? char : " ";
+            if (escaped) {
+                escaped = false;
+            } else if (char === "\\") {
+                escaped = true;
+            } else if (char === state) {
+                state = "code";
+            }
+            continue;
+        }
+
+        if (char === "/" && next === "/") {
+            cleaned += "  ";
+            codeMask += "  ";
+            index++;
+            state = "lineComment";
+        } else if (char === "/" && next === "*") {
+            cleaned += "  ";
+            codeMask += "  ";
+            index++;
+            state = "blockComment";
+        } else if (char === '"' || char === "'" || char === "`") {
+            cleaned += char;
+            codeMask += char;
+            state = char;
+        } else {
+            cleaned += char;
+            codeMask += char;
+        }
+    }
+
+    return { cleaned, codeMask };
+}
+
 function readLiteral(path, name) {
-    const source = readText(path);
-    const match = source.match(new RegExp(`export\\s+const\\s+${name}\\s*=\\s*["']([^"']+)["']`));
-    if (!match) fail(`could not find ${name} literal in ${path}`);
-    return match[1];
+    const { cleaned, codeMask } = commentSafeSource(readText(path));
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const declaration = new RegExp(
+        `^\\s*export\\s+const\\s+${escapedName}\\s*=\\s*(?:"([^"\\\\\r\n]*)"|'([^'\\\\\r\n]*)')\\s*;?\\s*$`
+    );
+    const declarationMask = new RegExp(`^\\s*export\\s+const\\s+${escapedName}\\s*=\\s*(?:"\\s*"|'\\s*')\\s*;?\\s*$`);
+    const matches = cleaned
+        .split(/\r?\n/)
+        .map((line, index) => ({ line, mask: codeMask.split(/\r?\n/)[index] }))
+        .filter(({ line, mask }) => declaration.test(line) && declarationMask.test(mask));
+
+    if (matches.length !== 1) {
+        fail(
+            `expected exactly one real exported string literal declaration for ${name} in ${path}, found ${matches.length}`
+        );
+    }
+    return matches[0].line.match(declaration)[1] ?? matches[0].line.match(declaration)[2];
 }
 
 function githubSlug(value, label) {
