@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { openDockViewExternalWebTab } from "dockview/main/windowHooks";
 import { BrowserWindow, shell } from "electron";
 import { DISCORD_HOSTNAMES } from "main/constants";
-import { IpcEvents } from "shared/IpcEvents";
 
 import { Settings } from "../settings";
 import { createOrFocusPopup, setupPopout } from "./popout";
@@ -65,16 +65,8 @@ export function makeLinksOpenExternally(win: BrowserWindow) {
         // Drop the static temp page Discord web loads for the connections popout
         if (frameName === "authorize" && searchParams.get("loading") === "true") return { action: "deny" };
 
-        // A user clicked an external web link -> open it in the DockView web tab instead of
-        // the OS browser. This is the ONE place the app decides "open this url externally",
-        // so internal Discord navigation (its router) and downloads never reach here — no
-        // guessing at raw clicks. Kept conservative: only a plain content-link open (no
-        // window features). A sized popup — an OAuth / connection auth window — carries
-        // features and falls through to the browser, so those flows keep a real session.
-        if ((protocol === "http:" || protocol === "https:") && !DISCORD_HOSTNAMES.includes(hostname) && !features) {
-            win.webContents.send(IpcEvents.WEB_TAB_OPEN, url);
+        if (openDockViewExternalWebTab(win, url, protocol, hostname, features, DISCORD_HOSTNAMES))
             return { action: "deny" };
-        }
 
         return handleExternalUrl(url, protocol);
     });
