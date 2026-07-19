@@ -97,13 +97,12 @@ export const settings = definePluginSettings({
     // --- Performance page: voice ---------------------------------------------
     // Fix voice calls hanging on "DTLS Connecting" over a VPN (Tailscale etc.). This
     // mirrors a control that lives in MAIN (setWebRTCIPHandlingPolicy on every web
-    // contents). ON (default, opt-out): the policy is a no-op without a VPN interface
-    // present (same candidates as stock selection), so defaulting on only changes
-    // behavior for VPN users — exactly the ones the stock policy hangs for. Upstream
-    // Vesktop applies it unconditionally (PR #1251); OFF here restores stock Chromium
-    // interface selection. The value persists here; on plugin start and on every flip
-    // the panel pushes it to main over the networkPrivacy IPC, and main applies/reverts
-    // the policy live.
+    // contents). ON (default, opt-out) selects the public/private interfaces on the
+    // operating system's default route, avoiding non-default VPN candidates on
+    // affected systems. OFF restores stock Chromium interface selection. The value
+    // persists here and is mirrored into Vesktop's main settings; on plugin start and
+    // every flip the panel pushes it to main over the networkPrivacy IPC, and main
+    // applies/reverts the policy live.
     voiceFixEnabled: { type: OptionType.BOOLEAN, description: "Fix voice connection over VPN", default: true },
     // Denoise the outgoing microphone with open-source RNNoise (works where Discord's own
     // Krisp doesn't, notably on Linux). OFF (default, opt-in). Entirely renderer-side: on

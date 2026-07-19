@@ -2,11 +2,12 @@
  * DockView — renderer→main bridge for the Privacy page's network controls.
  * ---------------------------------------------------------------------------
  * The tracker firewall and proxy actually live in main (the default session's
- * webRequest + setProxy); this module holds no state, it just pushes the current
- * settings.store values down to main over VesktopNative.networkPrivacy. Called once
- * on plugin start (so main matches the saved UI state) and by the Privacy panel on
- * every flip. The firewall defaults ON in main too, so blocking is already live
- * before the first push — this only keeps main in sync when the user changes it.
+ * webRequest + setProxy); the voice policy is also persisted in main's Vesktop
+ * settings so it is active before Discord contents are created. This module pushes
+ * the current settings.store values down to main over VesktopNative.networkPrivacy:
+ * once on plugin start and by the Privacy/Performance panels on every flip.
+ * The firewall defaults ON in main, while the voice policy defaults ON in both
+ * stores, so startup remains safe even before the first renderer push.
  */
 
 import { settings } from "./settings";

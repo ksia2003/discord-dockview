@@ -5,19 +5,21 @@
  */
 
 // WebRTC IP-handling policy for voice. On a VPN (Tailscale and friends) Chromium
-// happily binds voice to the VPN interface, and the call then hangs on
-// "DTLS Connecting". Forcing the policy back to public+private interfaces lets it
-// reach a working candidate. The setting defaults ON (opt-out — harmless without a
-// VPN, and upstream Vesktop applies it unconditionally): the renderer's
-// Performance panel pushes the flag on start and on every flip over IPC, and the
-// hook below applies it to Discord's own contents (main window + voice popouts) so
-// calls are covered — but never to the isolated web-browsing tab.
+// can bind voice to a non-default-route interface, and the call then hangs on
+// "DTLS Connecting". Restricting selection to the default public/private
+// interfaces lets it reach a working candidate. The persisted Vesktop setting is
+// read before any Discord contents are created, defaults ON (opt-out), and is
+// updated by the renderer's Performance panel on every flip. The hook applies it
+// to Discord's own contents (main window + voice popouts), but never to the
+// isolated web-browsing tab.
 
 import { app, session, webContents } from "electron";
 
 import { WEB_PARTITION } from "./constants";
+import { Settings } from "./settings";
 
-let voiceFixEnabled = false;
+let voiceFixEnabled = Settings.store.voiceFixEnabled ?? true;
+let initialized = false;
 
 // The embedded browsing <webview> runs on this isolated session partition. Its voice
 // policy is none of our business — it hosts arbitrary third-party pages, not Discord —
@@ -31,14 +33,15 @@ function isBrowsingWebview(wc: Electron.WebContents): boolean {
 }
 
 function apply(wc: Electron.WebContents) {
+    if (wc.isDestroyed()) return;
     if (isBrowsingWebview(wc)) return;
     wc.setWebRTCIPHandlingPolicy(voiceFixEnabled ? "default_public_and_private_interfaces" : "default");
 }
 
 export function setVoiceFixEnabled(enabled: boolean) {
     voiceFixEnabled = enabled;
+    Settings.store.voiceFixEnabled = enabled;
     for (const wc of webContents.getAllWebContents()) {
-        if (wc.isDestroyed()) continue;
         try {
             apply(wc);
         } catch {
@@ -48,5 +51,19 @@ export function setVoiceFixEnabled(enabled: boolean) {
 }
 
 export function initVoiceFix() {
+    if (initialized) return;
+    initialized = true;
+
     app.on("web-contents-created", (_, wc) => apply(wc));
+
+    // This is normally empty because the hook is registered before the first
+    // window is created, but applying to existing contents makes initialization
+    // safe if startup ordering changes or this entry point is called again.
+    for (const wc of webContents.getAllWebContents()) {
+        try {
+            apply(wc);
+        } catch {
+            // A contents object may be destroyed while startup is enumerating it.
+        }
+    }
 }

@@ -25,6 +25,7 @@ export interface Settings {
     disableMinSize?: boolean;
     clickTrayToShowHide?: boolean;
     customTitleBar?: boolean;
+    voiceFixEnabled?: boolean;
 
     enableSplashScreen?: boolean;
     splashTheming?: boolean;
