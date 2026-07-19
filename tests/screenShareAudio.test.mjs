@@ -3,7 +3,8 @@ import test from "node:test";
 
 import {
     isCurrentScreenShareGeneration,
-    requestsLinuxScreenShareAudio
+    requestsLinuxScreenShareAudio,
+    withLinuxScreenShareAudioDisabled
 } from "../src/shared/screenShareAudio.ts";
 import {
     getAudioServiceExclusions,
@@ -22,6 +23,17 @@ test("Linux audio intent requires an explicit non-None source", () => {
     assert.equal(requestsLinuxScreenShareAudio({ includeSources: [{}] }), false);
     assert.equal(requestsLinuxScreenShareAudio({ includeSources: [{ "node.name": "mic" }] }), true);
     assert.equal(requestsLinuxScreenShareAudio({ includeSources: "Entire System" }), true);
+});
+
+test("Linux audio failure fallback preserves the stream as video-only", () => {
+    const settings = { audio: true, includeSources: [{ "node.name": "desktop" }], contentHint: "motion" };
+
+    assert.deepEqual(withLinuxScreenShareAudioDisabled(settings), {
+        audio: true,
+        includeSources: "None",
+        contentHint: "motion"
+    });
+    assert.deepEqual(settings.includeSources, [{ "node.name": "desktop" }]);
 });
 
 test("an old screen-share generation cannot clean up the active generation", () => {

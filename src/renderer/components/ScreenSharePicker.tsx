@@ -37,7 +37,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { addPatch } from "renderer/patches/shared";
 import { State, useSettings, useVesktopState } from "renderer/settings";
 import { isLinux, isWindows } from "renderer/utils";
-import { requestsLinuxScreenShareAudio } from "shared/screenShareAudio";
+import { requestsLinuxScreenShareAudio, withLinuxScreenShareAudioDisabled } from "shared/screenShareAudio";
 import { getAdaptiveScreenShareBitrate, getScreenShareQualityValues } from "shared/screenShareQuality";
 
 import { SimpleErrorBoundary } from "./SimpleErrorBoundary";
@@ -153,17 +153,38 @@ export function openScreenSharePicker(screens: Source[], skipPicker: boolean) {
                             }
                         }
 
-                        if (requestsLinuxScreenShareAudio(v)) {
-                            if (v.includeSources === "Entire System") {
-                                await VesktopNative.virtmic.startSystem(
-                                    !v.excludeSources || isSpecialSource(v.excludeSources) ? [] : v.excludeSources
+                        let resolved = v;
+
+                        if (isLinux && requestsLinuxScreenShareAudio(v)) {
+                            try {
+                                if (v.includeSources === "Entire System") {
+                                    await VesktopNative.virtmic.startSystem(
+                                        !v.excludeSources || isSpecialSource(v.excludeSources) ? [] : v.excludeSources
+                                    );
+                                } else {
+                                    await VesktopNative.virtmic.start(v.includeSources as Node[]);
+                                }
+                            } catch (error) {
+                                logger.error(
+                                    "Failed to start Linux screen-share audio link. Continuing with video only.",
+                                    error
                                 );
-                            } else {
-                                await VesktopNative.virtmic.start(v.includeSources as Node[]);
+
+                                try {
+                                    await VesktopNative.virtmic.stop();
+                                } catch (stopError) {
+                                    logger.error(
+                                        "Failed to stop the partial Linux screen-share audio link.",
+                                        stopError
+                                    );
+                                }
+
+                                currentSettings = withLinuxScreenShareAudioDisabled(currentSettings ?? v);
+                                resolved = withLinuxScreenShareAudioDisabled(v);
                             }
                         }
 
-                        resolve(v);
+                        resolve(resolved);
                     }}
                     close={() => {
                         props.onClose();

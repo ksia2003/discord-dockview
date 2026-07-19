@@ -5,7 +5,7 @@
  */
 
 import { BuildContext, BuildOptions, context } from "esbuild";
-import { copyFile } from "fs/promises";
+import { copyFile, mkdir } from "fs/promises";
 
 import vencordDep from "./vencordDep.mjs";
 import { includeDirPlugin } from "./includeDirPlugin.mts";
@@ -36,6 +36,10 @@ const NodeCommonOpts: BuildOptions = {
 const contexts = [] as BuildContext[];
 async function createContext(options: BuildOptions) {
     contexts.push(await context(options));
+}
+
+if (process.platform === "linux") {
+    await mkdir("./static/dist", { recursive: true });
 }
 
 async function copyVenmic() {

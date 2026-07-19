@@ -8,6 +8,10 @@ export interface LinuxScreenShareSettings {
     includeSources?: unknown;
 }
 
+export function withLinuxScreenShareAudioDisabled<T extends LinuxScreenShareSettings>(settings: T) {
+    return { ...settings, includeSources: "None" as const };
+}
+
 export function requestsLinuxScreenShareAudio(settings: LinuxScreenShareSettings | null | undefined) {
     const includeSources = settings?.includeSources;
 
