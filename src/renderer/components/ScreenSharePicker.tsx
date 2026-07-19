@@ -37,6 +37,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { addPatch } from "renderer/patches/shared";
 import { State, useSettings, useVesktopState } from "renderer/settings";
 import { isLinux, isWindows } from "renderer/utils";
+import { requestsLinuxScreenShareAudio } from "shared/screenShareAudio";
 
 import { SimpleErrorBoundary } from "./SimpleErrorBoundary";
 
@@ -145,13 +146,21 @@ export function openScreenSharePicker(screens: Source[], skipPicker: boolean) {
                     submit={async v => {
                         didSubmit = true;
 
-                        if (v.includeSources && v.includeSources !== "None") {
+                        if (isLinux) {
+                            try {
+                                await VesktopNative.virtmic.stop();
+                            } catch (error) {
+                                logger.error("Failed to stop the previous Linux screen-share audio link.", error);
+                            }
+                        }
+
+                        if (requestsLinuxScreenShareAudio(v)) {
                             if (v.includeSources === "Entire System") {
                                 await VesktopNative.virtmic.startSystem(
                                     !v.excludeSources || isSpecialSource(v.excludeSources) ? [] : v.excludeSources
                                 );
                             } else {
-                                await VesktopNative.virtmic.start(v.includeSources);
+                                await VesktopNative.virtmic.start(v.includeSources as Node[]);
                             }
                         }
 
