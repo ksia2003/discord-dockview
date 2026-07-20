@@ -73,7 +73,7 @@ jobs:
                   TAG=$(node scripts/print-dockview-release-metadata.mjs --field tag)
                   BASE=$(node scripts/print-dockview-release-metadata.mjs --field appVersion)
                   VER=${TAG#v}
-                  gh release create "$TAG" --title "dockview $VER" \
+                  gh release create "$TAG" --prerelease --title "dockview $VER" \
                       --notes "DockView $VER — a Discord attachment dock, on Vesktop $BASE." 2>/dev/null \
                       || gh release view "$TAG" >/dev/null
                   shopt -s nullglob

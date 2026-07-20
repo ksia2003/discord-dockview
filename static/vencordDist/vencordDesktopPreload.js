@@ -1,4 +1,4 @@
-// Vencord 117b362
+// Vencord fc5466e
 // Standalone: false
 // Platform: linux
 // Updater Disabled: false

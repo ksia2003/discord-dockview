@@ -1,1 +1,1 @@
-dockview:0.1.36 v1.14.14 c683a33
+dockview:0.1.37 v1.14.16 c14d02e
