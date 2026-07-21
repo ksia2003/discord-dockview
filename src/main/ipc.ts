@@ -24,11 +24,13 @@ import { enableHardwareAcceleration } from "main";
 import { release } from "os";
 import { join } from "path";
 
+import { DOCKVIEW_SHELL_VERSION } from "../shared/dockviewVersion";
 import { IpcEvents } from "../shared/IpcEvents";
 import { setBadgeCount } from "./appBadge";
 import { autoStart } from "./autoStart";
 import { mainWin } from "./mainWindow";
 import { Settings, State } from "./settings";
+import { applyShellUpdate, getShellUpdateInfo } from "./shellUpdate";
 import { handle, handleSync } from "./utils/ipcWrappers";
 import { PopoutWindows } from "./utils/popout";
 import { isDeckGameMode, showGamePage } from "./utils/steamOS";
@@ -59,6 +61,11 @@ if (IS_DEV) {
 handleSync(IpcEvents.GET_SETTINGS, () => Settings.plain);
 handleSync(IpcEvents.GET_VERSION, () => app.getVersion());
 handleSync(IpcEvents.GET_ENABLE_HARDWARE_ACCELERATION, () => enableHardwareAcceleration);
+handleSync(IpcEvents.SHELL_UPDATE_VERSION, () => DOCKVIEW_SHELL_VERSION);
+handle(IpcEvents.SHELL_UPDATE_INFO, () => getShellUpdateInfo());
+handle(IpcEvents.SHELL_UPDATE_APPLY, (_, shellManifest: unknown, baseUrl: string) =>
+    applyShellUpdate(shellManifest, baseUrl)
+);
 
 handleSync(
     IpcEvents.SUPPORTS_WINDOWS_TRANSPARENCY,

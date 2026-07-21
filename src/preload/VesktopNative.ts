@@ -48,6 +48,22 @@ export const VesktopNative = {
         enable: () => invoke<void>(IpcEvents.ENABLE_AUTOSTART),
         disable: () => invoke<void>(IpcEvents.DISABLE_AUTOSTART)
     },
+    shellUpdate: {
+        getVersion: () => sendSync<string>(IpcEvents.SHELL_UPDATE_VERSION),
+        getInfo: () =>
+            invoke<{
+                method: "win-nsis" | "appimage" | "deb" | "rpm" | "unknown";
+                arch: string;
+                methodLabel: string;
+                canAutoUpdate: boolean;
+            }>(IpcEvents.SHELL_UPDATE_INFO),
+        apply: (shellManifest: unknown, baseUrl: string) =>
+            invoke<{ ok: boolean; manual?: boolean; url?: string; error?: string }>(
+                IpcEvents.SHELL_UPDATE_APPLY,
+                shellManifest,
+                baseUrl
+            )
+    },
     fileManager: {
         isUsingCustomVencordDir: () => sendSync<boolean>(IpcEvents.IS_USING_CUSTOM_VENCORD_DIR),
         showCustomVencordDir: () => invoke<void>(IpcEvents.SHOW_CUSTOM_VENCORD_DIR),

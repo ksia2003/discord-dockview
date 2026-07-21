@@ -2,26 +2,35 @@ name: test
 on:
     push:
         branches:
-            - main
+            - master
     pull_request:
         branches:
-            - main
+            - master
 jobs:
     test:
         runs-on: ubuntu-latest
 
         steps:
-            - uses: actions/checkout@v7
-            - uses: pnpm/action-setup@v6 # Install pnpm using packageManager key in package.json
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
 
             - name: Use Node.js 24
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
               with:
                   node-version: 24
                   cache: "pnpm"
 
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
+
+            # Build the real pinned Vencord with the current DockView source before
+            # testing the Vesktop shell. The committed bundle alone can stay green even
+            # when a plugin change no longer compiles against the pinned Vencord.
+            - name: Prepare bundled Vencord with DockView
+              run: pnpm prepareVencord
+
+            - name: Verify complete generated Vencord output (including chunks)
+              run: node scripts/vencord-candidate.mjs verify-generated static/vencordDist
 
             - name: Run tests
               run: pnpm test

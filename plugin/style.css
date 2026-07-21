@@ -1,0 +1,2370 @@
+/*
+ * DockView Dock Panel — companion CSS for the PAGE-LEVEL native thread
+ * sidebar clone.
+ *
+ * The visible FRAME (card bg, rounded-left corners, header tint, hairline
+ * border-bottom, overflow clipping) is supplied entirely by Discord's OWN
+ * CSS-module classes that we apply in dockPanel.ts:
+ *     .chatLayerWrapper__*   (card wrapper)
+ *     .resizeHandle__*       (left-edge resize bar)
+ *     .container__*          (the card: bg + border-radius 8px 0 0 8px + overflow)
+ *     .container__* .themed__*  (header bar: bg + 48px + padding + border-bottom)
+ *     .upperContainer__* / .children__* / .toolbar__* / .title__*  (header)
+ * That dressing is theme-aware. This file only fills gaps Discord can't know
+ * about (our spacer host, absolute-card overlay, resize affordance, body
+ * placeholder) — it must NOT re-declare the frame.
+ *
+ * MOUNT MODEL (mirrors a real thread sidebar):
+ *   host #dockview-root is an IN-FLOW SPACER: a block child of the page inner
+ *   div, sibling of chat_, given `flex: 0 0 <width>` from JS. It takes real
+ *   layout width so the flex chat shrinks/reflows exactly like native. The
+ *   visible card (.dockview-wrapper = chatLayerWrapper) is ABSOLUTE inside the
+ *   host (top:0 right:0 bottom:0 left:0), so its header aligns with the channel
+ *   header (y~33) and it spans the full page height (~1035) — native-identical.
+ */
+
+/* Host = in-flow spacer column in the page inner flex-row. Width/flex are set
+   inline from JS state. It is the positioning context for the absolute card.
+   Discord's own layout code intermittently resets our injected sibling's inline
+   `display` to none, so the OPEN/CLOSED state is driven by a CLASS with
+   !important (not inline display) — Discord's inline reset can't win against
+   the class rule. The class is toggled from applyOpenState(); width/flex stay
+   inline (Discord never touches those). */
+#dockview-root {
+    position: relative;
+    align-self: stretch;
+    height: 100%;
+    box-sizing: border-box;
+    display: none !important;
+}
+#dockview-root.dockview-open {
+    display: block !important;
+}
+
+/* TWO-MODE width (mirrors Discord's native thread panel). DOCKED (default, no
+   class): the host is the in-flow flex spacer above — its inline flex/width push
+   and shrink the chat. FLOATING (.dockview-host--floating): when the WINDOW is
+   too narrow to dock the panel beside a min-width chat, JS takes the host OUT of
+   the flex row so the chat reclaims FULL width underneath, and the card overlays
+   from the content's right edge. position:absolute removes it from flow (chat
+   reflows to full width); right/top/bottom pin it to the content area; the inline
+   width (set by applyDockLayout, capped to leave a clickable chat sliver) is the
+   overlay width. A shadow reads it as a floating layer over the chat. The host
+   must be absolute against the PAGE-INNER content area, so that marker class is
+   made a positioning context while the dock is open (it only establishes a
+   containing block for our overlay; Discord's own descendants keep their own
+   positioned ancestors, so in-flow layout is unchanged). */
+html.dockview-open .dockview-page-inner {
+    position: relative;
+}
+#dockview-root.dockview-host--floating {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    height: auto;
+    z-index: 200;
+    box-shadow: var(--shadow-high, -8px 0 24px rgba(0, 0, 0, 0.36));
+}
+/* No resize handle while floating (native shows none in overlay mode). The card
+   wrapper still pins to the host (the rule below), so the card fills the overlay
+   width; only the 8px ew-resize grab bar is removed. */
+#dockview-root.dockview-host--floating .dockview-resize {
+    display: none;
+}
+
+/* Exclusive right-slot mutual exclusion. panel.tsx marks the competing native
+   occupant (DM profile sidebar, native thread card, and its transition
+   placeholder) while the dock is open. This avoids persistent `:has()` selectors:
+   they were correct visually, but Chromium re-evaluated them on every Discord
+   composer mutation and turned ordinary typing into long tasks even while the
+   panel was closed. The server member list is still collapsed through Discord's
+   own member toggle, not hidden here. */
+[data-dockview-exclusive-hidden="true"] {
+    display: none !important;
+}
+
+/* The native card wrapper is ABSOLUTE, filling the host spacer. Discord's
+   .chatLayerWrapper__* is already position:absolute; here we pin it to the host
+   (top:0 -> header aligns with channel header; bottom:0 -> full page height). */
+#dockview-root > .dockview-wrapper {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    flex-direction: row;
+    box-sizing: border-box;
+}
+
+/* The native card fills the remaining width beside the resize handle and lays
+   its header + body out as a column. radius / overflow come from Discord's
+   .container__* class. The card's OWN background, however, is Discord's
+   --background-base-lowest (oklab ~0.18 = srgb 18,18,20) — the near-black
+   "lowest" surface. A real thread's content + header bars all sit on the one-
+   step-brighter chat surface --background-base-lower (oklab ~0.22 = srgb
+   26,26,30), so the lowest leaks through everywhere our body is transparent
+   (scrollbar gutter, the surround behind a fit-to-width PDF page, padding) and
+   reads as "30% darker than Discord". We repaint the card with the SAME chat
+   surface token the message area uses so every transparent gap matches native.
+   Theme-aware: follows --background-base-lower like the native content area. */
+.dockview-card {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    box-sizing: border-box;
+    background: var(--background-base-lower, #1a1a1e);
+    /* Native thread sidebars are FLUSH (square, full-bleed) against the channel
+       header — Discord's .container__* gives us a rounded floating card
+       (border-radius 8px 0 0 8px) that reads as "detached". Square it off so the
+       header sits flush under the app bar exactly like a real thread panel. */
+    border-radius: 0;
+}
+
+/* Resize handle: Discord's 8px ew-resize bar on the panel's left edge.
+   Native `resizeHandle__*` gives the 8px footprint + ew-resize cursor + base
+   tint, but its hit zone is only the visible 8px and its hover bg token
+   (--background-modifier-accent) resolves to TRANSPARENT in this theme, so it
+   read as "hard to grab, no hover feedback". We fix BOTH:
+     - WIDEN the grab zone with an invisible ::before that extends ~6px past
+       each edge (visible bar 8px -> ~20px easy-grab hit area), so you don't
+       have to land the cursor on a thin line.
+     - Show a VISIBLE hover/drag tint (--background-base-low, one step brighter
+       than the near-black card) + a centred 2px x 24px "grabber pill" via
+       ::after (Discord's own resizeHandle_f37d97 affordance), tinted with
+       --text-muted, fading in only on hover/drag.
+   The whole thing is position:relative so the pseudo-elements anchor to it. */
+.dockview-resize {
+    position: relative;
+    cursor: ew-resize;
+    flex: 0 0 auto;
+    z-index: 20;
+    transition: background-color 0.15s ease;
+}
+/* Invisible WIDE hit zone: extends the grabbable area well past the 8px bar so
+   the handle is easy to catch (matches the "easy to grab" native feel). */
+.dockview-resize::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -6px;
+    right: -6px;
+    z-index: 1;
+    /* purely a hit target; no paint */
+}
+/* Centred grabber pill — hidden until hover/drag, then fades in (native look). */
+.dockview-resize::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 2px;
+    height: 24px;
+    border-radius: 1px;
+    background: var(--text-muted, #949ba4);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    pointer-events: none;
+}
+.dockview-resize:hover,
+.dockview-resize.dockview-resizing {
+    background: var(--background-base-low, var(--background-modifier-accent, rgba(255, 255, 255, 0.08)));
+}
+.dockview-resize:hover::after,
+.dockview-resize.dockview-resizing::after {
+    opacity: 1;
+}
+
+/* While dragging, a full-page transparent overlay (added from JS) sits above
+   everything (esp. the artifact iframe) so the iframe can't swallow the
+   mousemove events — the classic "resize stalls when the cursor crosses the
+   iframe" bug. It also forces the ew-resize cursor everywhere during the drag. */
+.dockview-drag-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    cursor: ew-resize;
+}
+
+/* TABS (pin-driven multi-window, "header = tab" model). The tabs are NOT a
+   separate row: they live INSIDE the header top row, occupying its icon/name slot.
+   The strip is ALWAYS shown — one window or many — so the dock has a single unified
+   header (a lone window is just one tab). The far-right DOCK X sits beside the strip.
+
+   FLAT UNDERLINE TABS (Discord user-profile-popout TabBar pattern): a tab is
+   just [glyph][name][controls] with a transparent background, occupying the
+   FULL header-row height — NO box, NO border, NO pill, NO rounded background
+   fill on any tab. The ACTIVE tab is marked by brighter text + a lit icon + a
+   thin underline bar pinned to the BOTTOM edge of the header row (the exact
+   Discord profile-tab indicator). Inactive tabs = muted text, no underline,
+   transparent bg; hover = a faint brighten only (no bg fill).
+
+   CONTROLS (browser-tab grammar): the ONLY inline control on a tab is its ✕ (closes
+   THAT file). The ACTIVE tab shows its ✕ at rest; an INACTIVE tab hides its ✕ and
+   reveals it only on HOVER — absolutely positioned at the tab's right edge over a
+   small gradient (so it stays legible over the label and NEVER reflows the strip). A
+   tab at rest is thus just [icon][name] (inactive) or [icon][name][✕] (active). There
+   is NO inline ⋯ — a tab's secondary actions are reached by right-click. The only
+   shared header control is the far-right dock X.
+
+   OVERFLOW (N-tab model): the strip FITS the header slot — no horizontal scroll. As
+   more tabs open the INACTIVE tabs shrink FIRST (a high flex-shrink) and their label
+   ellipsises, down to a min width that always keeps the icon visible; the ACTIVE tab
+   has a far lower flex-shrink so it keeps its full length until the inactive tabs have
+   all bottomed out. Pinned chips are icon-only (narrowest). This is pure width/flex
+   behaviour — the resting colours/underline/fills of the active and inactive tabs are
+   untouched. No invented chrome. */
+.dockview-tabs {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: stretch; /* tabs fill the full row height (underline at bottom) */
+    gap: 0;
+    overflow: hidden; /* the strip fits the slot: inactive tabs shrink, no scroll */
+}
+/* When the slot carries tabs (not the plain icon+title), it must NOT impose the
+   centred icon/title layout — let the scrollable tab row own the full slot, and
+   stretch the slot to the full header-row height so each full-height tab reaches
+   the row's bottom edge (where the active underline bar sits). The extra
+   `.dockview-header-upper--tabs` qualifier raises specificity above the later base
+   `.dockview-header .dockview-header-children { align-items: center }` rule, which
+   would otherwise re-centre the slot and shrink it back off the row bottom. */
+.dockview-header .dockview-header-upper--tabs .dockview-header-children--tabs {
+    align-items: stretch;
+    align-self: stretch;
+    overflow: hidden;
+}
+.dockview-tab {
+    /* WIDTH MODEL (browser-style, UNIFORM inactive): inactive tabs are all the SAME width,
+       NOT content-sized. Every inactive tab takes a FIXED flex-basis (150px) with flex-grow
+       0 and flex-shrink shared — so regardless of filename length they render EQUAL to each
+       other, the label ellipsising to fit; they never grow to fill the strip, so a few tabs
+       sit left-aligned with empty strip after (never a full-width bar). They only SHRINK
+       when the tabs' total width EXCEEDS the strip: with identical basis + identical shrink
+       factor the inactive tabs shrink UNIFORMLY (staying equal to each other), their labels
+       ellipsising earlier, down to a min width that always keeps the icon visible (the ✕ is
+       hover-only + absolutely positioned so it never takes layout width). The ACTIVE tab
+       overrides this to be WIDER (content-sized up to a larger cap) and to shrink LAST (a far
+       lower flex-shrink + a floor equal to the inactive width), so it keeps its full length
+       until the inactive tabs have all bottomed out (below). */
+    flex: 0 8 150px;
+    min-width: 30px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 150px;
+    height: 100%; /* full header-row height — content not inset into a sub-row box */
+    padding: 0 6px 0 10px;
+    position: relative; /* anchors the active underline bar */
+    /* NO border-radius / NO background: tabs are flat text, never a boxed pill. */
+    color: var(--interactive-normal, #b5bac1);
+    background: transparent;
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.12s ease;
+}
+/* FLIP reorder: DockTabs applies an inline `transform: translateX(...)` +
+   `transition: transform 180ms ease` while a tab slides to its new slot (pin / unpin /
+   drag). The transform is the ONLY animated geometry — layout (flex widths) is untouched
+   — so the slide is jank-free. Under reduced-motion the JS skips the animation; this rule
+   is a belt-and-suspenders guard that also strips any transform transition there. */
+@media (prefers-reduced-motion: reduce) {
+    .dockview-tab { transition: color 0.12s ease !important; }
+}
+/* The ACTIVE tab is WIDER than the uniform inactive tabs and keeps its full length while
+   they shrink around it. Unlike the inactive tabs (fixed 150px basis), the active tab is
+   CONTENT-SIZED (flex-basis:auto) so it fits its OWN filename up to a larger cap (240px),
+   and its min-width equals the inactive width (150px) so it is ALWAYS ≥ an inactive tab —
+   a short active name sits near the inactive width but never narrower, standing out by
+   being wider. Since NO tab grows to fill (flex-grow:0 everywhere), a lone/active tab is
+   capped at its content up to 240px with empty strip after, NOT a full-width bar. "Active
+   shrinks last" is pure shrink RESISTANCE: its flex-shrink is far lower than an inactive
+   tab's (1 vs 8), so on overflow the inactive tabs shrink to their icon-only floor FIRST
+   and the active tab only gives ground once they have all bottomed out — it stays the
+   widest tab yet the strip never scrolls. Pure width behaviour: the active highlight
+   (brighter text + lit icon + the --interactive-active underline bar) is unchanged. */
+.dockview-tab-active {
+    flex: 0 1 auto;
+    min-width: 150px;
+    max-width: 240px;
+}
+/* PINNED tab = treated IDENTICALLY to a regular tab (leftmost, global). It carries the
+   SAME icon + name + ✕ and the SAME flex/width/min-width/shrink rules (it inherits the
+   base .dockview-tab / .dockview-tab-active geometry — NO overrides here), so it
+   participates in overflow-shrink exactly like a channel tab. The ONLY distinction is
+   its left position (pinned-first) + the pin badge on its icon (below). No special
+   width, no icon-only, no bg/border fill. */
+
+/* Pin badge: a small pushpin glyph pinned to the TOP-RIGHT corner of the pinned tab's
+   icon. It is an overlay sibling of the icon inside a 0-size positioning wrapper, so it
+   never resizes/reflows the icon or the tab. Muted, unobtrusive, NO background/border —
+   the icon corner just carries a faint pin mark. */
+.dockview-tab-iconwrap {
+    flex: 0 0 auto;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 0;
+}
+.dockview-tab-pinbadge {
+    position: absolute;
+    top: -3px;
+    right: -4px;
+    /* muted/semantic — matches the resting tab tint, distinctly dimmer than the label */
+    color: var(--text-muted, #949ba4);
+    pointer-events: none;
+}
+/* On the ACTIVE (lit) pinned tab, keep the badge legible but still muted (a touch
+   brighter than the resting muted tint, never a fill). */
+.dockview-tab-active .dockview-tab-pinbadge {
+    color: var(--interactive-normal, #b5bac1);
+}
+/* Inactive tab hover: brighten the text only — the resting strip stays flat,
+   no background fill (underline-tab grammar, not a hover box). */
+.dockview-tab:not(.dockview-tab-active):hover {
+    color: var(--interactive-hover, #dbdee1);
+}
+/* ACTIVE tab: brighter/bolder text + lit icon + a thin underline bar at the
+   bottom edge of the header row (Discord profile-popout TabBar indicator). NO
+   background fill, NO border, NO box. The bar uses Discord's active-interactive
+   (near-white) colour and spans the tab's text/icon span (inset past the padding),
+   matching the mockup's Option B. */
+.dockview-tab-active {
+    color: var(--text-strong, #f2f3f5);
+}
+.dockview-tab-active::after {
+    content: "";
+    position: absolute;
+    left: 10px;
+    right: 6px;
+    bottom: 0;
+    height: 2px;
+    border-radius: 2px 2px 0 0;
+    background: var(--interactive-active, #f2f3f5);
+    pointer-events: none;
+}
+.dockview-tab-icon {
+    flex: 0 0 auto;
+    opacity: 0.65; /* inactive: muted/dimmed icon */
+}
+.dockview-tab-active .dockview-tab-icon {
+    opacity: 1; /* active: lit icon */
+}
+.dockview-tab-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    /* Font PARITY with the single-window header title (.dockview-title, which
+       inherits Discord's `text-md/medium` = 16px / weight 500): a tab's filename
+       must read at the SAME size+weight as the pre-tab header — the active tab is
+       distinguished by brightness + the underline, NOT by a smaller font. Long
+       names ellipsise (above); on overflow inactive tabs shrink (flex) so the label
+       ellipsises earlier while the active tab keeps its full length. */
+    font-size: 16px;
+    font-weight: 500;
+}
+/* Per-tab control (the ✕): a flat ghost icon button (rule 5/10 — no border, no
+   bg at rest, faint hover bg) living at the tab's right edge. Its own button so
+   a click on it never bubbles up into a tab switch. */
+.dockview-tab-ctrl {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* SIZE PARITY with the single-window header's ✕ button: that uses Discord's
+       32px iconWrapper hover target around a 20px SVG. The tab control matches that
+       32x32 box + 20px SVG exactly — a tab's ✕ must never be smaller than the
+       pre-tab header's (the locked "never shrink" principle). */
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    opacity: 0.65;
+    transition: opacity 0.12s ease, background-color 0.12s ease;
+}
+.dockview-tab-ctrl:hover {
+    opacity: 1;
+    background: var(--background-modifier-active, rgba(255, 255, 255, 0.12));
+}
+.dockview-tab-ctrl svg { display: block; }
+/* CONTROLS VISIBILITY (browser-tab grammar).
+
+   ACTIVE tab: its ✕ is a normal in-flow child (always visible at rest), slightly
+   brighter to match the active tab's brighter text. It takes layout width, which is
+   fine — the active tab keeps its full length anyway.
+
+   INACTIVE tab: its ✕ is HIDDEN at rest and takes NO layout width (absolutely
+   positioned, removed from flow). On HOVER it appears pinned to the tab's right edge,
+   over a small left-to-right gradient of the header tint so it stays legible where it
+   overlaps the ellipsised label. Because it is absolutely positioned it never reflows
+   the strip — hovering an inactive tab only fades the ✕ in, no layout shift. A shrunk
+   inactive tab at rest is thus just [icon][…name], clean. */
+.dockview-tab-active .dockview-tab-ctrl {
+    position: static;
+    opacity: 0.8;
+    background: transparent;
+}
+.dockview-tab-active .dockview-tab-ctrl:hover {
+    opacity: 1;
+    background: var(--background-modifier-active, rgba(255, 255, 255, 0.12));
+}
+.dockview-tab:not(.dockview-tab-active) .dockview-tab-close {
+    position: absolute;
+    top: 50%;
+    right: 4px;
+    transform: translateY(-50%);
+    opacity: 0;
+    pointer-events: none;
+    /* A short gradient fading into the ✕ box so it reads over the label underneath,
+       without a hard-edged plate. Uses the header's own tint via currentColor-free
+       vars so it matches whatever theme is active. */
+    background: linear-gradient(
+        to right,
+        transparent 0,
+        var(--background-secondary-alt, rgba(43, 45, 49, 0.9)) 40%,
+        var(--background-secondary-alt, rgba(43, 45, 49, 0.9)) 100%
+    );
+    transition: opacity 0.12s ease;
+}
+.dockview-tab:not(.dockview-tab-active):hover .dockview-tab-close {
+    opacity: 1;
+    pointer-events: auto;
+}
+.dockview-tab:not(.dockview-tab-active) .dockview-tab-close:hover {
+    opacity: 1;
+}
+
+/* Header: native classes give the 48px bar, padding, tint and border-bottom.
+   The TOP row is LOCKED to Discord grammar — [glyph][filename] + [⋯ close] — for
+   EVERY viewer; per-viewer controls live in a SECOND row below (.dockview-viewer-
+   toolbar). Discord's .upperContainer__* is the flex row; the filename region
+   flexes/ellipsises and the action buttons (⋯/close) are shrink-protected. */
+.dockview-header {
+    flex: 0 0 auto;
+}
+/* Whenever a SECOND row is present (compose sub-toolbar OR a viewer's relocated
+   controls), the header must GROW to fit both rows. Discord's native header
+   container is locked to a single 48px row with justify-content:center, so a
+   second child overflows and pushes the title row UP past the card's top edge
+   (the title and close X get sliced off). Release the fixed height so the section
+   grows, and top-align so the title row keeps its native 48px rhythm while the
+   second row flows directly below. */
+.dockview-header.dockview-header--tworow {
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    justify-content: flex-start;
+    /* The native header carries asymmetric padding (8px 8px 8px 16px) tuned for a
+       single inline row; the two rows carry their own horizontal padding, so zero
+       out the section padding and let each row own its insets. */
+    padding: 0;
+}
+/* The title row keeps the native 48px header height even though the section no
+   longer forces it, so the top row reads pixel-identical to a one-row header. */
+.dockview-header.dockview-header--tworow .dockview-header-upper {
+    flex: 0 0 auto;
+    height: 48px;
+    padding: 8px 8px 8px 16px;
+    box-sizing: border-box;
+}
+/* The underline tabs fill the FULL row height and the active underline bar pins to
+   the row's bottom edge (flush with the divider to the second row). The tabs layout
+   zeroes the upper row's vertical padding so the full-height tab reaches the row
+   bottom (the left inset stays so the first tab aligns where the title used to).
+   The tab strip is ALWAYS present, so this --tabs path is the only top-row layout.
+   The full `.dockview-header.dockview-header--tworow` prefix matches the specificity
+   of the height/padding rule above so this vertical-padding override actually wins.
+   The bare `.dockview-header-upper--tabs` covers the non-tworow case (the active
+   window has no second row — e.g. the empty dock, or an unknown type). */
+.dockview-header-upper--tabs,
+.dockview-header.dockview-header--tworow .dockview-header-upper--tabs {
+    padding-top: 0;
+    padding-bottom: 0;
+}
+.dockview-header-upper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.dockview-header .dockview-header-children {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    /* lowest shrink priority for the filename: it ellipsises, never disappears */
+}
+.dockview-header-actions {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+}
+/* SECOND ROW (viewers): the relocated per-type controls strip, below the locked
+   top row. Mirrors the compose sub-toolbar — same padding/divider so the two-row
+   header reads as one consistent component across compose and every viewer. It is
+   the query container for the narrow-width control collapse (see the bottom of
+   this file): its inline size tracks the PANEL width, a stable measure. */
+.dockview-viewer-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-top: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+    container-type: inline-size;
+    container-name: dockview-header;
+}
+/* In the second row the tool buttons keep the ghost-icon rhythm (28px). */
+.dockview-viewer-toolbar .dockview-tool-btn {
+    height: 28px;
+    min-width: 28px;
+}
+/* Leading file-type glyph: a real thread header is [glyph] + title; we mirror it
+   with one muted, document-framed icon ahead of the filename. Tinted with the
+   header's muted-icon token (the bell/⋯ tone), shrink-protected, with a small gap
+   to the title so the cluster reads as one unit. */
+.dockview-header .dockview-header-icon {
+    flex: 0 0 auto;
+    margin-right: 8px;
+    color: var(--interactive-normal, #b5bac1);
+    opacity: 0.9;
+}
+.dockview-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: default;
+    /* Match the real thread-header title's brighter "strong" text colour. */
+    color: var(--text-strong);
+}
+
+/* Header pop-out / close buttons: Discord's .iconWrapper/.clickable give the
+   32px hover target + hover bg + muted-icon colour; we centre the SVG (see the
+   .dockview-popout / .dockview-close rules below the body block). */
+
+/* Body: our content region under the header. The card frame itself uses the
+   near-black --background-base-lowest (oklab ~0.18), which read as "black,
+   unlike Discord". A REAL thread's MESSAGE/CONTENT area is one step brighter:
+   .chatContent_* paints var(--background-gradient-chat, var(--background-base-lower))
+   (oklab ~0.22). We give the body that SAME chat-content background so the
+   empty placeholder and the area behind a (transparent) artifact read as the
+   Discord chat colour, not black. Theme-aware: follows --background-base-lower
+   (and any chat gradient) just like the native content area. */
+/* Wrapper around the scrolling body: the flex child + positioning context for
+   overlays (the floating find box) that must stay pinned while the body scrolls.
+   The find box is absolutely positioned against THIS, so it floats over the
+   content top-right and never insets the body (grammar rule 7). */
+.dockview-body-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+.dockview-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    position: relative;
+    background: var(--background-gradient-chat, var(--background-base-lower));
+    /* Always reserve the scrollbar gutter so clientWidth is CONSTANT whether or
+       not a scrollbar is showing. The PDF renderer reads this width to fit every
+       page; without a stable gutter the scrollbar appearing mid-render shifted
+       the available width and pages rasterised at inconsistent widths. */
+    scrollbar-gutter: stable;
+}
+
+/* CONTEXT TAB body (member list / profile sidebar captured from Discord and rendered in
+   our own React root). The captured component is the CONTENT ONLY — the native parent
+   that gave it a background / sizing card is gone — so the dock container supplies that
+   wrapper here, using SEMANTIC theme variables (no hardcoded colours) for parity with the
+   native right rail. The member list sits flush on the near-black chat surface (the same
+   --background-base-lower the dock body uses); the profile sidebar brings its own banner /
+   button cards, so the wrapper stays a plain flush surface for both. */
+.dockview-context-body {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--background-base-lower, #1a1a1e);
+}
+/* The captured component (member list) fills the wrapper. Discord's own inner scroller
+   handles overflow, so we let the child own the full box and never impose our own scroll
+   here (a nested scroll would double-bar). The className we hand the member list
+   (dockview-context-native) is a positioning hook only — no colour overrides. */
+.dockview-context-body > * {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+}
+.dockview-context-native {
+    height: 100%;
+    min-height: 0;
+    width: 100%;
+}
+
+/* WIDTH FLUIDITY (member list + profile fill the dock, no dead gutter). Discord's own
+   right-rail components carry their native FIXED widths — the member-list scroller is
+   ~264px, the profile sidebar body ~300px — and their flex parent CENTRES them, so at any
+   dock width wider than that they leave dead gutters on both sides (the dock width is
+   user-adjustable, so this is very visible). We stretch the inner Discord element to the
+   full container width so the rows / banner / buttons reflow to the dock's width and follow
+   a live width drag. SCOPED to our context containers (never a global Discord class); the
+   hash-suffixed class names are matched by prefix so a Discord build bump can't unpin them.
+   The inner layouts are already fluid (verified on the rig: rows, banner, mutuals, and the
+   View-Full-Profile button all reflow, no horizontal scrollbar, no clipped content). */
+.dockview-context-native > [class*="membersWrap"],
+.dockview-context-native [class*="members_"][class*="scrollerBase"],
+.dockview-context-native [class*="members_"] {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+.dockview-context-body aside [class*="outer_"],
+.dockview-context-body aside [class*="inner_"] {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+
+/* A THREAD tab: Discord's own chat component (captured from the main chat, bound to the
+   thread channel) rendered in an ISOLATED document.body React root, positioned as a fixed
+   overlay over the dock body (a nested-in-dock render wedges the renderer — see
+   viewers/thread/threadPortal). The dock-body BACKDROP is a plain flush surface drawn under
+   the overlay so the body never flashes empty during a repaint frame. */
+.dockview-thread-backdrop {
+    height: 100%;
+    min-height: 0;
+    background: var(--background-base-lower, #1a1a1e);
+}
+/* The fixed overlay node (a child of document.body). Its rect is JS-synced to the dock body
+   each frame while visible; here we only set the layout box + surface. z-index sits just
+   ABOVE the dock host (z-index:200) so the chat paints over the dock body, but well below
+   Discord's own popouts (emoji / mention / member cards the chat spawns render at document
+   .body with far higher z-indexes, so they still appear above the portal). */
+.dockview-thread-portal {
+    position: fixed;
+    z-index: 210;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--background-base-lower, #1a1a1e);
+}
+/* The chat fills the overlay; Discord's own message scroller handles overflow, so we never
+   impose our own scroll here (a nested scroll would double-bar). */
+.dockview-thread-portal-inner,
+.dockview-thread-portal-inner > * {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+    width: 100%;
+}
+
+/* E2 — THREAD-HEADER SUPPRESSION (visual parity). The captured chat renders its OWN full
+   channel-header bar (subtitleContainer_: breadcrumb "# parent >", + the notification /
+   pin / member-list / search toolbar) at the top of the portal. That chrome is DUPLICATE:
+   our dock tab strip already shows the thread name + close ✕, and a native thread sidebar
+   never shows a second header. Worse, in this build that bar renders with theme-light /
+   images-light classes, so it painted as a jarring WHITE strip over the dark dock. We hide
+   it — SCOPED to our portal so no global Discord class is touched — which both removes the
+   duplicate chrome AND kills the light-theme leak, and lets the messages + composer fill the
+   tab from the top (the content_ column reclaims the freed 48px, verified on the rig). The
+   thread's own INTRO header (the big thread name + "Started by", inside the message scroller)
+   is Discord's normal thread-open affordance and stays — it is not this top bar. */
+.dockview-thread-portal div[class*="subtitleContainer"] {
+    display: none !important;
+}
+/* Belt-and-suspenders: if any child inside the portal still resolves the LIGHT theme
+   (the header carried theme-light/images-light), force the dark theme tokens back on so
+   nothing paints white beside the dark dock. Scoped to the portal — never global. */
+.dockview-thread-portal .theme-light {
+    color-scheme: dark;
+}
+
+/* COMPOSER BOTTOM MARGIN parity. Discord's composer reads its bottom gap from
+   `.channelTextArea_* { margin-bottom: var(--custom-chat-input-margin-bottom); }`, and that
+   variable is set (to var(--space-xs) = 8px) on Discord's chat LAYOUT container — an ancestor
+   of the main chat column. The thread portal is an isolated document.body-level root OUTSIDE
+   that container, so it never inherits the variable: the composer's margin-bottom falls back
+   to 0 and the input jams flush against the dock body's bottom edge (which, since Batch F put
+   the dock body flush to the window bottom, reads as "the chat sits too low / the composer is
+   clipped"). Re-declare the SAME variable on the portal so the composer inherits Discord's own
+   token value — --space-xs is a global design token that DOES reach the portal — restoring the
+   native 8px breathing margin. Scoped to the portal, no hardcoded pixel, tracks the token if
+   Discord retunes it. */
+.dockview-thread-portal {
+    --custom-chat-input-margin-bottom: var(--space-xs);
+}
+
+/* The context tab in the strip is a normal-looking tab (uniform-tab rule) that is simply
+   never closable / draggable. It carries no ✕, so it needs none of the inactive-✕ hover
+   affordance; its icon + name follow the same active/inactive colour states as file tabs
+   (those rules key off .dockview-tab / .dockview-tab-active, which it also carries).
+   It PARTICIPATES in the strip's shrink budget exactly like a file tab (same flex-shrink)
+   so a crowded strip narrows it (label ellipsises, icon stays) instead of overflowing —
+   it just always keeps index 0 (rendered first, never draggable, reorderTab can't move
+   it). It is content-sized rather than fixed 150px (its label is a short word, "Members" /
+   "Profile"), so at rest it takes only what it needs and leaves file tabs their space. */
+.dockview-tab-context {
+    flex: 0 8 auto;
+    max-width: 150px;
+    cursor: pointer;
+}
+/* The context label ellipsises under crowding (icon stays visible via min-width:30px from
+   the base rule). */
+.dockview-tab-context .dockview-tab-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Dock-viewer scrollbars: paint the bar in Discord's DARK "thin" scroller colour
+   so it reads as part of the app instead of a white UA default. We never styled the
+   UA scrollbar before, so the PDF/code/MD body showed a glaring light scrollbar over
+   the dark theme. We take Discord's thin-thumb COLOUR (--scrollbar-thin-thumb) but
+   deliberately do NOT copy its 2px transparent padding-box border: that inset shrinks
+   the visible thumb to ~half the bar, and the owner wants the thumb to FILL the full
+   bar width like the old default scroller did. So: an 8px track, a rounded thumb
+   painted edge-to-edge in --scrollbar-thin-thumb (no border, no padding-box clip), a
+   transparent track, and the same fade-on-hover behaviour — anchored to the STABLE
+   theme variables --scrollbar-thin-thumb/-track (NOT Discord's hashed scroller_/thin_
+   classes, which change every build). ONE shared rule covers EVERY dock scroller so they
+   are identical: .dockview-body (shared vertical scroll for PDF/MD/pptx), .dockview-cm
+   .cm-scroller (CodeMirror code/CSV-raw), .dockview-csv-scroll (CSV/xlsx grid),
+   .dockview-tree-scroll (JSON/XML tree), and the two xlsx horizontal strips
+   (.dockview-xlsx-tabs sheet bar + .dockview-xlsx-charts-row) — Discord's own scrollers
+   are untouched. (The markdown
+   viewer renders inside a sandboxed srcdoc iframe with its own stylesheet, so ITS
+   scrollers are styled separately in MD_STYLE in panel.tsx — these main-document
+   selectors can't reach into the frame.) Fallback colours kept for the rare theme
+   that lacks the vars. */
+.dockview-body::-webkit-scrollbar,
+.dockview-cm .cm-scroller::-webkit-scrollbar,
+.dockview-csv-scroll::-webkit-scrollbar,
+.dockview-tree-scroll::-webkit-scrollbar,
+.dockview-xlsx-tabs::-webkit-scrollbar,
+.dockview-xlsx-charts-row::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+.dockview-body::-webkit-scrollbar-track,
+.dockview-cm .cm-scroller::-webkit-scrollbar-track,
+.dockview-csv-scroll::-webkit-scrollbar-track,
+.dockview-tree-scroll::-webkit-scrollbar-track,
+.dockview-xlsx-tabs::-webkit-scrollbar-track,
+.dockview-xlsx-charts-row::-webkit-scrollbar-track {
+    background-color: var(--scrollbar-thin-track, transparent);
+}
+.dockview-body::-webkit-scrollbar-thumb,
+.dockview-cm .cm-scroller::-webkit-scrollbar-thumb,
+.dockview-csv-scroll::-webkit-scrollbar-thumb,
+.dockview-tree-scroll::-webkit-scrollbar-thumb,
+.dockview-xlsx-tabs::-webkit-scrollbar-thumb,
+.dockview-xlsx-charts-row::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thin-thumb, #1a1b1e);
+    border-radius: 4px;
+    min-height: 40px;
+}
+.dockview-body::-webkit-scrollbar-corner,
+.dockview-cm .cm-scroller::-webkit-scrollbar-corner,
+.dockview-csv-scroll::-webkit-scrollbar-corner,
+.dockview-tree-scroll::-webkit-scrollbar-corner,
+.dockview-xlsx-tabs::-webkit-scrollbar-corner,
+.dockview-xlsx-charts-row::-webkit-scrollbar-corner {
+    background-color: transparent;
+}
+/* Fade-on-hover, exactly like Discord's .fade scrollers: the thumb/track stay
+   hidden until the pointer is over the scroller (or it is keyboard-focused), so a
+   quiet PDF/code view shows no bar at rest. */
+.dockview-body::-webkit-scrollbar-thumb,
+.dockview-body::-webkit-scrollbar-track,
+.dockview-cm .cm-scroller::-webkit-scrollbar-thumb,
+.dockview-cm .cm-scroller::-webkit-scrollbar-track,
+.dockview-csv-scroll::-webkit-scrollbar-thumb,
+.dockview-csv-scroll::-webkit-scrollbar-track,
+.dockview-tree-scroll::-webkit-scrollbar-thumb,
+.dockview-tree-scroll::-webkit-scrollbar-track,
+.dockview-xlsx-tabs::-webkit-scrollbar-thumb,
+.dockview-xlsx-tabs::-webkit-scrollbar-track,
+.dockview-xlsx-charts-row::-webkit-scrollbar-thumb,
+.dockview-xlsx-charts-row::-webkit-scrollbar-track {
+    visibility: hidden;
+}
+.dockview-body:hover::-webkit-scrollbar-thumb,
+.dockview-body:hover::-webkit-scrollbar-track,
+.dockview-body:focus-within::-webkit-scrollbar-thumb,
+.dockview-body:focus-within::-webkit-scrollbar-track,
+.dockview-cm .cm-scroller:hover::-webkit-scrollbar-thumb,
+.dockview-cm .cm-scroller:hover::-webkit-scrollbar-track,
+.dockview-cm .cm-scroller:focus-within::-webkit-scrollbar-thumb,
+.dockview-cm .cm-scroller:focus-within::-webkit-scrollbar-track,
+.dockview-csv-scroll:hover::-webkit-scrollbar-thumb,
+.dockview-csv-scroll:hover::-webkit-scrollbar-track,
+.dockview-csv-scroll:focus-within::-webkit-scrollbar-thumb,
+.dockview-csv-scroll:focus-within::-webkit-scrollbar-track,
+.dockview-tree-scroll:hover::-webkit-scrollbar-thumb,
+.dockview-tree-scroll:hover::-webkit-scrollbar-track,
+.dockview-tree-scroll:focus-within::-webkit-scrollbar-thumb,
+.dockview-tree-scroll:focus-within::-webkit-scrollbar-track,
+.dockview-xlsx-tabs:hover::-webkit-scrollbar-thumb,
+.dockview-xlsx-tabs:hover::-webkit-scrollbar-track,
+.dockview-xlsx-tabs:focus-within::-webkit-scrollbar-thumb,
+.dockview-xlsx-tabs:focus-within::-webkit-scrollbar-track,
+.dockview-xlsx-charts-row:hover::-webkit-scrollbar-thumb,
+.dockview-xlsx-charts-row:hover::-webkit-scrollbar-track,
+.dockview-xlsx-charts-row:focus-within::-webkit-scrollbar-thumb,
+.dockview-xlsx-charts-row:focus-within::-webkit-scrollbar-track {
+    visibility: visible;
+}
+
+.dockview-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 16px;
+    box-sizing: border-box;
+    text-align: center;
+    color: var(--text-muted, #949ba4);
+    font-size: 14px;
+}
+
+/* Empty state (no file open): native pattern — a centred muted glyph above a
+   single restrained line. Mirrors Discord's empty-channel/search placeholders:
+   centred column, dimmed icon, one short caption. No illustration, no long copy.
+   Shares the unsupported card's vertical rhythm so the panel feels consistent. */
+.dockview-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    height: 100%;
+    padding: 24px 20px;
+    box-sizing: border-box;
+    text-align: center;
+}
+.dockview-empty-icon {
+    color: var(--text-muted, #949ba4);
+    opacity: 0.55;
+}
+.dockview-empty-text {
+    color: var(--text-muted, #949ba4);
+    font-size: 14px;
+    line-height: 1.3;
+    max-width: 240px;
+    word-break: keep-all;
+}
+
+/* Loading / error states share the placeholder's centered layout. */
+.dockview-status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 16px;
+    box-sizing: border-box;
+    text-align: center;
+    color: var(--text-muted, #949ba4);
+    font-size: 14px;
+}
+.dockview-error {
+    color: var(--text-danger, #f23f43);
+}
+
+/* Loading: the MINI version of the shared state card (spinner glyph + one title
+   line, no actions). Same centred rhythm as empty / error / unsupported, just
+   lighter. Shown only after a ~150ms delay (see LoadingBody) so fast loads
+   never flash it. */
+.dockview-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    height: 100%;
+    padding: 24px 20px;
+    box-sizing: border-box;
+    text-align: center;
+}
+.dockview-loading-spinner {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 3px solid var(--background-modifier-accent, #4f545c66);
+    border-top-color: var(--text-muted, #949ba4);
+    animation: dockview-spin 0.7s linear infinite;
+}
+.dockview-loading-title {
+    color: var(--text-muted, #949ba4);
+    font-size: 14px;
+    line-height: 1.3;
+}
+@keyframes dockview-spin {
+    to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .dockview-loading-spinner { animation-duration: 1.4s; }
+}
+
+/* Unsupported-format fallback: a centered card for a binary file we can't
+   preview (unknown extension that sniffed as binary), with download / open
+   actions. Mirrors the placeholder's centered layout but stacks an icon,
+   title, subtitle and a button row. */
+.dockview-unsupported {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    height: 100%;
+    padding: 24px 20px;
+    box-sizing: border-box;
+    text-align: center;
+}
+.dockview-unsupported-icon {
+    color: var(--text-muted, #949ba4);
+    opacity: 0.7;
+    margin-bottom: 2px;
+}
+.dockview-unsupported-title {
+    color: var(--header-primary, #f2f3f5);
+    font-size: 16px;
+    font-weight: 600;
+}
+.dockview-unsupported-sub {
+    color: var(--text-muted, #949ba4);
+    font-size: 13px;
+    max-width: 280px;
+    line-height: 1.4;
+    word-break: keep-all;
+}
+.dockview-unsupported-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+.dockview-unsupported-btn {
+    appearance: none;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--text-default, #dbdee1);
+    background: var(--button-secondary-background, #4e5058);
+    transition: background-color 0.15s ease;
+}
+.dockview-unsupported-btn:hover {
+    background: var(--button-secondary-background-hover, #6d6f78);
+}
+.dockview-unsupported-btn-primary {
+    color: var(--white-500, #ffffff);
+    background: var(--button-filled-brand-background, var(--brand-500, #5865f2));
+}
+.dockview-unsupported-btn-primary:hover {
+    background: var(--button-filled-brand-background-hover, var(--brand-560, #4752c4));
+}
+
+/* Error card: reuses the unsupported-format card layout. Only the icon takes a
+   muted-danger tint so it reads as an error without shouting (a later design
+   pass owns the final tone). The action row wraps on a narrow panel. */
+.dockview-error-card .dockview-error-icon {
+    color: var(--text-danger, #f23f43);
+    opacity: 0.85;
+}
+.dockview-error-card .dockview-unsupported-actions {
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+/* The INTERACTIVE artifact iframe: fills the whole scrollable body. Unlike the
+   inline thumbnail it receives pointer events and scrolls its own content. When
+   the artifact's own <body> is transparent, the iframe's backdrop shows
+   through — we paint it with the SAME Discord chat-content colour as the body
+   so a transparent artifact reads as "on a thread", not on a white sheet or a
+   black card. (Opaque artifacts paint over this and are unaffected.) */
+.dockview-frame {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: var(--background-gradient-chat, var(--background-base-lower));
+}
+
+/* ART-1: while the artifact/markdown iframe is still doing its first render we
+   keep it mounted-but-hidden and overlay the SHARED loading card on top, so the
+   iframe path shows the same 4-state visuals as every other viewer. The wrap is
+   the positioning context; the overlay fills it and centres the card. */
+.dockview-frame-wrap {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+.dockview-frame-loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: var(--background-gradient-chat, var(--background-base-lower));
+}
+
+/* PDF renderer (content type "pdf"): a vertically scrolling column of page
+   WRAPPERS, each holding a <canvas> + an overlaid transparent text layer (for
+   selection/copy/find). The body itself (.dockview-body) already scrolls; this
+   container just centres pages and spaces them. The canvas is sized to the
+   current fit×zoom scale in CSS px (backing store *dpr for crispness, set inline
+   from JS); the text layer is sized via pdf.js --total-scale-factor to match. */
+.dockview-pdf-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    box-sizing: border-box;
+    /* fit-content + min-width:100% so the column is viewport-width when pages fit
+       (centred), but GROWS to the widest page when one overflows — that grown width
+       is what gives the body a full horizontal scroll range, so a zoomed page can
+       be panned all the way to its left/right edge (a plain width:100% would clip
+       the centred overflow and leave scrollLeft pinned at the centre). When nothing
+       overflows this resolves to exactly 100%, so narrow pages stay centred as
+       before. */
+    width: fit-content;
+    min-width: 100%;
+    /* pdf.js's setLayerDimensions sizes page/text boxes with
+       `round(down, var(--total-scale-factor) * Npx, var(--scale-round-x))`.
+       Define the rounding step (1px) here so those calc()s resolve cleanly to a
+       whole-pixel box that matches our wrapper. --scale-factor is set inline from
+       JS (the live document scale); it is the single knob that drives the whole
+       column's size + the canvas stretch + the text layer. */
+    --scale-factor: 1;
+    --scale-round-x: 1px;
+    --scale-round-y: 1px;
+    /* tabIndex=0 (click-to-focus for keyboard nav) — suppress the focus ring. */
+    outline: none;
+}
+/* The page wrapper is the positioning context for the absolute text layer. Its
+   width/height are sized in CSS from the container's --scale-factor
+   (`round(down, var(--scale-factor) * <pdf unit>px, 1px)`, set inline from JS),
+   so the whole page column reflows as ONE connected unit when --scale-factor
+   changes during a live resize — gaps stay constant, pages never overlap or
+   detach. This is the canonical pdf.js setLayerDimensions recipe. */
+.dockview-pdf-page-wrap {
+    position: relative;
+    display: block;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    background: #fff;
+    flex: 0 0 auto;
+    /* content-visibility:auto makes off-screen pages cheap to RE-LAYOUT. The wrap
+       box keeps its explicit inline width/height (round(down, var(--scale-factor)
+       * Npx, ...)), so the column's scroll height is always correct and pages
+       never detach — but the browser SKIPS laying out + painting each off-screen
+       page's INNER content (the canvas + the text layer's hundreds of absolutely-
+       positioned spans). That inner relayout is what made a live resize drag of a
+       many-page PDF expensive: every --scale-factor change re-flowed every page's
+       full text layer (measured ~72-85ms/frame on a 41-page doc → ~14fps). With
+       this, only the on-screen pages re-flow per frame, so the live-scale preview
+       tracks the drag smoothly. contain-intrinsic-size is the placeholder size used
+       only if a wrap ever lacks an explicit height (it normally has one inline);
+       'auto' lets the browser remember the last real size. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 800px;
+}
+.dockview-pdf-page {
+    display: block;
+    position: absolute;
+    inset: 0;
+    /* Fill the wrapper box so the (fixed-resolution) bitmap STRETCHES with the
+       box when --scale-factor changes — instant, GPU-composited live-resize
+       preview, then a crisp re-raster on drag end (pdf.js "CSS zoom, redraw"). */
+    width: 100%;
+    height: 100%;
+    /* The canvas is pure raster — it must NEVER swallow pointer events, or a
+       drag that starts over it is stolen from the text layer above and no
+       selection is made. Pointer events belong to the .textLayer (z-index:2,
+       pointer-events:auto). This is the canonical pdf.js viewer split. */
+    pointer-events: none;
+}
+
+/* Text layer (pdf.js standard): transparent, absolutely-positioned text divs
+   overlaid on the canvas so the user can SELECT and COPY real PDF text. Colour
+   transparent + selection tint = the canonical pdf.js viewer recipe. */
+.dockview-pdf-page-wrap .textLayer {
+    position: absolute;
+    inset: 0;
+    overflow: clip;
+    opacity: 1;
+    line-height: 1;
+    text-size-adjust: none;
+    forced-color-adjust: none;
+    transform-origin: 0 0;
+    caret-color: CanvasText;
+    z-index: 2;
+    /* Sit above the (pointer-events:none) canvas and own all pointer events so
+       a drag here makes a real text selection. */
+    pointer-events: auto;
+    /* Discord sets user-select:none on app containers; re-enable text selection
+       here (the canonical pdf.js viewer recipe) so PDF text can be copied. */
+    -webkit-user-select: text;
+    user-select: text;
+    /* pdf.js scale chain: spans size their font from --text-scale-factor, which
+       folds the live --total-scale-factor (= our --scale-factor). Because the
+       span left/top are PERCENTAGES of the box and the font-size tracks the
+       variable, the whole text layer scales in lockstep with the canvas during a
+       live resize — no re-render needed to keep text glued over the page. */
+    --min-font-size: 1;
+    --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+    --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.dockview-pdf-page-wrap .textLayer span,
+.dockview-pdf-page-wrap .textLayer br {
+    color: transparent;
+    position: absolute;
+    white-space: pre;
+    cursor: text;
+    transform-origin: 0% 0%;
+    -webkit-user-select: text;
+    user-select: text;
+}
+/* The canonical pdf.js span sizing + transform: font-size driven by the scale
+   variable × the per-span --font-height (set inline by pdf.js's TextLayer), and
+   a per-span horizontal stretch (--scale-x) so glyph runs match the canvas. */
+.dockview-pdf-page-wrap .textLayer > :not(.markedContent),
+.dockview-pdf-page-wrap .textLayer .markedContent span:not(.markedContent) {
+    z-index: 1;
+    --font-height: 0;
+    font-size: calc(var(--text-scale-factor) * var(--font-height));
+    --scale-x: 1;
+    --rotate: 0deg;
+    transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.dockview-pdf-page-wrap .textLayer .markedContent {
+    display: contents;
+}
+.dockview-pdf-page-wrap .textLayer span.markedContent {
+    top: 0;
+    height: 0;
+}
+.dockview-pdf-page-wrap .textLayer ::selection {
+    background: rgba(88, 101, 242, 0.45);
+}
+/* Find highlight (CSS Custom Highlight API): each match is an exact character
+   Range painted via the global registries set in JS (CSS.highlights.set). This
+   paints ONLY the matched substring — not the whole span — and never touches the
+   span DOM, so the pdf.js scale/transform model is untouched. All matches get a
+   dim yellow tint; the CURRENT match a stronger orange. ::highlight() only
+   accepts a small set of properties (color/background-color/text-decoration), so
+   no border-radius here. */
+.dockview-pdf-page-wrap .textLayer::highlight(dockview-pdf-find) {
+    background-color: rgba(255, 213, 0, 0.4);
+    color: transparent;
+}
+.dockview-pdf-page-wrap .textLayer::highlight(dockview-pdf-find-active) {
+    background-color: rgba(255, 145, 0, 0.7);
+    color: transparent;
+}
+
+/* PDF body horizontal scroll. The shared .dockview-body keeps overflow-x:hidden
+   (Discord has no h-scroll; code wraps) — but a PDF page can't wrap, so a zoomed
+   page overflows the width and MUST be pannable. Only the PDF body opts into a
+   horizontal scroll axis (the drag-to-pan handler scrolls it, and a trackpad /
+   shift-wheel works too). scrollbar-gutter:stable is inherited from .dockview-body
+   so the fit-width measurement stays constant. */
+.dockview-body-pdf {
+    overflow-x: auto;
+}
+
+/* Drag-to-pan mode (PDF). When pan is active the container shows a grab cursor and
+   the pdf.js text layer is made non-interactive (pointer-events:none + user-select:
+   none) so a drag scrolls the page (handled in JS on the container) instead of
+   selecting text. While a pan drag is in progress .dockview-pdf-panning shows the
+   grabbing (closed-hand) cursor. In text mode (no class) the text layer keeps its
+   pointer-events:auto / user-select:text and selection works exactly as before —
+   this is a pure cursor + selection-suppression layer, the raster / text spans /
+   find are untouched. */
+.dockview-pdf-pan {
+    cursor: grab;
+}
+.dockview-pdf-pan.dockview-pdf-panning,
+.dockview-pdf-pan.dockview-pdf-panning .textLayer,
+.dockview-pdf-pan.dockview-pdf-panning .textLayer span {
+    cursor: grabbing;
+}
+.dockview-pdf-pan .textLayer,
+.dockview-pdf-pan .textLayer span,
+.dockview-pdf-pan .textLayer br {
+    pointer-events: none;
+    cursor: grab;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* FIND BOX — a FLOATING browser-style Ctrl+F panel (grammar rule 7), shared by
+   PDF + every CodeMirror surface. It is anchored TOP-RIGHT over the content
+   (small margin), floating above the body rather than consuming a header row.
+   The row-2 find icon toggles it; Ctrl+F opens it, Esc closes. Reads as a small
+   dark Discord popout: the elevated/floating surface token + a thin border + a
+   soft shadow, like Discord's own popouts. Discord may intercept the global
+   Ctrl+F, so this is our own UI. max-width caps it on a narrow dock; it never
+   covers more than a sliver of the top-right corner. */
+.dockview-find {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: calc(100% - 24px);
+    padding: 5px 6px 5px 8px;
+    box-sizing: border-box;
+    background: var(--background-floating, var(--background-base-low, #232428));
+    border: 1px solid var(--border-faint, var(--background-modifier-accent, rgba(255, 255, 255, 0.08)));
+    border-radius: 8px;
+    box-shadow: var(--shadow-high, 0 8px 16px rgba(0, 0, 0, 0.24));
+}
+/* The text field = a Discord-input-styled pill that holds the query + the live
+   counter at its right edge (the browser/VS Code look — the number sits IN the
+   field). The field itself carries the input chrome so the counter shares it. */
+.dockview-find-field {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 8px;
+    box-sizing: border-box;
+    background: var(--input-background, rgba(0, 0, 0, 0.2));
+    border-radius: 4px;
+}
+.dockview-find-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 9rem;
+    height: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--text-default, #dbdee1);
+    font-family: inherit;
+    font-size: 13px;
+}
+.dockview-find-input::placeholder { color: var(--text-muted, #87898c); }
+.dockview-find-count {
+    flex: 0 0 auto;
+    text-align: right;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted, #949ba4);
+    user-select: none;
+    white-space: nowrap;
+}
+/* Trailing control cluster: Aa case toggle · prev · next · ✕. */
+.dockview-find-actions {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 1px;
+}
+/* Compact the shared tool buttons inside the box. Reuse .dockview-tool-btn for
+   the ghost-icon hover/active language; this just tightens the geometry. */
+.dockview-find .dockview-tool-btn {
+    flex: 0 0 auto;
+    height: 28px;
+    min-width: 26px;
+    padding: 0 4px;
+}
+/* The "Aa" case-sensitivity toggle: a compact text button (universal find-box
+   convention — browsers, VS Code, Acrobat). */
+.dockview-find-case {
+    font-size: 12px;
+    font-weight: 600;
+}
+/* Hairline dividing the match-nav cluster from the close, like a browser box. */
+.dockview-find-sep {
+    flex: 0 0 auto;
+    width: 1px;
+    height: 18px;
+    margin: 0 3px;
+    background: var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
+}
+
+/* IMAGE renderer (content type "image"): a centered, fit(contain) image with
+   zoom + pan, like Discord's lightbox / a browser image viewer (replaces the
+   old fit-width + vertical-scroll model). The wrap fills the body and centers
+   the <img>; the <img> is fit via max-width/height:100% + object-fit:contain at
+   scale 1, then a JS transform applies zoom (scale) + pan (translate). A low-
+   contrast CSS checkerboard painted BEHIND the <img> (see .dockview-img) shows
+   through transparent PNGs. The body must NOT scroll here —
+   panning is done with the transform — so the wrap clips overflow. */
+.dockview-img-wrap {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    box-sizing: border-box;
+    outline: none;
+    /* Discord chat-content backdrop (same token as the body) so the viewer
+       reads as "on a thread", not a checkerboard light-table. Transparent PNGs
+       therefore sit on the Discord background like any other attachment. */
+    background: var(--background-gradient-chat, var(--background-base-lower));
+    cursor: default;
+}
+.dockview-img-wrap.dockview-img-zoomed { cursor: grab; }
+.dockview-img-wrap.dockview-img-zoomed:active { cursor: grabbing; }
+.dockview-img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    transform-origin: center center;
+    /* a subtle edge so opaque images read as a "card" over the checkerboard */
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+    -webkit-user-select: none;
+    user-select: none;
+    will-change: transform;
+    /* A very-low-contrast checkerboard painted BEHIND the <img>: it only shows
+       through transparent pixels (opaque images fully cover it, so there's no
+       visual change there). Two near-identical dark greys keep it subtle on the
+       Discord dark theme — Discord's own lightbox shows no checkerboard, so this
+       must not "pop". A repeating-conic-gradient draws a 2x2 checker of one tile
+       size; background-size sets the checker pitch (~16px squares). */
+    background-color: #2b2d31;
+    background-image:
+        repeating-conic-gradient(#33363c 0% 25%, #2b2d31 0% 50%);
+    background-size: 32px 32px;
+    background-position: 0 0;
+}
+
+/* FULLSCREEN image lightbox (IMG-2): a self-rendered overlay over the whole
+   renderer with a dimmed backdrop, modelled on Discord's own lightbox. It is NOT
+   a Discord ModalRoot (that component isn't cleanly resolvable from the isolated
+   plugin context) — it's position:fixed over the viewport with a very high
+   z-index so it sits above the panel AND the rest of the client chrome. Esc / ✕ /
+   backdrop-click dismiss it; the SAME zoom/pan engine as the inline body drives
+   it (shared imgView), so the picture keeps its place on enter/exit. */
+.dockview-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 4000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* Discord's lightbox dims to ~0.85 black; match it so the overlay reads as
+       native, not a translucent panel. */
+    background: rgba(0, 0, 0, 0.85);
+    animation: dockview-lightbox-in 0.12s ease;
+}
+@keyframes dockview-lightbox-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .dockview-lightbox { animation: none; }
+}
+.dockview-lightbox-stage {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    outline: none;
+    cursor: default;
+}
+.dockview-lightbox-stage.dockview-img-zoomed { cursor: grab; }
+.dockview-lightbox-stage.dockview-img-zoomed:active { cursor: grabbing; }
+.dockview-lightbox-img {
+    display: block;
+    /* Leave a margin so the fitted image never bleeds to the screen edge under
+       the close button (matches Discord's lightbox padding). */
+    max-width: calc(100% - 96px);
+    max-height: calc(100% - 96px);
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    transform-origin: center center;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    -webkit-user-select: none;
+    user-select: none;
+    will-change: transform;
+}
+/* Close affordance: a round button in the top-right, above the stage. */
+.dockview-lightbox-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    color: var(--white-500, #ffffff);
+    background: rgba(0, 0, 0, 0.4);
+    transition: background-color 0.15s ease;
+}
+.dockview-lightbox-close:hover {
+    background: rgba(0, 0, 0, 0.7);
+}
+.dockview-lightbox-close svg { display: block; }
+
+/* Prev/next image steppers — round buttons centred on the left/right edges, the
+   same affordance as the close button. At a true list end / while loading they
+   keep their slot but dim + go non-interactive (grammar rule 9). */
+.dockview-lightbox-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    color: var(--white-500, #ffffff);
+    background: rgba(0, 0, 0, 0.4);
+    transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+.dockview-lightbox-nav-prev { left: 16px; }
+.dockview-lightbox-nav-next { right: 16px; }
+.dockview-lightbox-nav:hover { background: rgba(0, 0, 0, 0.7); }
+.dockview-lightbox-nav svg { display: block; }
+.dockview-lightbox-nav-disabled,
+.dockview-lightbox-nav-disabled:hover {
+    opacity: 0.3;
+    cursor: default;
+    background: rgba(0, 0, 0, 0.4);
+}
+
+/* Header ⋯ / close buttons centre their SVG inside the native 32px iconWrapper
+   hover target. */
+.dockview-more,
+.dockview-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+.dockview-more svg,
+.dockview-close svg {
+    display: block;
+}
+
+/* CODE / TEXT renderer (content type "code") + CSV "Raw" view: a read-only
+   CodeMirror 6 editor. CM is lazy-loaded on the first text-file open (a static
+   top-level @codemirror import throws at plugin module-eval and kills the whole
+   plugin). The editor reads at the same tone as a real thread (its theme, built
+   in panel.tsx, paints --background-base-lower); it ALWAYS wraps (no horizontal
+   scroll, locked Discord grammar) and owns its own scroller (.cm-scroller),
+   styled by the Discord thin-scrollbar rules above. Syntax highlighting is gated
+   on file size (HIGHLIGHT_MAX_LINES): big files render as plain text so the Lezer
+   parser — the sole long-task source — never runs. Most of the editor's look is
+   set by the CM theme/highlight-style in JS; this rule just sizes the host so the
+   editor fills the body and clips to it. */
+.dockview-cm {
+    height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+    outline: none;
+    overflow: hidden; /* the .cm-scroller inside owns scroll */
+    background: var(--background-base-lower, #1a1a1e);
+}
+.dockview-cm .cm-editor {
+    height: 100%;
+}
+/* The find decorations (all matches / active match) are class-driven Decoration
+   marks dispatched from the find controller; their colours live in the CM theme
+   (.cm-dockview-find / -active). Nothing else to style here — selection, gutter,
+   active line and token colours are all in the JS theme/highlight-style. */
+
+/* ----------------------------------------------------------------------------
+   CSV / TSV GRID. A spreadsheet-style <table> built imperatively (CsvBody): a
+   STICKY header row + data rows that stream in across rAF ticks. The grid lives
+   in its own horizontally-scrollable column (.dockview-csv-scroll) so wide tables
+   scroll sideways while .dockview-body keeps vertical scroll; the header sticks to
+   the top while the body scrolls. Cells never wrap — they truncate with an
+   ellipsis (full value in the title=) so columns stay aligned and rows stay one
+   line tall. Each body row carries content-visibility:auto so off-screen rows
+   cost ~nothing to lay out (O(visible), like the code viewer) — a few thousand
+   rows scroll smoothly and a very large file doesn't freeze the host. Same dark
+   tone + native thin scrollbar as the code view. ------------------------------ */
+/* The grid owns BOTH scroll axes itself (it fills .dockview-body, which doesn't
+   scroll for a CSV): horizontal for wide tables AND vertical for tall ones. This
+   is deliberate — a sticky table header must resolve against the element that
+   actually scrolls vertically, and a single-axis overflow-x:auto would (per the
+   CSS overflow spec) compute overflow-y to auto and make THIS element the vertical
+   scroller anyway. So we make that explicit and route the dock's scroll-restore to
+   this element for the grid (see csvScroller()). */
+.dockview-csv-scroll {
+    display: block;
+    height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+    outline: none;
+    overflow: auto;
+    background: var(--background-base-lower, #1a1a1e);
+    /* readable, compact — system UI font (data, not code) with tabular numbers. */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-default, #dbdee1);
+}
+.dockview-csv-mount { display: block; }
+.dockview-csv-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    /* size to the widest row but at least fill the column, so narrow tables still
+       span the panel and wide ones scroll horizontally within .dockview-csv-scroll. */
+    width: max-content;
+    min-width: 100%;
+    table-layout: auto;
+}
+/* Sticky header row: pins to the top of the scrolling body while data scrolls
+   under it. A solid background (the panel header tone) + a bottom border read it
+   as a frozen header strip; z-index keeps it above scrolled cells. */
+.dockview-csv-th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    text-align: left;
+    font-weight: 600;
+    color: #f2f3f5;
+    background: var(--background-secondary, #2b2d31);
+    border-bottom: 2px solid var(--background-modifier-accent, #3f4147);
+    border-right: 1px solid var(--background-modifier-accent, #2b2d31);
+    padding: 7px 12px;
+    /* truncate long headers with an ellipsis; max-width keeps a single huge cell
+       from stretching the whole column off-screen (full text in the title=). */
+    max-width: 360px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* An empty header cell still needs presence so its column reads — a faint dash. */
+.dockview-csv-th.dockview-csv-empty::after {
+    content: "—";
+    color: var(--text-muted, #6b7280);
+}
+.dockview-csv-td {
+    padding: 5px 12px;
+    border-bottom: 1px solid var(--background-modifier-accent, #26282c);
+    border-right: 1px solid var(--background-modifier-accent, #26282c);
+    max-width: 360px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: top;
+}
+/* content-visibility:auto skips layout+paint for off-screen rows (O(visible) not
+   O(total)) — the load-bearing perf trick, same as the code viewer's rows. The
+   intrinsic-size placeholder keeps the scrollbar/height right before a row is
+   measured; ~27px is one padded line. Every row stays a real node, so native
+   select/copy still work (no virtualisation). */
+.dockview-csv-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 27px;
+}
+/* Zebra striping on the (even) data rows for readability across wide tables. */
+.dockview-csv-row:nth-child(2n) .dockview-csv-td {
+    background: var(--background-secondary-alt, #232428);
+}
+.dockview-csv-row:hover .dockview-csv-td {
+    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.04));
+}
+
+/* SPREADSHEET (xlsx/xls/xlsm/ods) — the SAME csv grid (above), wrapped with an
+   Excel-style SHEET-TAB strip along the bottom for multi-sheet workbooks. The shell
+   is a flex column: the grid takes the remaining height, the tab strip pins to the
+   bottom. A single-sheet workbook renders just the grid (no shell-tabbed wrapper),
+   so there is no redundant switcher. All colours are semantic theme tokens. */
+.dockview-xlsx-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    min-height: 0;
+}
+/* The grid region: a sized flex child so the inner .dockview-csv-scroll (height:100%)
+   resolves against it and scrolls within the area between the fx bar and the tab strip
+   (single-sheet workbooks have the fx bar but no tab strip). */
+.dockview-xlsx-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+}
+/* The formula (fx) readout bar: a compact strip above the grid, Excel's fx bar. A fixed
+   address slot (a monospace cell name / "fx" marker) sits left of the value slot which
+   shows the picked cell's formula or raw value. A hairline separates it from the grid.
+   All colours are semantic theme tokens so it follows the Discord/Vesktop theme. */
+.dockview-xlsx-fx {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    min-height: 28px;
+    box-sizing: border-box;
+    background: var(--background-secondary, #2b2d31);
+    border-bottom: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+    font-size: 12.5px;
+    line-height: 18px;
+}
+/* The address slot: a fixed-width cell-name box (monospace, tabular) so the grid text
+   below never shifts as different addresses appear. Before a pick it holds the "fx"
+   marker in a muted tone. */
+.dockview-xlsx-fx-addr {
+    flex: 0 0 auto;
+    min-width: 54px;
+    padding: 1px 8px;
+    border-radius: 4px;
+    background: var(--background-base-lower, #1a1a1e);
+    color: var(--text-strong, #f2f3f5);
+    font-family: Consolas, "Andale Mono WT", "Andale Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    text-align: center;
+    white-space: nowrap;
+}
+/* The value slot: the picked cell's raw value, or its formula (fx-formula tone +
+   monospace). One line, ellipsised, full text on hover (title=). */
+.dockview-xlsx-fx-val {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--text-normal, #dbdee1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dockview-xlsx-fx-formula {
+    font-family: Consolas, "Andale Mono WT", "Andale Mono", Menlo, monospace;
+    color: var(--text-feedback-positive, var(--text-positive, #3ba55c));
+}
+/* The pre-selection state: the "fx" marker + hint read quieter than a live readout. */
+.dockview-xlsx-fx-empty {
+    color: var(--text-muted, #949ba4);
+    font-weight: 500;
+}
+.dockview-xlsx-fx-addr.dockview-xlsx-fx-empty {
+    background: transparent;
+    font-style: italic;
+}
+/* A formula-bearing cell in the grid gets a subtle top-right corner mark (a small
+   triangle, Excel's "cell has a comment/note" affordance re-used for "has a formula").
+   Painted with the same positive feedback tone as the fx value; semantic var only. */
+.dockview-csv-td.dockview-csv-formula,
+.dockview-csv-th.dockview-csv-formula {
+    position: relative;
+}
+.dockview-csv-td.dockview-csv-formula::after,
+.dockview-csv-th.dockview-csv-formula::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    border-style: solid;
+    border-width: 0 5px 5px 0;
+    border-color: transparent var(--text-feedback-positive, var(--text-positive, #3ba55c)) transparent transparent;
+    opacity: 0.7;
+}
+/* The clicked cell gets an inset outline so the fx bar's readout is anchored to a
+   visible selection (like Excel's active-cell border). */
+.dockview-csv-td.dockview-csv-selected,
+.dockview-csv-th.dockview-csv-selected {
+    box-shadow: inset 0 0 0 2px var(--brand-500, #5865f2);
+}
+/* The bottom sheet-tab strip: a horizontally-scrollable row of tabs, like Excel's
+   sheet bar. A solid header-tone background + a top border read it as a frozen strip
+   under the grid. Tabs never wrap — the strip scrolls sideways for many sheets. */
+.dockview-xlsx-tabs {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    padding: 4px 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    background: var(--background-secondary, #2b2d31);
+    border-top: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+    /* Scrollbar styled by the shared Discord thin-scrollbar rule above (this class is
+       one of its selectors), so the sheet strip's bar matches every other dock scroller. */
+}
+/* A sheet tab: a compact pill button. Inactive = muted text on transparent; hover
+   lifts the background; active = brighter text on the body tone with a top accent
+   bar (Excel's "selected sheet" affordance), matching the dock's state-colour grammar. */
+.dockview-xlsx-tab {
+    flex: 0 0 auto;
+    max-width: 200px;
+    padding: 4px 12px;
+    border: none;
+    border-radius: 4px 4px 0 0;
+    background: transparent;
+    color: var(--interactive-normal, #b5bac1);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 18px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.1s ease, color 0.1s ease;
+}
+.dockview-xlsx-tab:hover {
+    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.06));
+    color: var(--interactive-hover, #dbdee1);
+}
+.dockview-xlsx-tab-active {
+    background: var(--background-base-lower, #1a1a1e);
+    color: var(--text-strong, #f2f3f5);
+    box-shadow: inset 0 2px 0 0 var(--brand-500, #5865f2);
+}
+.dockview-xlsx-tab-active:hover {
+    background: var(--background-base-lower, #1a1a1e);
+    color: var(--text-strong, #f2f3f5);
+}
+
+/* PER-SHEET CHARTS STRIP — a collapsible band above the fx bar holding the sheet's
+   embedded charts (SheetJS drops them; we re-extract + draw them as SVG). A sheet with
+   no charts renders nothing here. The header is the collapse toggle; the row scrolls
+   horizontally for several charts. All colours are semantic theme tokens. */
+.dockview-xlsx-charts {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    background: var(--background-secondary, #2b2d31);
+    border-bottom: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+}
+/* The header/toggle: a full-width button with a caret + "Charts (N)". Reads as a quiet
+   section header, brightening on hover like the dock's other toggles. */
+.dockview-xlsx-charts-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 5px 10px;
+    border: none;
+    background: transparent;
+    color: var(--interactive-normal, #b5bac1);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    text-align: left;
+    cursor: pointer;
+    user-select: none;
+}
+.dockview-xlsx-charts-head:hover { color: var(--interactive-hover, #dbdee1); }
+.dockview-xlsx-charts-caret {
+    display: inline-block;
+    width: 12px;
+    font-size: 10px;
+    color: var(--text-muted, #949ba4);
+}
+/* The card row: horizontally scrollable, each card a fixed-ish width so several charts
+   sit side by side and scroll. Hidden entirely while collapsed. */
+.dockview-xlsx-charts-row {
+    display: flex;
+    gap: 12px;
+    padding: 4px 10px 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    /* Scrollbar styled by the shared Discord thin-scrollbar rule above (this class is
+       one of its selectors), so the charts strip's bar matches every other dock scroller. */
+}
+/* One chart card: a bordered panel on the body tone holding a title, the SVG plot, and
+   a legend. Sized to the drawn viewBox (~460px) but shrinkable on a narrow dock. */
+.dockview-xlsx-chart-card {
+    flex: 0 0 auto;
+    width: 460px;
+    max-width: 92%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.08));
+    border-radius: 8px;
+    background: var(--background-base-lower, #1a1a1e);
+}
+.dockview-xlsx-chart-title {
+    margin-bottom: 6px;
+    color: var(--text-strong, #f2f3f5);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dockview-xlsx-chart-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+/* The legend row under the plot: swatch + series/slice name, wrapping over lines. */
+.dockview-xlsx-chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    margin-top: 8px;
+}
+.dockview-xlsx-chart-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 160px;
+}
+.dockview-xlsx-chart-swatch {
+    flex: 0 0 auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+}
+.dockview-xlsx-chart-legend-name {
+    color: var(--text-muted, #949ba4);
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* A fallback card for an unsupported chart type — a quieter panel naming the type, so
+   the chart is never silently dropped and never a broken render. */
+.dockview-xlsx-chart-fallback {
+    width: 240px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 90px;
+    border-style: dashed;
+}
+.dockview-xlsx-chart-fallback-msg {
+    color: var(--text-muted, #949ba4);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+/* STRUCTURED (JSON / XML) COLLAPSIBLE TREE — the default view for .json/.json5/.xml,
+   with a header Tree/Raw toggle back to the highlighted code view. The tree is built
+   imperatively into .dockview-tree-mount; rows are monospace, keys/values are
+   type-coloured (github-dark-dimmed-ish, matching the MD_STYLE hljs palette), and a
+   branch row toggles a .dv-collapsed class on its children container on click. */
+.dockview-tree-scroll {
+    display: block;
+    height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+    outline: none;
+    overflow: auto;
+    background: var(--background-base-lower, #1a1a1e);
+    font-family: Consolas, "Andale Mono WT", "Andale Mono", Menlo, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--text-default, #dbdee1);
+}
+.dockview-tree-mount {
+    display: block;
+    padding: 12px 14px 32px;
+    width: max-content;
+    min-width: 100%;
+    box-sizing: border-box;
+}
+/* every nested level indents one step (left border = the guide rail). */
+.dockview-tree-children {
+    padding-left: 16px;
+    border-left: 1px solid var(--background-modifier-accent, #2b2d31);
+    margin-left: 3px;
+}
+.dockview-tree-children.dv-collapsed,
+.dockview-tree-close.dv-collapsed {
+    display: none;
+}
+.dockview-tree-row,
+.dockview-tree-close {
+    white-space: pre;
+    word-break: normal;
+}
+.dockview-tree-clickable {
+    cursor: pointer;
+    border-radius: 3px;
+}
+.dockview-tree-clickable:hover {
+    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.04));
+}
+.dv-tree-toggle {
+    display: inline-block;
+    width: 1em;
+    color: #768390;
+    user-select: none;
+}
+.dv-tree-key { color: #6cb6ff; }            /* object keys / xml attr names */
+.dv-tree-colon { color: #768390; }
+.dv-tree-punct { color: #768390; }
+.dv-tree-tag { color: #f47067; }            /* xml element tag names */
+.dv-tree-count { color: #5e6772; font-style: italic; margin-left: 6px; }
+.dv-tree-ellipsis { color: #768390; margin-left: 4px; }
+.dv-tree-string { color: #96d0ff; }         /* json strings / xml attr values */
+.dv-tree-number { color: #6cb6ff; }
+.dv-tree-boolean { color: #f69d50; }
+.dv-tree-null { color: #f47067; }
+.dv-tree-xmltext { color: #dbdee1; }
+.dv-tree-overflow { color: #e0af68; font-style: italic; padding: 6px 0; }
+
+/* HEADER CONTROL BUTTONS — the per-viewer core controls now live inline in the
+   single header row (the old `dockview-toolbar` strip is gone). Discord-toned:
+   ghost buttons (muted icon, hover bg), and ONE low-chroma active language for
+   every toggle (find / wrap / Aa) — a subtle neutral fill + brightened icon, NOT
+   the old blurple. The spec (§2.2) wanted active toggles to stop "competing"
+   with the native header tone; a single quiet emphasis does that. */
+.dockview-tool-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+.dockview-tool-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    height: 28px;
+    min-width: 28px;
+    padding: 0 6px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--interactive-normal, #b5bac1);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+.dockview-tool-btn:hover {
+    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.08));
+    color: var(--interactive-hover, #dbdee1);
+}
+.dockview-tool-btn:active {
+    background: var(--background-modifier-active, rgba(255, 255, 255, 0.12));
+}
+/* Active toggle: a quiet neutral fill + brightened icon (the single shared
+   active language). No brand/blurple — it must not fight the native header. */
+.dockview-tool-btn-active,
+.dockview-tool-btn-active:hover {
+    color: var(--interactive-active, #f2f3f5);
+    background: var(--background-modifier-selected, rgba(255, 255, 255, 0.12));
+}
+.dockview-tool-btn svg { display: block; }
+/* Disabled (dimmed) tool button: keeps its slot + icon but reads as unavailable —
+   Discord dims actions it can't perform right now (grammar rule 9: a control is
+   never removed by mode, only disabled). Dropped opacity, default cursor, and no
+   hover/active feedback; the click is a no-op (handler omitted in JS).
+   Doubled the class (.dockview-tool-btn.dockview-tool-btn-disabled, 0,2,0) so it
+   outranks Discord's global `.app__* button { cursor: pointer }` (0,1,1) — a
+   single-class rule loses to it and the disabled cursor wouldn't take. */
+.dockview-tool-btn.dockview-tool-btn-disabled,
+.dockview-tool-btn.dockview-tool-btn-disabled:hover,
+.dockview-tool-btn.dockview-tool-btn-disabled:active {
+    opacity: 0.35;
+    cursor: default;
+    background: transparent;
+    color: var(--interactive-normal, #b5bac1);
+}
+/* Zoom percentage readout between -/+ */
+.dockview-tool-pct {
+    min-width: 44px;
+    text-align: center;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted, #949ba4);
+    user-select: none;
+}
+/* PDF page indicator: an inline editable "N / total". The input shows the
+   current page as a placeholder and accepts a number to jump to. */
+.dockview-tool-pageind {
+    display: inline-flex;
+    align-items: center;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted, #949ba4);
+    user-select: none;
+    padding: 0 2px;
+}
+.dockview-tool-pageinput {
+    width: 30px;
+    height: 22px;
+    text-align: right;
+    border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.1));
+    border-radius: 4px;
+    background: var(--input-background, rgba(0, 0, 0, 0.2));
+    color: var(--text-default, #dbdee1);
+    font-family: inherit;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    outline: none;
+    padding: 0 4px;
+}
+.dockview-tool-pageinput:focus {
+    border-color: var(--text-brand, #5865f2);
+}
+.dockview-tool-pagetotal { white-space: pre; }
+
+/* Detected-language label (left side, code toolbar). */
+.dockview-tool-lang {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--text-muted, #949ba4);
+    padding: 0 4px;
+    user-select: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* In the row-2 strip the language label is capped so a long lang id can't crowd
+   out the controls; it ellipsises within its cap. */
+.dockview-viewer-toolbar .dockview-tool-lang { max-width: 140px; }
+/* Image metadata readout (IMG-4): the SAME muted-label family as the language label,
+   but the content is already correctly cased ("1920×1080 · 2.3 MB · PNG"), so drop
+   the uppercase + heavy weight + tracking and widen the cap. Tabular digits keep the
+   numbers from jittering as they update on load. */
+.dockview-viewer-toolbar .dockview-tool-meta {
+    font-weight: 500;
+    letter-spacing: normal;
+    text-transform: none;
+    font-variant-numeric: tabular-nums;
+    max-width: 220px;
+}
+/* Copy is now an icon-only ghost button; it tints positive on the "copied" flash
+   (the glyph itself swaps to a check). */
+.dockview-tool-copy.dockview-tool-copied,
+.dockview-tool-copy.dockview-tool-copied:hover {
+    color: var(--text-positive, #23a559);
+}
+
+/* The shared zoom group [− % +] (PDF + image, identical). A tight cluster with
+   the percent readout centred between the buttons — one consistent component,
+   spacing and order across both viewers (spec §2.2). */
+.dockview-zoom-group {
+    gap: 0;
+}
+.dockview-zoom-group .dockview-tool-pct {
+    min-width: 40px;
+}
+
+/* ----------------------------------------------------------------------------
+   NARROW-WIDTH COLLAPSE (collapse controls, never the
+   filename). The SECOND row (.dockview-viewer-toolbar) is a CSS CONTAINER keyed on
+   the PANEL width; as the panel narrows (min 360px) the lowest-priority control
+   affordances drop out FIRST, purely in CSS so it reflows live during a resize
+   drag with no React re-render. Order of collapse:
+     1) `.dockview-collapse-low`  — page arrows, code language label
+     2) `.dockview-collapse-mid`  — find trigger
+   The CORE controls (zoom group, page readout/jump, Raw toggle, copy icon) and the
+   filename above always survive; find/page-nav stay reachable via keyboard (Ctrl+F,
+   ←/→) so nothing is lost, only the affordance is hidden. Thresholds are the row
+   inline width (≈ panel width − ~24px padding); the dense PDF cluster sets them. */
+@container dockview-header (max-width: 400px) {
+    .dockview-collapse-low { display: none; }
+}
+@container dockview-header (max-width: 344px) {
+    .dockview-collapse-mid { display: none; }
+}
+
+/* ----------------------------------------------------------------------------
+   ATTACH FILENAME BAR (2c-2) — a native inline filename input shown as a SECOND
+   header row when the user picks ⋯ → "Attach to message" (or attaches a new
+   file). The Discord "new thread name" pattern (grammar rule 6): the original
+   filename is the PLACEHOLDER, blank reuses it, typing renames the staged file.
+   It sits in the same second-row strip the viewer controls use, so the card's
+   flex-column layout flows the body below with no offset math. A thin divider
+   separates it from the top row; it carries the header padding so the input lines
+   up with the title above. Confirm = the native blurple Button (rule 3); Cancel =
+   a ghost text button (rule 4).
+   ------------------------------------------------------------------------- */
+.dockview-attach-toolbar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-top: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+}
+/* Filename field: a sober ghost input matching the find bar. Takes the slack so
+   Cancel + Attach stay pinned to the right and it ellipsises first. */
+.dockview-attach-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    box-sizing: border-box;
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.1));
+    border-radius: 4px;
+    background: var(--input-background, rgba(0, 0, 0, 0.2));
+    color: var(--text-default, #dbdee1);
+    font-size: 14px;
+    outline: none;
+}
+.dockview-attach-name:focus { border-color: var(--text-link, #00a8fc); }
+.dockview-attach-name::placeholder { color: var(--text-muted, #949ba4); }
+/* Cancel: a borderless ghost text button (secondary action). */
+.dockview-attach-cancel {
+    flex: 0 0 auto;
+    height: 30px;
+    padding: 0 10px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--interactive-normal, #b5bac1);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+.dockview-attach-cancel:hover {
+    color: var(--interactive-hover, #dbdee1);
+    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.06));
+}
+/* Keep the native Discord Button (Attach) from being stretched by the flex row. */
+.dockview-attach-confirm { flex: 0 0 auto; }
+
+/* ---------------------------------------------------------------------------
+ * Suppress Discord's bulky inline source preview for non-image (code / text /
+ * .html artifact) attachments. The DockView plugin opens these in the dock on
+ * click, so the inline preview — which for a self-contained .html artifact is a
+ * ~50 KB minified-runtime dump — is pure noise. Hide ONLY the preview scroller
+ * (`textContainer`); the filename chip + controls (its sibling) stay clickable.
+ * Scoped under `nonVisualMediaItem`, so images / audio / links are untouched.
+ * --------------------------------------------------------------------------- */
+[class*="nonVisualMediaItem"] [class*="textContainer"] {
+    display: none !important;
+}
+
+/* --- media (audio / video) -------------------------------------------------
+ * A native <audio>/<video controls> centered on the Discord chat backdrop (the same
+ * token as the image viewer + body), so the player reads as "on a thread". Video fills
+ * the panel (contain); audio sits as a centered control bar. */
+.dockview-media-wrap {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    padding: 16px;
+    overflow: hidden;
+    background: var(--background-gradient-chat, var(--background-base-lower));
+}
+.dockview-media-wrap--audio { padding: 24px 20px; }
+.dockview-audio {
+    width: 100%;
+    max-width: 460px;
+}
+.dockview-video {
+    /* Fill the dock WIDTH (stable) instead of sizing to the video's aspect. A native
+     * <video controls> draws its control bar inside the element, and the bar has
+     * responsive breakpoints (it folds to two rows when narrow). An aspect-sized
+     * element whose width hovers near a breakpoint flips the bar's layout every frame
+     * — the "seek bar width keeps changing" bug, a width↔controls feedback loop. A
+     * fixed 100% width breaks the loop; object-fit letterboxes the content. */
+    width: 100%;
+    height: auto;
+    max-height: 100%;
+    outline: none;
+    background: #000;
+}
+/* fallback notice (an unplayable container) — mirrors the unsupported card. */
+.dockview-media-fallback { padding: 24px 20px; }
+.dockview-media-fallback-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    text-align: center;
+}
+.dockview-media-fallback-title {
+    color: var(--header-primary, #f2f3f5);
+    font-size: 16px;
+    font-weight: 600;
+}
+.dockview-media-fallback-sub {
+    color: var(--text-muted, #949ba4);
+    font-size: 13px;
+    max-width: 280px;
+    line-height: 1.4;
+    word-break: keep-all;
+}
+
+/* web tab — a page opened as a dock tab, rendered in an isolated <webview>. The frame
+ * fills the dock body; a load-failure card overlays it (an honest error, not a blank). */
+.dockview-web-wrap {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    overflow: hidden;
+    /* Behind the webview: the SAME dock chat surface every other viewer body uses
+       (--background-base-lower), so a blank/transparent moment during a page load
+       reads as the dock, not a divergent brighter shade. --background-primary is
+       empty on current Discord builds (it would fall through to the raw #313338),
+       so use the base token the dock body/card actually paint. */
+    background: var(--background-gradient-chat, var(--background-base-lower, #1a1a1e));
+}
+.dockview-web-frame {
+    flex: 1 1 auto;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    /* a <webview> is display:flex by default in Chromium; force block so it fills. */
+    display: inline-flex;
+}
+/* honest load-failure card (did-fail-load) — overlays the frame, centred. */
+.dockview-web-fail {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    text-align: center;
+    padding: 24px 20px;
+    box-sizing: border-box;
+    /* Same dock chat surface as the other viewer bodies (see .dockview-web-wrap). */
+    background: var(--background-gradient-chat, var(--background-base-lower, #1a1a1e));
+}
+.dockview-web-fail-title {
+    color: var(--header-primary, #f2f3f5);
+    font-size: 16px;
+    font-weight: 600;
+}
+.dockview-web-fail-sub {
+    color: var(--text-muted, #949ba4);
+    font-size: 13px;
+    max-width: 320px;
+    line-height: 1.4;
+    word-break: break-all;
+}
+/* the read-only current-url readout in the row-2 chrome — muted, truncates at width. */
+.dockview-web-url {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+}
+
+/* --- 3D model (three.js WebGLRenderer canvas) ------------------------------
+ * The container fills the dock body (absolute inset:0) and is the sizing root the
+ * effect measures (clientWidth/Height) for the camera aspect + renderer size; the
+ * canvas is appended into it and stretched to fill. The clear colour is set on the
+ * three Scene from --background-base-lower (see Model3DBody), so the visible
+ * backdrop is theme-aware — this background is just a fallback before the first
+ * frame paints. grab cursor hints the rotate/pan interaction. */
+.dockview-model3d-container {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background: var(--background-gradient-chat, var(--background-base-lower, #1a1a1e));
+    cursor: grab;
+    outline: none;
+}
+.dockview-model3d-container:active {
+    cursor: grabbing;
+}
+.dockview-model3d-canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+    touch-action: none; /* let OrbitControls own pointer gestures */
+}
+
+/* PowerPoint renderer (content type "pptx"): the @aiden0z/pptx-renderer mounts its
+   own slide-list DOM into this container, which is a plain flowing block inside the
+   scrolling .dockview-body (passed to the renderer as its scrollContainer). The
+   renderer owns each slide's intrinsic size + centering; we only frame the column:
+   a little vertical breathing room, the slides centred as a column, and the dock's
+   chat background behind them so a letterboxed (contain-fit) slide reads on the dark
+   panel rather than a bare white gutter. Each slide carries its own background, so we
+   add no per-slide colour — only the gutter behind the column is themed. */
+.dockview-pptx-container {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 12px 32px;
+    min-height: 100%;
+    background: var(--background-gradient-chat, var(--background-base-lower, #1a1a1e));
+    outline: none;
+}
+/* The slide-label the renderer draws under each slide (showSlideLabels) — keep it a
+   quiet, muted caption in the dock's theme tone rather than the lib default. The lib
+   scopes it; this is a soft override that no-ops if the lib renames it. */
+.dockview-pptx-container [class*="slide-label"],
+.dockview-pptx-container [class*="label"] {
+    color: var(--text-muted, #949ba4);
+}
+
+/* NATIVE VIDEO-CHIP CENTER PLAY BUTTON — enlarge the small/subtle center play icon
+   that Discord overlays on an inline VIDEO attachment's preview thumbnail (clicking
+   it opens the dock player). The overlay container is `.playCenter_<hash>` — part of
+   Discord's VIDEO/audio attachment-player module; it is rendered ONLY for video (an
+   audio attachment shows inline controls, never a center play button), so scoping to
+   it does NOT touch audio, image embeds, GIFs, link-embed thumbnails, or any other
+   media overlay. We match on the stable class STEM `playCenter_` via a substring
+   selector so a webpack hash reshuffle doesn't silently drop the rule (the hash, not
+   the stem, is what changes build-to-build).
+
+   The container is flex-centered + pointer-events:none; the actual button is its
+   child (an icon wrapper holding the play SVG), which keeps its own pointer cursor.
+   We scale that child up and grow its SVG to match, keeping it crisp and centered.
+
+   FRAGILITY NOTE: if Discord renames the `playCenter` stem or restructures the video
+   overlay, this rule stops matching (a no-op — the small default button returns) and
+   the stem needs re-pinning against the live DOM. It will not mis-target other media:
+   the `playCenter_` stem is unique to the video attachment player. */
+[class*="playCenter_"] > * {
+    /* the center play button: grow the wrapper from ~48px to a clearly larger,
+       easier-to-hit ~72px, kept perfectly centered by the flex container. */
+    width: 72px !important;
+    height: 72px !important;
+    cursor: pointer;
+}
+[class*="playCenter_"] > * svg {
+    /* scale the play glyph up with the wrapper so it stays proportionate + crisp
+       (vector, no blur). The default SVG is ~24-32px; fill the larger wrapper. */
+    width: 100% !important;
+    height: 100% !important;
+}

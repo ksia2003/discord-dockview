@@ -4,74 +4,79 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { mkdirSync } from "fs";
-import { access, constants as FsConstants, writeFile } from "fs/promises";
+import { existsSync } from "fs";
+import { copyFile, mkdir, readFile, writeFile } from "fs/promises";
 import { VENCORD_FILES_DIR } from "main/vencordFilesDir";
 import { join } from "path";
+import { DOCKVIEW_VENCORD_BUNDLE_FILES, DOCKVIEW_VENCORD_CORE_FILES } from "shared/dockviewBundleFiles";
+import { compareDockviewVersions, parseVersionTxt } from "shared/dockviewVersion";
+import { STATIC_DIR } from "shared/paths";
 
-import { USER_AGENT } from "../constants";
-import { downloadFile, fetchie } from "./http";
+/** DockView is compiled into Vencord, so the matching distribution is shipped
+ * with the app instead of downloading stock Vencord at runtime. */
+const BUNDLED_DIR = join(STATIC_DIR, "vencordDist");
+const VERSION_FILE = "version.txt";
 
-const API_BASE = "https://api.github.com";
+export const FILES_TO_DOWNLOAD = DOCKVIEW_VENCORD_CORE_FILES;
 
-export const FILES_TO_DOWNLOAD = [
-    "vencordDesktopMain.js",
-    "vencordDesktopPreload.js",
-    "vencordDesktopRenderer.js",
-    "vencordDesktopRenderer.css"
-];
-
-export interface ReleaseData {
-    name: string;
-    tag_name: string;
-    html_url: string;
-    assets: Array<{
-        name: string;
-        browser_download_url: string;
-    }>;
+function readText(path: string): Promise<string | null> {
+    return readFile(path, "utf-8")
+        .then(value => value.trim())
+        .catch(() => null);
 }
 
-export async function githubGet(endpoint: string) {
-    const opts: RequestInit = {
-        headers: {
-            Accept: "application/vnd.github+json",
-            "User-Agent": USER_AGENT
+function filesExist(dir: string, names: readonly string[]): boolean {
+    return names.every(name => existsSync(join(dir, name)));
+}
+
+/** The custom-directory picker calls this synchronously in upstream Vesktop.
+ * Require the full DockView runtime set, not only the four Vencord core files. */
+export function isValidVencordInstall(dir: string): boolean {
+    if (typeof dir !== "string" || !dir) return false;
+    if (!existsSync(join(dir, "package.json")) || !existsSync(join(dir, VERSION_FILE))) return false;
+
+    return filesExist(dir, DOCKVIEW_VENCORD_BUNDLE_FILES);
+}
+
+async function assertBundledDistribution(): Promise<readonly string[]> {
+    if (!filesExist(BUNDLED_DIR, DOCKVIEW_VENCORD_BUNDLE_FILES) || !(await readText(join(BUNDLED_DIR, VERSION_FILE)))) {
+        throw new Error("[VencordLoader] Bundled DockView distribution is incomplete. Run pnpm prepareVencord.");
+    }
+    return DOCKVIEW_VENCORD_BUNDLE_FILES;
+}
+
+async function copyBundledDistribution(names: readonly string[]): Promise<void> {
+    await mkdir(VENCORD_FILES_DIR, { recursive: true });
+    await Promise.all(names.map(name => copyFile(join(BUNDLED_DIR, name), join(VENCORD_FILES_DIR, name))));
+
+    // Both writes are awaited. Force Update must never relaunch with an incomplete
+    // package marker or version stamp still buffered in an abandoned promise.
+    await writeFile(join(VENCORD_FILES_DIR, "package.json"), "{}\n");
+}
+
+/** Repair/Force Update entry point. The operation is local and deterministic. */
+export async function downloadVencordFiles(): Promise<void> {
+    const names = await assertBundledDistribution();
+    await copyBundledDistribution(names);
+}
+
+export async function ensureVencordFiles(): Promise<void> {
+    const names = await assertBundledDistribution();
+    const bundledVersion = await readText(join(BUNDLED_DIR, VERSION_FILE));
+    const installedVersion = await readText(join(VENCORD_FILES_DIR, VERSION_FILE));
+    const complete = filesExist(VENCORD_FILES_DIR, ["package.json", ...names]);
+
+    let shouldCopy = !complete || installedVersion == null || bundledVersion == null;
+    if (!shouldCopy && bundledVersion && installedVersion) {
+        const order = compareDockviewVersions(installedVersion, bundledVersion);
+        shouldCopy = order < 0;
+
+        if (order === 0) {
+            const installedBuild = parseVersionTxt(installedVersion).gitHash;
+            const bundledBuild = parseVersionTxt(bundledVersion).gitHash;
+            shouldCopy = installedBuild !== bundledBuild;
         }
-    };
+    }
 
-    if (process.env.GITHUB_TOKEN) (opts.headers! as any).Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-
-    return fetchie(API_BASE + endpoint, opts, { retryOnNetworkError: true });
-}
-
-export async function downloadVencordFiles() {
-    const release = await githubGet("/repos/Vendicated/Vencord/releases/latest");
-
-    const { assets }: ReleaseData = await release.json();
-
-    await Promise.all(
-        assets
-            .filter(({ name }) => FILES_TO_DOWNLOAD.some(f => name.startsWith(f)))
-            .map(({ name, browser_download_url }) =>
-                downloadFile(browser_download_url, join(VENCORD_FILES_DIR, name), {}, { retryOnNetworkError: true })
-            )
-    );
-}
-
-const existsAsync = (path: string) =>
-    access(path, FsConstants.F_OK)
-        .then(() => true)
-        .catch(() => false);
-
-export async function isValidVencordInstall(dir: string) {
-    const results = await Promise.all(["package.json", ...FILES_TO_DOWNLOAD].map(f => existsAsync(join(dir, f))));
-    return !results.includes(false);
-}
-
-export async function ensureVencordFiles() {
-    if (await isValidVencordInstall(VENCORD_FILES_DIR)) return;
-
-    mkdirSync(VENCORD_FILES_DIR, { recursive: true });
-
-    await Promise.all([downloadVencordFiles(), writeFile(join(VENCORD_FILES_DIR, "package.json"), "{}")]);
+    if (shouldCopy) await copyBundledDistribution(names);
 }

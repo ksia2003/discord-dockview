@@ -1,0 +1,11 @@
+Format,Extension,Category,Lazy Chunk
+PDF,pdf,Documents,yes
+Word,docx,Documents,no
+Excel,xlsx,Spreadsheets,no
+PNG,png,Images,no
+HEIC,heic,Images,no
+glTF,glb,3D,yes
+PowerPoint,pptx,Presentation,yes
+Mermaid,mmd,Diagrams,yes
+CSV,csv,Spreadsheets,no
+Markdown,md,Code,no

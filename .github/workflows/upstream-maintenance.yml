@@ -1,0 +1,363 @@
+name: Upstream maintenance
+
+on:
+    schedule:
+        # 09:17 KST every day. The odd minute avoids the busiest top-of-hour window.
+        - cron: "17 0 * * *"
+    workflow_dispatch:
+        inputs:
+            rebuild_vencord_candidate:
+                description: Rebuild even when a draft PR for the latest Vencord tag is already open
+                type: boolean
+                default: false
+
+permissions:
+    contents: read
+
+concurrency:
+    group: upstream-maintenance
+    cancel-in-progress: false
+
+jobs:
+    detect:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            issues: write
+            pull-requests: read
+        outputs:
+            source_sha: ${{ steps.source.outputs.sha }}
+            vencord_update: ${{ steps.check.outputs.vencord_update }}
+            vencord_latest_ref: ${{ steps.check.outputs.vencord_latest_ref }}
+            vencord_latest_commit: ${{ steps.check.outputs.vencord_latest_commit }}
+            vencord_latest_version: ${{ steps.check.outputs.vencord_latest_version }}
+            vencord_candidate_needed: ${{ steps.candidate.outputs.needed }}
+            vesktop_update: ${{ steps.check.outputs.vesktop_update }}
+        steps:
+            # Always inspect the protected integration branch. A manual dispatch from
+            # another ref must not grant that ref the workflow's write permissions.
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  ref: master
+
+            - name: Record the exact monitored source
+              id: source
+              shell: bash
+              run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+            - name: Use Node.js 24
+              uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+              with:
+                  node-version: 24
+
+            - name: Inspect stable Vencord and Vesktop upstreams
+              id: check
+              shell: bash
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              run: |
+                  node scripts/check-upstream-updates.mjs \
+                      --github-output "$GITHUB_OUTPUT" \
+                      --report "$RUNNER_TEMP/upstream-report.md"
+
+            - name: Keep upstream tracking issues in sync
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  GITHUB_TOKEN: ${{ github.token }}
+                  GITHUB_REPOSITORY: ${{ github.repository }}
+                  UPSTREAM_REPORT: ${{ runner.temp }}/upstream-report.md
+                  VENCORD_UPDATE: ${{ steps.check.outputs.vencord_update }}
+                  VESKTOP_UPDATE: ${{ steps.check.outputs.vesktop_update }}
+              run: |
+                  set -euo pipefail
+                  node scripts/sync-upstream-issues.mjs sync
+
+            - name: Decide whether a Vencord candidate needs rebuilding
+              id: candidate
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  VENCORD_UPDATE: ${{ steps.check.outputs.vencord_update }}
+                  LATEST_REF: ${{ steps.check.outputs.vencord_latest_ref }}
+                  LATEST_VERSION: ${{ steps.check.outputs.vencord_latest_version }}
+                  LATEST_COMMIT: ${{ steps.check.outputs.vencord_latest_commit }}
+                  SOURCE_SHA: ${{ steps.source.outputs.sha }}
+                  FORCE_REBUILD: ${{ inputs.rebuild_vencord_candidate || false }}
+              run: |
+                  set -euo pipefail
+                  needed=false
+                  if [ "$VENCORD_UPDATE" = "true" ]; then
+                      branch="automation/vencord-$LATEST_VERSION-${LATEST_COMMIT:0:12}-${SOURCE_SHA:0:12}"
+                      prs=$(gh pr list --state open --head "$branch" --label upstream-vencord \
+                          --json number,title,headRefName)
+                      existing=$(jq --arg title "Update bundled Vencord to $LATEST_REF" \
+                          --arg branch "$branch" \
+                          '[.[] | select(.title == $title and .headRefName == $branch)] | length' <<<"$prs")
+                      if [ "$existing" = "0" ] || [ "$FORCE_REBUILD" = "true" ]; then
+                          needed=true
+                      fi
+                  fi
+                  echo "needed=$needed" >> "$GITHUB_OUTPUT"
+
+            - name: Preserve the daily report
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                  name: upstream-status
+                  path: ${{ runner.temp }}/upstream-report.md
+                  retention-days: 14
+
+    detect-failure:
+        needs: detect
+        if: ${{ always() && needs.detect.result == 'failure' }}
+        runs-on: ubuntu-latest
+        permissions:
+            issues: write
+            contents: read
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  ref: master
+            - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+              with:
+                  node-version: 24
+            - name: Record durable detection failure
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  GITHUB_TOKEN: ${{ github.token }}
+                  GITHUB_REPOSITORY: ${{ github.repository }}
+                  UPSTREAM_FAILURE_BODY: |
+                      The scheduled upstream-maintenance detection job failed before it could produce a trustworthy status.
+
+                      Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+                      This tracker is intentionally overdue until a successful run replaces this report.
+              run: |
+                  set -euo pipefail
+                  node scripts/sync-upstream-issues.mjs failure
+
+    vencord-candidate:
+        needs: detect
+        if: needs.detect.outputs.vencord_candidate_needed == 'true'
+        # This job executes newly tagged upstream build code. It must never receive
+        # a repository write token; the later PR job only consumes its inert files.
+        permissions:
+            contents: read
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-latest, windows-latest]
+        runs-on: ${{ matrix.os }}
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  ref: ${{ needs.detect.outputs.source_sha }}
+                  persist-credentials: false
+
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+            - name: Use Node.js 24
+              uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+              with:
+                  node-version: 24
+                  cache: pnpm
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Pin the detected stable Vencord release
+              run: >-
+                  node scripts/set-vencord-ref.mjs
+                  "${{ needs.detect.outputs.vencord_latest_ref }}"
+                  "${{ needs.detect.outputs.vencord_latest_commit }}"
+
+            - name: Build Vencord with DockView
+              run: pnpm prepareVencord
+
+            - name: Reject unexpected build-time workspace changes
+              shell: bash
+              env:
+                  SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
+                  LATEST_REF: ${{ needs.detect.outputs.vencord_latest_ref }}
+                  LATEST_COMMIT: ${{ needs.detect.outputs.vencord_latest_commit }}
+              run: |
+                  git diff --exit-code "$SOURCE_SHA" -- . \
+                      ':(exclude)scripts/lib/vencordRef.mjs' \
+                      ':(exclude)static/vencordDist/**'
+                  unexpected=$(git ls-files --others --exclude-standard \
+                      | grep -v '^static/vencordDist/' || true)
+                  test -z "$unexpected" || {
+                      echo "Unexpected untracked files from candidate build:"
+                      echo "$unexpected"
+                      exit 1
+                  }
+                  node scripts/set-vencord-ref.mjs --verify-change \
+                      "$SOURCE_SHA" "$LATEST_REF" "$LATEST_COMMIT"
+
+            - name: Run source and integration tests
+              run: pnpm test
+
+            - name: Build production and development shells
+              run: |
+                  pnpm build
+                  pnpm build --dev
+
+            - name: Confirm the candidate remained confined
+              shell: bash
+              env:
+                  SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
+                  LATEST_REF: ${{ needs.detect.outputs.vencord_latest_ref }}
+                  LATEST_COMMIT: ${{ needs.detect.outputs.vencord_latest_commit }}
+              run: |
+                  git diff --exit-code "$SOURCE_SHA" -- . \
+                      ':(exclude)scripts/lib/vencordRef.mjs' \
+                      ':(exclude)static/vencordDist/**'
+                  unexpected=$(git ls-files --others --exclude-standard \
+                      | grep -v '^static/vencordDist/' || true)
+                  test -z "$unexpected" || {
+                      echo "Unexpected untracked files from candidate build:"
+                      echo "$unexpected"
+                      exit 1
+                  }
+                  node scripts/set-vencord-ref.mjs --verify-change \
+                      "$SOURCE_SHA" "$LATEST_REF" "$LATEST_COMMIT"
+
+            - name: Record candidate provenance
+              if: matrix.os == 'ubuntu-latest'
+              run: >-
+                  node scripts/vencord-candidate.mjs create static/vencordDist
+                  "${{ needs.detect.outputs.source_sha }}"
+                  "${{ needs.detect.outputs.vencord_latest_ref }}"
+                  "${{ needs.detect.outputs.vencord_latest_commit }}"
+
+            - name: Upload the verified candidate bundle
+              if: matrix.os == 'ubuntu-latest'
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                  name: vencord-candidate
+                  path: static/vencordDist
+                  if-no-files-found: error
+                  retention-days: 14
+
+    vencord-pr:
+        needs: [detect, vencord-candidate]
+        if: needs.detect.outputs.vencord_candidate_needed == 'true'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            issues: write
+            pull-requests: write
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  ref: ${{ needs.detect.outputs.source_sha }}
+                  fetch-depth: 0
+
+            - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+              with:
+                  name: vencord-candidate
+                  path: ${{ runner.temp }}/candidate
+
+            - name: Open or refresh a draft Vencord update PR
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  LATEST_REF: ${{ needs.detect.outputs.vencord_latest_ref }}
+                  LATEST_COMMIT: ${{ needs.detect.outputs.vencord_latest_commit }}
+                  LATEST_VERSION: ${{ needs.detect.outputs.vencord_latest_version }}
+                  SOURCE_SHA: ${{ needs.detect.outputs.source_sha }}
+              run: |
+                  set -euo pipefail
+                  branch="automation/vencord-$LATEST_VERSION-${LATEST_COMMIT:0:12}-${SOURCE_SHA:0:12}"
+                  git fetch origin "refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null || true
+                  git fetch origin master
+                  # A remote ref check is observational, not an atomic lock. If
+                  # master moved before publication, do not publish this stale
+                  # candidate; its branch name/provenance remains source-bound.
+                  if [ "$(git rev-parse origin/master)" != "$SOURCE_SHA" ]; then
+                      stale_prs=$(gh pr list --state open --head "$branch" --json number)
+                      jq -r '.[].number' <<<"$stale_prs" | while read -r stale_pr; do
+                          [ -z "$stale_pr" ] || gh pr close "$stale_pr" \
+                              --comment "Candidate was built from stale DockView source $SOURCE_SHA; the next run will replace it from current master."
+                      done
+                      echo "master moved from $SOURCE_SHA before publication; stale candidate was not opened."
+                      exit 0
+                  fi
+                  git switch -C "$branch" "$SOURCE_SHA"
+
+                  node scripts/vencord-candidate.mjs verify "$RUNNER_TEMP/candidate" \
+                      "$SOURCE_SHA" "$LATEST_REF" "$LATEST_COMMIT"
+                  node scripts/set-vencord-ref.mjs "$LATEST_REF" "$LATEST_COMMIT"
+                  find "$RUNNER_TEMP/candidate" -maxdepth 1 -type f \
+                      ! -name candidate-provenance.json \
+                      -exec cp -- {} static/vencordDist/ \;
+                  node scripts/vencord-candidate.mjs verify-generated static/vencordDist
+                  cp -- "$RUNNER_TEMP/candidate/candidate-provenance.json" static/vencordDist.provenance.json
+
+                  git add scripts/lib/vencordRef.mjs static/vencordDist.provenance.json static/vencordDist
+                  staged=$(git diff --cached --name-only)
+                  unexpected=$(grep -Ev \
+                      '^(scripts/lib/vencordRef\.mjs|package\.json|pnpm-lock\.yaml|static/vencordDist\.provenance\.json|static/vencordDist/(vencordDesktopMain\.js|vencordDesktopPreload\.js|vencordDesktopRenderer\.js|vencordDesktopRenderer\.css|version\.txt))$' \
+                      <<<"$staged" || true)
+                  test -z "$unexpected" || {
+                      echo "Candidate PR staged unexpected files:"
+                      echo "$unexpected"
+                      exit 1
+                  }
+                  if grep -q '^static/vencordDist/chunk-' <<<"$staged"; then
+                      echo "Chunk files belong to the verified workflow artifact/release rebuild, not PR history."
+                      exit 1
+                  fi
+                  if git diff --cached --quiet; then
+                      echo "Candidate produced no changes; nothing to propose."
+                      exit 0
+                  fi
+
+                  git -c user.name=ksia2003 -c user.email=ksia2003@gmail.com \
+                      commit -m "Update bundled Vencord to $LATEST_REF"
+                  git push --force-with-lease origin "HEAD:refs/heads/$branch"
+
+                  # Keep one Vencord candidate. A newer stable tag supersedes any
+                  # older automation-owned draft without deleting its branch.
+                  candidate_prs=$(gh pr list --state open --label upstream-vencord \
+                      --limit 100 --json number,headRefName,title \
+                      )
+                  jq -r --arg branch "$branch" \
+                          '.[] | select(.headRefName != $branch) | select(.headRefName | startswith("automation/vencord-")) | select(.title | startswith("Update bundled Vencord to ")) | .number' \
+                      <<<"$candidate_prs" \
+                      | while read -r old_pr; do
+                          [ -z "$old_pr" ] || gh pr close "$old_pr" \
+                              --comment "Superseded by the verified $LATEST_REF candidate."
+                      done
+
+                  report="$RUNNER_TEMP/vencord-pr.md"
+                  {
+                      echo "Updates the bundled Vencord release to \`$LATEST_REF\` at \`$LATEST_COMMIT\`."
+                      echo "The candidate was built from DockView source \`$SOURCE_SHA\`."
+                      echo
+                      echo "The scheduled maintenance workflow rebuilt Vencord from exact DockView source $SOURCE_SHA and passed:"
+                      echo
+                      echo "- Linux: metadata, lint, TypeScript, unit tests, production build, development build"
+                      echo "- Windows: metadata, lint, TypeScript, unit tests, production build, development build"
+                      echo
+                      echo "The complete candidate artifact, including every chunk output, was allowlist/hash/provenance verified and retained as a workflow artifact. This PR stages the small copied provenance record with the source pin and tracked core outputs; the release workflow rebuilds and verifies chunks from the merged pins."
+                      echo
+                      echo "A PR created with \`GITHUB_TOKEN\` may be approval-gated or may not recursively trigger the normal PR workflow under repository policy; the creating workflow ran the equivalent integration matrix before this commit."
+                      echo
+                      echo "This remains a draft until the DockView smoke checklist and development-channel soak pass."
+                  } > "$report"
+
+                  branch_prs=$(gh pr list --state open --head "$branch" --json number)
+                  pr_number=$(jq -r '.[0].number // empty' <<<"$branch_prs")
+                  if [ -n "$pr_number" ]; then
+                      gh pr edit "$pr_number" \
+                          --title "Update bundled Vencord to $LATEST_REF" \
+                          --body-file "$report" \
+                          --add-label upstream-maintenance --add-label upstream-vencord
+                  else
+                      gh pr create --draft --base master --head "$branch" \
+                          --title "Update bundled Vencord to $LATEST_REF" \
+                          --body-file "$report" \
+                          --label upstream-maintenance --label upstream-vencord
+                  fi

@@ -6,6 +6,9 @@ on:
             - v*
     workflow_dispatch:
 
+permissions:
+    contents: write
+
 jobs:
     release:
         runs-on: ${{ matrix.os }}
@@ -34,6 +37,22 @@ jobs:
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
 
+            - name: Verify pushed tag matches DockView metadata
+              if: github.ref_type == 'tag'
+              shell: bash
+              run: |
+                  TAG=$(node scripts/print-dockview-release-metadata.mjs --field tag)
+                  test "${{ github.ref_name }}" = "$TAG"
+
+            - name: Prepare bundled Vencord with DockView
+              run: node scripts/prepare-vencord.mjs
+
+            - name: Verify complete generated Vencord output
+              run: node scripts/vencord-candidate.mjs verify-generated static/vencordDist
+
+            - name: Verify DockView release metadata
+              run: node scripts/verify-dockview-release-metadata.mjs --version-file static/vencordDist/version.txt
+
             - name: Build
               run: pnpm build
 
@@ -57,3 +76,51 @@ jobs:
                   APPLE_API_KEY: apple.p8
                   APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
                   APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+
+            - name: Attach DockView runtime bundle
+              if: matrix.platform == 'linux'
+              shell: bash
+              run: |
+                  TAG=$(node scripts/print-dockview-release-metadata.mjs --field tag)
+                  shopt -s nullglob
+                  files=(static/vencordDist/vencordDesktopMain.js static/vencordDist/vencordDesktopPreload.js \
+                         static/vencordDist/vencordDesktopRenderer.js static/vencordDist/vencordDesktopRenderer.css \
+                         static/vencordDist/version.txt static/vencordDist/chunk-*.js)
+                  gh release upload "$TAG" "${files[@]}" --clobber
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    manifest:
+        needs: release
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: Use Node.js 24
+              uses: actions/setup-node@v6
+              with:
+                  node-version: 24
+
+            - name: Generate and attach the verified update manifest
+              shell: bash
+              run: |
+                  TAG=$(node scripts/print-dockview-release-metadata.mjs --field tag)
+                  mkdir -p static/vencordDist installers
+                  gh release download "$TAG" --dir static/vencordDist --clobber \
+                      --pattern "vencordDesktop*.js" --pattern "vencordDesktopRenderer.css" \
+                      --pattern "version.txt" --pattern "chunk-*.js"
+                  gh release download "$TAG" --dir installers --clobber \
+                      --pattern "*.exe" --pattern "*.AppImage" --pattern "*.deb" --pattern "*.rpm" \
+                      --pattern "latest*.yml"
+                  export DOCKVIEW_RELEASE_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
+                  export DOCKVIEW_INSTALLERS_DIR="$PWD/installers"
+                  node scripts/make-plugin-manifest.mjs
+                  node scripts/verify-dockview-release-metadata.mjs \
+                      --version-file static/vencordDist/version.txt \
+                      --manifest static/vencordDist/manifest.json \
+                      --installers-dir installers \
+                      --release-base "$DOCKVIEW_RELEASE_BASE" \
+                      --latest-yml installers
+                  gh release upload "$TAG" static/vencordDist/manifest.json --clobber
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

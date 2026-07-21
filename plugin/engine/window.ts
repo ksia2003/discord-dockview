@@ -1,0 +1,379 @@
+/*
+ * The dock windows + the per-channel tab collection (browser-like tabs).
+ *
+ * One DockWindow holds the entire per-window state (content + the per-viewer
+ * view-states + the cross-cutting edit/gallery slots + the active descriptor/
+ * cache key). The COLLECTION around the windows is two module-singleton stores
+ * (they survive @me / channel switches; a plugin stop clears them):
+ *
+ *   - `channelTabs`  — Map channelId -> ordered list of THAT channel's tabs. A
+ *                      channel accumulates N; they are only ever read out of THIS
+ *                      map entry, so they NEVER appear in another channel.
+ *   - `activeByChannel` — Map channelId -> the id of the tab focused when you are in
+ *                      that channel.
+ *
+ * A channel's STRIP is just `channelTabs.get(cur)` — a single flat list bound to the
+ * current channel. `getWindows()` returns the CURRENT channel's strip — that is what
+ * the tab UI, the debug surface, and the rig snapshot all read. (There are no global
+ * tabs any more — pins were removed in the always-on rewrite; every tab is channel-
+ * bound.)
+ *
+ * `activeWindow` is a live binding to the currently-rendered window (reassigned by
+ * setActiveWindow), so engine call sites read/write whichever window the strip has
+ * focused. `state.width` is a getter/setter PROXY onto the one global dock width in
+ * host/layout — every window agrees on the width, switching tabs never changes it.
+ * makeWindow asks each registered viewer for its createState() slice rather than
+ * inlining a fat literal (zero viewers registered = an empty viewStates map, which
+ * the engine tolerates).
+ *
+ * NO module-top React.createElement: makeWindow runs at runtime, so its element-free
+ * literal is safe.
+ */
+
+import { allViewers } from "../viewers/registry";
+import { getDockWidth, seedDockWidthFromLS, setDockWidth } from "../host/layout";
+import { cacheTouch, getCacheEntry, mountFromCache, registerWindowRegistry } from "./cache";
+import { snapshotActiveView } from "./viewState";
+import type { DockWindow } from "./types";
+
+let windowSeq = 0;
+function nextWindowId(): string {
+    return `w${++windowSeq}`;
+}
+
+/** Build a fresh, empty DockWindow bound to `ownerChannelId`. Every window shares the
+ *  same global dock width (state.width proxies onto it). */
+export function makeWindow(opts: { ownerChannelId: string | null }): DockWindow {
+    // Seed the global dock width from LS on the first window (safe here: the
+    // persist mirror exists by the time any makeWindow runs, unlike module-init).
+    seedDockWidthFromLS();
+
+    // Ask every registered viewer for its own view-state slice, keyed by type.
+    // Empty until viewers are wired up (P3+); the engine treats these as opaque.
+    const viewStates: Record<string, unknown> = {};
+    for (const v of allViewers()) viewStates[v.type] = v.createState();
+
+    return {
+        id: nextWindowId(),
+        ownerChannelId: opts.ownerChannelId,
+        // `width` is a PROXY onto the single global dockWidth so every window agrees
+        // and switching tabs never changes the dock width.
+        state: {
+            get width() { return getDockWidth(); },
+            set width(w: number) { setDockWidth(w); }
+        },
+        content: {
+            name: null,
+            type: "html",
+            html: null,
+            frameHtml: null,
+            pdf: { doc: null, pages: 0, renderToken: 0 },
+            model3d: { object: null, renderToken: 0 },
+            pptx: { presentation: null, renderToken: 0 },
+            xlsx: { names: [], csv: [], formulas: [], charts: [], renderToken: 0 },
+            code: null,
+            codeLang: "plaintext",
+            url: null,
+            threadChannelId: null,
+            loading: false,
+            loadingLabel: null,
+            error: null,
+            binary: false,
+            seq: 0
+        },
+        viewStates,
+        // Cross-cutting capability slots (owned by edit/ and viewers/image/, not by
+        // a viewer). Their initial values match the old makeWindow literal exactly.
+        editView: {
+            mode: "view",
+            editBuffer: null
+        },
+        gallery: {
+            channelId: null,
+            items: [],
+            hasMoreBefore: false,
+            hasMoreAfter: false,
+            loading: false
+        },
+        isNewFile: false,
+        newFileChannel: null,
+        activeDescriptor: null,
+        activeCacheKey: null
+    };
+}
+
+// --- the per-channel tab collection -----------------------------------------
+// Two stores. They start EMPTY; a channel's list is created lazily on first open.
+// A module-top makeWindow() would call allViewers() during the engine↔viewer import
+// cycle (registry imports CodeViewer → CodeBody → back into this module) before the
+// registry's VIEWERS map exists, so nothing is created at module eval — windows are
+// only ever born inside openTab at runtime.
+const channelTabs = new Map<string, DockWindow[]>();
+const activeByChannel = new Map<string, string>();
+let currentChannelId: string | null = null;
+
+let activeWindowId = "";
+let activeWindow: DockWindow = null as unknown as DockWindow;
+
+/** The current channel the dock is deriving its strip for. Set by the channel-switch
+ *  flow (channelMemory.onChannelSelect) so window.ts needs no import of that module. */
+export function getWindowChannelId(): string | null { return currentChannelId; }
+export function setWindowChannelId(id: string | null): void { currentChannelId = id; }
+
+/** This channel's tab list (created lazily). */
+function ownTabs(channelId: string | null): DockWindow[] {
+    if (channelId == null) return [];
+    let list = channelTabs.get(channelId);
+    if (!list) { list = []; channelTabs.set(channelId, list); }
+    return list;
+}
+
+/** The ordered strip for a channel: that channel's own tabs (a flat list). A null
+ *  channel (@me) has no tabs. */
+export function stripFor(channelId: string | null): DockWindow[] {
+    return channelId != null ? (channelTabs.get(channelId) ?? []) : [];
+}
+
+/** The CURRENT channel's strip — the surface DockTabs / __dockView.windows / the rig
+ *  snapshot all read. Returns the live list for the current channel. */
+export function getWindows(): DockWindow[] { return stripFor(currentChannelId); }
+
+/** A channel's tab list (live reference, created lazily). Drag-reorder writes back
+ *  into this. */
+export function getChannelTabs(channelId: string | null): DockWindow[] {
+    return channelId != null ? ownTabs(channelId) : [];
+}
+
+export function getActiveWindow(): DockWindow { ensureActive(); return activeWindow; }
+export function getActiveWindowId(): string { ensureActive(); return activeWindowId; }
+
+// Give the cache a way to read the live window set / active window without importing
+// this module (which imports the cache) — closes that loop one-way. getWindows here
+// returns the current strip, which is enough for the cache's live-key protection
+// (it protects the strip that is actually mounted).
+registerWindowRegistry({ getWindows: allLiveWindows, getActiveWindow });
+
+/** EVERY live window across all channels' lists. The cache's live-key protection must
+ *  see them ALL — a background channel's tab still owns its pdf.js doc even though it
+ *  isn't in the current strip. (getWindows returns only the current strip, so the
+ *  cache reads this fuller set instead.) */
+function allLiveWindows(): DockWindow[] {
+    const all: DockWindow[] = [];
+    for (const list of channelTabs.values()) all.push(...list);
+    return all;
+}
+export { allLiveWindows };
+
+/** Every THREAD tab across all channels' strips (content.type "thread"). The thread-tab
+ *  lifecycle events (external delete / rename) act on tabs that may live in a channel that
+ *  isn't the current one, so they scan this fuller set rather than the current strip. */
+export function allThreadTabs(): DockWindow[] {
+    return allLiveWindows().filter(w => w.content.type === "thread" && w.content.threadChannelId != null);
+}
+
+/** Ensure `activeWindow` points at a real window. With no windows anywhere it stays a
+ *  harmless sentinel-free binding: callers guard via getActiveWindow()'s content
+ *  fields. We lazily fabricate a detached scratch window so getActiveWindow() never
+ *  dereferences null before the first open (this scratch window is NOT in any store —
+ *  it is never a tab; it backs the empty-state body of an empty channel). */
+function ensureActive(): void {
+    if (activeWindow) return;
+    activeWindow = makeWindow({ ownerChannelId: null });
+    activeWindowId = activeWindow.id;
+}
+
+/** A window is a REAL tab — worth a tab in the strip — when it carries content
+ *  (loaded, loading, or errored). A bare content-less window (the scratch active
+ *  window before the first open) is NOT a real tab. Channel tabs always carry
+ *  content, so they are always real. */
+export function isRealTab(w: DockWindow): boolean {
+    return w.content.name != null || w.content.loading || w.content.error != null;
+}
+
+/** True when the CURRENT channel's strip has ≥1 tab. */
+export function hasRealTab(): boolean {
+    return stripFor(currentChannelId).some(isRealTab);
+}
+
+/** Point `activeWindow`/`activeWindowId` at a window (by id or object) + record it as
+ *  the current channel's active tab. Pure binding swap — does NOT render or touch the
+ *  DOM; callers re-render. Searching by id looks across the current strip. */
+export function setActiveWindow(w: DockWindow | string): void {
+    const win = typeof w === "string" ? stripFor(currentChannelId).find(x => x.id === w) : w;
+    if (!win) return;
+    activeWindow = win;
+    activeWindowId = win.id;
+    if (currentChannelId != null) activeByChannel.set(currentChannelId, win.id);
+}
+
+/** A url's STABLE identity for the dedup match: origin + path, dropping the query
+ *  string. Discord attachment/media urls carry rotating signed params (ex/is/hm) that
+ *  change every time the same file is fetched, so an exact-string compare misses the
+ *  re-open; the attachment path (/attachments/<ch>/<id>/<name>) is unique per file, so
+ *  origin+path identifies it stably. Non-url inputs fall back to the raw string. */
+function fileIdentity(url: string): string {
+    try {
+        const u = new URL(url, location.href);
+        return u.origin + u.pathname;
+    } catch {
+        return url;
+    }
+}
+
+/** Find an existing tab in the CURRENT strip whose file matches `url`+`type`
+ *  (dedup-on-open). Matched on the url's stable identity (origin+path) so the same
+ *  file re-opened under a freshly-signed url still hits its existing tab. */
+function findTabByFile(url: string | null, type: string): DockWindow | null {
+    if (url == null) return null;
+    const id = fileIdentity(url);
+    for (const w of stripFor(currentChannelId)) {
+        const d = w.activeDescriptor;
+        if (d && d.type === type && fileIdentity(d.url) === id) return w;
+    }
+    return null;
+}
+
+/** OPEN a file as a tab in the CURRENT channel. Dedup: if the file is already open as
+ *  a tab in the strip that tab is focused and returned — the strip does NOT grow.
+ *  Otherwise a fresh channel-owned window is appended to this channel's list, made
+ *  active, and returned. The caller (load/showContent) fills the returned window's
+ *  content; before the bind swap the outgoing active view is snapshotted so a tab we
+ *  switch away from reopens where it was.
+ *
+ *  `url`/`type` are the file identity for the dedup check (the routing type, matching
+ *  the descriptor). A null url (inline html) can't dedup, so it always appends. */
+export function openTab(url: string | null, type: string): DockWindow {
+    const existing = findTabByFile(url, type);
+    if (existing) {
+        if (activeWindow !== existing) snapshotActiveView(activeWindow);
+        setActiveWindow(existing);
+        return existing;
+    }
+    const w = makeWindow({ ownerChannelId: currentChannelId });
+    ownTabs(currentChannelId).push(w);
+    if (activeWindow) snapshotActiveView(activeWindow);
+    setActiveWindow(w);
+    return w;
+}
+
+/** Find an existing THREAD tab (content.type "thread") for `threadId` in `channelId`'s
+ *  strip — the thread-tab dedup: reopening the same thread focuses its existing tab
+ *  instead of adding a second. */
+export function findThreadTab(channelId: string | null, threadId: string): DockWindow | null {
+    for (const w of stripFor(channelId)) {
+        if (w.content.type === "thread" && w.content.threadChannelId === threadId) return w;
+    }
+    return null;
+}
+
+/** OPEN (or focus) a THREAD tab in `parentChannelId`'s strip. Dedup: an existing tab for
+ *  the same thread is focused and returned (the strip doesn't grow). Otherwise a fresh
+ *  window owned by the parent channel is appended and made active. Unlike openTab (which
+ *  targets the CURRENT channel), this targets the thread's PARENT channel explicitly, so a
+ *  thread opened from anywhere lands in the right strip. The caller fills the returned
+ *  window's thread content; the outgoing active view is snapshotted before the bind swap. */
+export function openThreadWindow(parentChannelId: string | null, threadId: string): DockWindow {
+    const existing = findThreadTab(parentChannelId, threadId);
+    if (existing) {
+        if (activeWindow !== existing) snapshotActiveView(activeWindow);
+        setActiveWindow(existing);
+        return existing;
+    }
+    const w = makeWindow({ ownerChannelId: parentChannelId });
+    ownTabs(parentChannelId).push(w);
+    if (activeWindow) snapshotActiveView(activeWindow);
+    // Bind active only when the parent channel is the current one — opening a thread whose
+    // parent isn't the current channel still records the tab in the parent's strip (it
+    // shows when the user returns there), but must not hijack the current view.
+    if (parentChannelId === currentChannelId) setActiveWindow(w);
+    return w;
+}
+
+/** Make the active binding a fresh content-less window bound to `channelId` WITHOUT
+ *  adding it to any list (it carries no content, so it is never a tab). The empty-state
+ *  body reads this window when a channel has no tabs — a clean scratch surface rather
+ *  than the previous channel's file. */
+export function focusEmptyShell(channelId: string | null): DockWindow {
+    const w = makeWindow({ ownerChannelId: channelId });
+    if (activeWindow) snapshotActiveView(activeWindow);
+    activeWindow = w;
+    activeWindowId = w.id;
+    return w;
+}
+
+/** Remove a window from whatever channel list holds it. Returns true if found +
+ *  removed. Also drops it as any channel's active pointer. */
+export function removeWindowEverywhere(w: DockWindow): boolean {
+    let found = false;
+    for (const list of channelTabs.values()) {
+        const i = list.indexOf(w);
+        if (i >= 0) { list.splice(i, 1); found = true; }
+    }
+    for (const [cid, id] of activeByChannel) if (id === w.id) activeByChannel.delete(cid);
+    return found;
+}
+
+/** Drag-reorder: move the tab `dragId` to sit at the strip position of `beforeId`
+ *  (drop BEFORE that tab), writing the new order back into the current channel's list.
+ *  A single flat list, so a drop anywhere in the strip is a straight reorder within
+ *  it. Returns true if anything moved. */
+export function reorderTab(dragId: string, beforeId: string | null): boolean {
+    const list = ownTabs(currentChannelId);
+    const drag = list.find(w => w.id === dragId);
+    if (!drag) return false;
+    const from = list.indexOf(drag);
+    if (from < 0) return false;
+
+    let to: number;
+    if (beforeId == null) {
+        to = list.length; // dropped at the far end of the strip
+    } else {
+        const before = list.find(w => w.id === beforeId);
+        to = before ? list.indexOf(before) : list.length;
+    }
+    list.splice(from, 1);
+    if (to > from) to -= 1; // account for the removed element shifting indices
+    to = Math.max(0, Math.min(to, list.length));
+    list.splice(to, 0, drag);
+    return list.indexOf(drag) !== from || to !== from;
+}
+
+/** The id of the tab that should be active when entering `channelId` — its remembered
+ *  active pointer if it still resolves in the strip, else the strip's last tab, else
+ *  null. Used by the channel-switch restore. */
+export function activeIdFor(channelId: string | null): string | null {
+    const strip = stripFor(channelId);
+    if (strip.length === 0) return null;
+    const remembered = channelId != null ? activeByChannel.get(channelId) : undefined;
+    if (remembered != null && strip.some(w => w.id === remembered)) return remembered;
+    return strip[strip.length - 1].id;
+}
+
+/** Clear both stores + the active binding (plugin stop / restart). No disk
+ *  serialization — the collection is session-only by design. */
+export function resetCollection(): void {
+    channelTabs.clear();
+    activeByChannel.clear();
+    currentChannelId = null;
+    activeWindow = null as unknown as DockWindow;
+    activeWindowId = "";
+}
+
+/** If the active window's content is stuck loading (its in-flight loader was
+ *  superseded by activity in another window — the load-token guard makes a loader
+ *  write ONLY the cache entry once superseded) but its cache entry has since resolved,
+ *  re-point content from the cache. This makes a window's body show its file the moment
+ *  we show it again, even if its original loader never wrote back. Returns true if it
+ *  reconciled. */
+export function reconcileActiveFromCache(): boolean {
+    const key = activeWindow?.activeCacheKey;
+    if (key == null) return false;
+    if (!activeWindow.content.loading && activeWindow.content.error == null) return false;
+    const e = getCacheEntry(key);
+    if (!e || e.loading || e.error != null) return false;
+    mountFromCache(activeWindow, e);
+    return true;
+}
+
+// Re-export so callers that touch a window's cache entry don't reach past here.
+export { cacheTouch, getCacheEntry, mountFromCache };

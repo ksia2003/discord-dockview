@@ -1,6 +1,9 @@
 dist
+dist-bundle
 node_modules
 .env
 .DS_Store
 .idea/
 .pnpm-store/
+shots/
+static/vencordDist/chunk-*.js

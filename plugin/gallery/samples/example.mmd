@@ -1,0 +1,10 @@
+flowchart TD
+    A[Attachment chip] -->|click| B{detectType}
+    B -->|pdf| C[PDF viewer]
+    B -->|xlsx| D[Spreadsheet grid]
+    B -->|glb| E[3D viewer]
+    B -->|mmd| F[Mermaid render]
+    C --> G[Dock panel]
+    D --> G
+    E --> G
+    F --> G
