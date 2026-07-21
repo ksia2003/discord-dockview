@@ -22,7 +22,7 @@
  */
 
 /** The compiled/running plugin patch version. Bump this per patch release. */
-export const DOCKVIEW_PLUGIN_VERSION = "0.1.41";
+export const DOCKVIEW_PLUGIN_VERSION = "0.1.42";
 
 /**
  * Intentional mirror of the app-domain release repository. The plugin compiles
