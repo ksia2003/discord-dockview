@@ -21,6 +21,7 @@ import { pnpmInvocation, quoteWindowsCmdToken } from "../scripts/lib/commandInvo
 import { dependencySpecs, VENCORD_DEPENDENCIES } from "../scripts/lib/vencordDependencies.mjs";
 import { computeVencordBuildIdentity, VENCORD_BUILD_INPUT_FILES } from "../scripts/lib/vencordBuildIdentity.mjs";
 import { inspectVencordBundle } from "../scripts/lib/vencordBundle.mjs";
+import { readDockViewReleaseMetadata } from "../scripts/lib/readDockViewReleaseMetadata.mjs";
 import {
     inspectVencordCheckout,
     VENCORD_CORE_OUTPUT_FILES,
@@ -31,6 +32,8 @@ import { VENCORD_OUTPUT_FILES } from "../scripts/lib/vencordOutputs.mjs";
 import { replaceVencordRef } from "../scripts/set-vencord-ref.mjs";
 import { AUTOMATION_MARKER } from "../scripts/sync-upstream-issues.mjs";
 import { createCandidate, verifyCandidate, verifyGeneratedOutput } from "../scripts/vencord-candidate.mjs";
+
+const CURRENT_PLUGIN_VERSION = readDockViewReleaseMetadata(process.cwd()).pluginVersion;
 
 test("stable upstream release selection is numeric and excludes drafts and prereleases", () => {
     const latest = selectLatestStableRelease([
@@ -119,7 +122,7 @@ test("verify-generated accepts a complete tree without a persisted record", () =
             writeFileSync(
                 join(directory, file),
                 file === "version.txt"
-                    ? `dockview:0.1.37 ${VENCORD_REF} ${buildIdentity}\n`
+                    ? `dockview:${CURRENT_PLUGIN_VERSION} ${VENCORD_REF} ${buildIdentity}\n`
                     : file === "vencordDesktopRenderer.js"
                       ? "DockView generated verifier fixture\n"
                       : `fixture:${file}\n`
@@ -138,7 +141,10 @@ test("verify-generated accepts a complete tree without a persisted record", () =
 
         writeFileSync(join(directory, "version.txt"), `dockview:0.1.36 ${VENCORD_REF} ${buildIdentity}\n`);
         assert.throws(() => verifyGeneratedOutput(directory), /version.txt plugin/);
-        writeFileSync(join(directory, "version.txt"), `dockview:0.1.37 ${VENCORD_REF} ${"a".repeat(40)}-${"b".repeat(64)}\n`);
+        writeFileSync(
+            join(directory, "version.txt"),
+            `dockview:${CURRENT_PLUGIN_VERSION} ${VENCORD_REF} ${"a".repeat(40)}-${"b".repeat(64)}\n`
+        );
         assert.throws(() => verifyGeneratedOutput(directory), /build provenance/);
     } finally {
         rmSync(directory, { recursive: true, force: true });
