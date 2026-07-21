@@ -65,11 +65,15 @@ unknown field; all existing plugin, shell, and files fields keep their shape.
 
 4. **Let CI run.** The `Release` workflow (`.github/workflows/release.yml`) keeps
    the upstream Linux, Windows, and macOS build legs, then:
-    - creates the `v0.1.26` release (titled `dockview 0.1.26`),
+    - creates the `v0.1.26` prerelease page before any platform uploads,
     - uploads the platform installers + `latest*.yml`,
     - regenerates `manifest.json` and uploads the plugin bundle (the four
       `vencordDesktop*` files, `version.txt`, the `chunk-*.js` files, and
       `manifest.json`) as extra assets on the same release.
+
+    The macOS leg signs and notarizes when the complete Apple secret set exists.
+    Forks without those secrets produce an explicitly unsigned prerelease package
+    instead of passing empty signing values to electron-builder.
 
 5. **Write the release notes.** CI seeds a one-line placeholder; replace it with
    real notes (template below):

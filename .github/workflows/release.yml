@@ -10,7 +10,28 @@ permissions:
     contents: write
 
 jobs:
+    prepare-release:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: Verify tag and create the prerelease page
+              shell: bash
+              run: |
+                  TAG=$(node scripts/print-dockview-release-metadata.mjs --field tag)
+                  if [[ "${{ github.ref_type }}" == "tag" ]]; then
+                      test "${{ github.ref_name }}" = "$TAG"
+                  fi
+                  if ! gh release view "$TAG" >/dev/null 2>&1; then
+                      gh release create "$TAG" --verify-tag --prerelease \
+                          --title "dockview ${TAG#v}" \
+                          --notes "Development prerelease; platform builds and the verified manifest are still in progress."
+                  fi
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     release:
+        needs: prepare-release
         runs-on: ${{ matrix.os }}
 
         strategy:

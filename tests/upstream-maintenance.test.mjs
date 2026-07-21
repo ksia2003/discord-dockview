@@ -80,8 +80,12 @@ test("Windows pnpm invocation uses cmd with strictly quoted inert tokens", () =>
         env: { ComSpec: "C:\\Windows\\System32\\cmd.exe" }
     });
     assert.equal(invocation.executable, "C:\\Windows\\System32\\cmd.exe");
-    assert.deepEqual(invocation.args, ["/d", "/s", "/c", 'pnpm "add" "-w" "@scope/package"']);
+    assert.deepEqual(invocation.args, ["/d", "/s", "/c", 'pnpm add "-w" "@scope/package"']);
     assert.throws(() => quoteWindowsCmdToken("package&whoami"), /Unsafe Windows command token/);
+    assert.throws(
+        () => pnpmInvocation(["add&whoami", "safe"], { platform: "win32", env: {} }),
+        /Unsafe Windows pnpm subcommand/
+    );
 });
 
 test("derived Vencord dependencies must exactly match explicit version pins", () => {
@@ -173,7 +177,10 @@ test("generated bundle verification requires the exact output set and stable bui
             }).current,
             true
         );
-        writeFileSync(join(directory, "version.txt"), `dockview:0.1.37 ${VENCORD_REF} ${"c".repeat(40)}-${"e".repeat(64)}\n`);
+        writeFileSync(
+            join(directory, "version.txt"),
+            `dockview:0.1.37 ${VENCORD_REF} ${"c".repeat(40)}-${"e".repeat(64)}\n`
+        );
         const stale = inspectVencordBundle(directory, {
             pluginVersion: "0.1.37",
             vencordRef: VENCORD_REF,
@@ -230,7 +237,9 @@ test("git archive clean checkout uses the persisted record without requiring ign
             VENCORD_OUTPUT_FILES.map(file => [
                 file,
                 VENCORD_CORE_OUTPUT_FILES.includes(file)
-                    ? createHash("sha256").update(readFileSync(join(staticDir, file))).digest("hex")
+                    ? createHash("sha256")
+                          .update(readFileSync(join(staticDir, file)))
+                          .digest("hex")
                     : createHash("sha256").update(`ignored chunk fixture:${file}`).digest("hex")
             ])
         );
@@ -272,10 +281,7 @@ test("git archive clean checkout uses the persisted record without requiring ign
         );
         assert.equal(current.current, true);
         assert.deepEqual(current.presentChunks, []);
-        assert.deepEqual(
-            readdirSync(join(clean, "static/vencordDist")).sort(),
-            [...VENCORD_CORE_OUTPUT_FILES].sort()
-        );
+        assert.deepEqual(readdirSync(join(clean, "static/vencordDist")).sort(), [...VENCORD_CORE_OUTPUT_FILES].sort());
 
         const cleanRecord = join(clean, VENCORD_PROVENANCE_RECORD);
         const baseline = JSON.parse(readFileSync(cleanRecord, "utf-8"));
@@ -292,24 +298,48 @@ test("git archive clean checkout uses the persisted record without requiring ign
         assert.equal(missingRecord.current, false);
         assert.match(missingRecord.reasons.join("; "), /Could not read Vencord provenance/);
         writeFileSync(cleanRecord, `${JSON.stringify(baseline)}\n`);
-        expectStale("tampered record", variant => {
-            variant.tampered = true;
-        }, /unexpected or missing top-level keys/);
-        expectStale("mismatched Vencord commit", variant => {
-            variant.vencordCommit = "a".repeat(40);
-        }, /commit mismatch/);
-        expectStale("mismatched Vencord ref", variant => {
-            variant.vencordRef = "v9.9.9";
-        }, /ref mismatch/);
-        expectStale("mismatched build identity", variant => {
-            variant.buildIdentity = `${"a".repeat(40)}-${"b".repeat(64)}`;
-        }, /build identity mismatch/);
-        expectStale("mismatched tracked core hash", variant => {
-            variant.files["version.txt"] = "f".repeat(64);
-        }, /tracked output digest mismatch/);
-        expectStale("incomplete chunk hash set", variant => {
-            delete variant.files["chunk-samples.js"];
-        }, /exact runtime output key set/);
+        expectStale(
+            "tampered record",
+            variant => {
+                variant.tampered = true;
+            },
+            /unexpected or missing top-level keys/
+        );
+        expectStale(
+            "mismatched Vencord commit",
+            variant => {
+                variant.vencordCommit = "a".repeat(40);
+            },
+            /commit mismatch/
+        );
+        expectStale(
+            "mismatched Vencord ref",
+            variant => {
+                variant.vencordRef = "v9.9.9";
+            },
+            /ref mismatch/
+        );
+        expectStale(
+            "mismatched build identity",
+            variant => {
+                variant.buildIdentity = `${"a".repeat(40)}-${"b".repeat(64)}`;
+            },
+            /build identity mismatch/
+        );
+        expectStale(
+            "mismatched tracked core hash",
+            variant => {
+                variant.files["version.txt"] = "f".repeat(64);
+            },
+            /tracked output digest mismatch/
+        );
+        expectStale(
+            "incomplete chunk hash set",
+            variant => {
+                delete variant.files["chunk-samples.js"];
+            },
+            /exact runtime output key set/
+        );
     } finally {
         rmSync(repo, { recursive: true, force: true });
         rmSync(clean, { recursive: true, force: true });
@@ -318,7 +348,9 @@ test("git archive clean checkout uses the persisted record without requiring ign
 
 test("build identity ignores automation-only commits but changes with plugin input", () => {
     assert.deepEqual(
-        ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"].every(file => VENCORD_BUILD_INPUT_FILES.includes(file)),
+        ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"].every(file =>
+            VENCORD_BUILD_INPUT_FILES.includes(file)
+        ),
         true
     );
     const root = mkdtempSync(join(tmpdir(), "dockview-build-identity-test-"));
@@ -364,18 +396,29 @@ test("fresh package, test, and release paths regenerate the complete chunk set",
     const releaseWorkflow = readFileSync(join(process.cwd(), ".github/workflows/release.yml"), "utf-8");
     assert.match(releaseWorkflow, /node scripts\/prepare-vencord\.mjs/);
     assert.match(releaseWorkflow, /verify-generated static\/vencordDist/);
+    assert.match(releaseWorkflow, /gh release create "\$TAG" --verify-tag --prerelease/);
+    assert.match(releaseWorkflow, /needs:\s*prepare-release/);
     assert.match(releaseWorkflow, /fail-fast:\s*false/);
     assert.match(releaseWorkflow, /CSC_IDENTITY_AUTO_DISCOVERY=false/);
     assert.match(releaseWorkflow, /--config\.mac\.notarize=false/);
     assert.doesNotMatch(releaseWorkflow, /verify-output|provenance\.json/);
     for (const workflow of ["meta.yml", "update-vencord-dev.yml", "winget-submission.yml"])
         assert.equal(existsSync(join(process.cwd(), ".github/workflows", workflow)), false);
-    assert.ok(VENCORD_OUTPUT_FILES.every(file => file === "version.txt" || file.startsWith("vencordDesktop") || file.startsWith("chunk-")));
-    const maintenanceWorkflow = readFileSync(join(process.cwd(), ".github/workflows/upstream-maintenance.yml"), "utf-8");
+    assert.ok(
+        VENCORD_OUTPUT_FILES.every(
+            file => file === "version.txt" || file.startsWith("vencordDesktop") || file.startsWith("chunk-")
+        )
+    );
+    const maintenanceWorkflow = readFileSync(
+        join(process.cwd(), ".github/workflows/upstream-maintenance.yml"),
+        "utf-8"
+    );
     assert.match(maintenanceWorkflow, /always\(\)\s*&&\s*needs\.detect\.result == 'failure'/);
     assert.match(maintenanceWorkflow, /node scripts\/vencord-candidate\.mjs verify-generated static\/vencordDist/);
     assert.match(maintenanceWorkflow, /static\/vencordDist\.provenance\.json/);
-    const artifactVerify = maintenanceWorkflow.indexOf('node scripts/vencord-candidate.mjs verify "$RUNNER_TEMP/candidate"');
+    const artifactVerify = maintenanceWorkflow.indexOf(
+        'node scripts/vencord-candidate.mjs verify "$RUNNER_TEMP/candidate"'
+    );
     const recordCopy = maintenanceWorkflow.indexOf('cp -- "$RUNNER_TEMP/candidate/candidate-provenance.json"');
     assert.ok(artifactVerify >= 0 && artifactVerify < recordCopy);
 });
@@ -540,11 +583,7 @@ test("human exact-title issues are not mutated without the automation marker", a
     });
     assert.equal(exitCode, 0);
     assert.ok(requests.some(request => request.method === "POST" && request.url.endsWith("/issues")));
-    assert.ok(
-        !requests.some(
-            request => /\/issues\/11(?:\/|$)/.test(request.url) && request.method !== "GET"
-        )
-    );
+    assert.ok(!requests.some(request => /\/issues\/11(?:\/|$)/.test(request.url) && request.method !== "GET"));
 });
 
 test("paginated GitHub arrays are combined without silently truncating", async () => {
