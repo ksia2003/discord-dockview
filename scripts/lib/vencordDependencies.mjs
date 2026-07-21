@@ -39,7 +39,6 @@ export const VENCORD_DEPENDENCIES = Object.freeze({
     icojs: "1.0.0",
     jpeg2000: "1.1.1",
     katex: "0.18.1",
-    lzutf8: "0.6.3",
     mammoth: "1.12.0",
     marked: "18.0.6",
     mermaid: "11.16.0",

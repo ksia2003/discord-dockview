@@ -63,11 +63,10 @@ unknown field; all existing plugin, shell, and files fields keep their shape.
     git push origin v0.1.26
     ```
 
-4. **Let CI run.** The `Release` workflow (`.github/workflows/release.yml`) builds
-   on Linux and Windows, then:
+4. **Let CI run.** The `Release` workflow (`.github/workflows/release.yml`) keeps
+   the upstream Linux, Windows, and macOS build legs, then:
     - creates the `v0.1.26` release (titled `dockview 0.1.26`),
-    - uploads the installers + `latest*.yml` (Windows `.exe`, Linux
-      `.AppImage`/`.deb`/`.rpm`/`.tar.gz`, x64 and arm64),
+    - uploads the platform installers + `latest*.yml`,
     - regenerates `manifest.json` and uploads the plugin bundle (the four
       `vencordDesktop*` files, `version.txt`, the `chunk-*.js` files, and
       `manifest.json`) as extra assets on the same release.
@@ -112,16 +111,16 @@ Keep it plain and user-facing. 2–6 "What's new" bullets in everyday language
 Already running DockView? Open **DockView settings → Updates → Check for
 updates**, then Apply — the panel updates in place, no reinstall.
 
-<Only if this release changed the app shell (main/preload — e.g. profiles,
-tray, window behaviour):>
-This release includes app-level changes, which need the installer: download it
-below and reinstall over your current install (your login and settings are kept).
+<Only if this release changed the app shell (main/preload):>
+This release includes app-level changes. DockView will run the matching verified
+installer when the install method supports it; otherwise download it below and
+reinstall over the current app (your login and settings are kept).
 ```
 
 **How to tell whether a release needs the installer:** if the change is only in
 the panel/viewers (renderer), the in-app updater delivers it. If it touches the
 Electron shell — anything under `src/main/` or `src/preload/`, or a new native
-IPC (profiles, tray menus, window handling) — users need the installer to get it.
+IPC or window handling — users need the installer to get it.
 For those shell/native changes, bump the shell version and ship new installers.
 The updater's `manifest.json` records relaunch information automatically
 (`needsRelaunch`), but say it in the notes too.
