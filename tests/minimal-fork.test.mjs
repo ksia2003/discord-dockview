@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import test from "node:test";
 
+import { isExternalWebUrl } from "../plugin/engine/detectType.ts";
 import { VENCORD_OUTPUT_FILES } from "../scripts/lib/vencordOutputs.mjs";
 import { DOCKVIEW_VENCORD_BUNDLE_FILES } from "../src/shared/dockviewBundleFiles.ts";
 
@@ -41,9 +42,11 @@ test("ordinary link clicks stay upstream while right-click offers Open in DockVi
     assert.equal(externalLinks, upstreamExternalLinks);
     assert.match(plugin, /"image-context": addOpenInDockViewItem/);
     assert.match(plugin, /id: "dockview-open-web-link"/);
-    assert.match(plugin, /detectType\(\{ url: url\.href \}\) === "web"/);
+    assert.match(plugin, /isExternalWebUrl\(url\.href\)/);
     assert.match(strings, /openInDockView: "Open in DockView"/);
     assert.doesNotMatch(plugin, /installWebOpenListener|WEB_TAB_OPEN|REMOTE_PANEL_OPEN/);
+    assert.equal(isExternalWebUrl("https://example.com/page.html"), true);
+    assert.equal(isExternalWebUrl("https://cdn.discordapp.com/file/page.html"), false);
 });
 
 test("the Vesktop overlay is restricted to the documented DockView seams", () => {

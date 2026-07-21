@@ -192,15 +192,14 @@ function isDiscordHost(host: string): boolean {
     return DISCORD_HOST_SUFFIXES.some(d => h === d || h.endsWith("." + d));
 }
 
-/** Is `url` a real EXTERNAL http(s) web page — the target for a dock web tab? True only
- *  for a THIRD-PARTY http(s) host: anything Discord-owned stays native/native-chrome and
- *  never opens in the isolated tab. Callers reach this only after the file-extension
- *  branches have declined, so a dock-openable file/media url never counts as "web". */
-function isWebPageUrl(url: string | null | undefined): boolean {
+/** Is `url` an external HTTP(S) target that may be opened in an isolated web tab?
+ * Anything Discord-owned stays in Discord's native navigation. */
+export function isExternalWebUrl(url: string | null | undefined): boolean {
     if (!url) return false;
     let u: URL;
     try {
-        u = new URL(url, location.href);
+        const base = typeof location === "undefined" ? "https://discord.com/" : location.href;
+        u = new URL(url, base);
     } catch {
         return false;
     }
@@ -305,7 +304,7 @@ export function detectType(opts: { type?: ContentType; url?: string | null; name
     // the browsing pillar. This is LAST so a file/media url is never mistaken for a
     // page. A non-http url (mailto:, blob:, data:, …) or a discord.com/channels route
     // stays "unknown" (untouched by the link path).
-    if (isWebPageUrl(opts.url)) return "web";
+    if (isExternalWebUrl(opts.url)) return "web";
     return "unknown";
 }
 

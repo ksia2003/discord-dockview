@@ -30,7 +30,7 @@ import { clearContentCache } from "./engine/cache";
 import { preloadDecoders } from "./engine/decoderModes";
 import { fallbackCopy } from "./engine/fetch";
 import { loadLib } from "./engine/lazyLib";
-import { detectType } from "./engine/detectType";
+import { detectType, isExternalWebUrl } from "./engine/detectType";
 import { isRendererLive, requestRender } from "./engine/forceRender";
 import { onChannelSelect, setCurrentChannelMemId } from "./engine/channelMemory";
 import { isContextActive, resetContextTab, setContextActive } from "./engine/contextTab";
@@ -192,7 +192,7 @@ function contextMenuWebUrl(props: any): string | null {
     try {
         const url = new URL(raw, location.href);
         if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-        return detectType({ url: url.href }) === "web" ? url.href : null;
+        return isExternalWebUrl(url.href) ? url.href : null;
     } catch {
         return null;
     }
