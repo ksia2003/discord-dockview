@@ -14,6 +14,7 @@ jobs:
         runs-on: ${{ matrix.os }}
 
         strategy:
+            fail-fast: false
             matrix:
                 os: [macos-latest, ubuntu-latest, windows-latest]
                 include:
@@ -65,9 +66,16 @@ jobs:
 
             - name: Run Electron Builder
               if: ${{ matrix.platform == 'mac' }}
+              shell: bash
               run: |
-                  echo "$API_KEY" > apple.p8
-                  pnpm electron-builder --${{ matrix.platform }} --publish always
+                  if [[ -n "$CSC_LINK" && -n "$API_KEY" && -n "$APPLE_API_KEY_ID" && -n "$APPLE_API_ISSUER" ]]; then
+                      echo "$API_KEY" > apple.p8
+                      pnpm electron-builder --mac --publish always
+                  else
+                      unset CSC_LINK CSC_KEY_PASSWORD API_KEY APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER
+                      export CSC_IDENTITY_AUTO_DISCOVERY=false
+                      pnpm electron-builder --mac --publish always --config.mac.notarize=false
+                  fi
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   CSC_LINK: ${{ secrets.APPLE_SIGNING_CERT }}

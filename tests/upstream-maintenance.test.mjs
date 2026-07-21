@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -364,7 +364,12 @@ test("fresh package, test, and release paths regenerate the complete chunk set",
     const releaseWorkflow = readFileSync(join(process.cwd(), ".github/workflows/release.yml"), "utf-8");
     assert.match(releaseWorkflow, /node scripts\/prepare-vencord\.mjs/);
     assert.match(releaseWorkflow, /verify-generated static\/vencordDist/);
+    assert.match(releaseWorkflow, /fail-fast:\s*false/);
+    assert.match(releaseWorkflow, /CSC_IDENTITY_AUTO_DISCOVERY=false/);
+    assert.match(releaseWorkflow, /--config\.mac\.notarize=false/);
     assert.doesNotMatch(releaseWorkflow, /verify-output|provenance\.json/);
+    for (const workflow of ["meta.yml", "update-vencord-dev.yml", "winget-submission.yml"])
+        assert.equal(existsSync(join(process.cwd(), ".github/workflows", workflow)), false);
     assert.ok(VENCORD_OUTPUT_FILES.every(file => file === "version.txt" || file.startsWith("vencordDesktop") || file.startsWith("chunk-")));
     const maintenanceWorkflow = readFileSync(join(process.cwd(), ".github/workflows/upstream-maintenance.yml"), "utf-8");
     assert.match(maintenanceWorkflow, /always\(\)\s*&&\s*needs\.detect\.result == 'failure'/);
