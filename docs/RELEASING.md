@@ -75,6 +75,11 @@ unknown field; all existing plugin, shell, and files fields keep their shape.
     Forks without those secrets produce an explicitly unsigned prerelease package
     instead of passing empty signing values to electron-builder.
 
+    Electron Builder only creates the platform packages (`--publish never`). The
+    workflow uploads them explicitly to the DockView tag; otherwise Electron
+    Builder would create a separate draft tagged with the Vesktop app version
+    (for example `v1.6.5`).
+
 5. **Write the release notes.** CI seeds a one-line placeholder; replace it with
    real notes (template below):
 

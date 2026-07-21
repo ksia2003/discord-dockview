@@ -81,9 +81,7 @@ jobs:
             - name: Run Electron Builder
               if: ${{ matrix.platform != 'mac' }}
               run: |
-                  pnpm electron-builder --${{ matrix.platform }} --publish always
-              env:
-                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  pnpm electron-builder --${{ matrix.platform }} --publish never
 
             - name: Run Electron Builder
               if: ${{ matrix.platform == 'mac' }}
@@ -91,11 +89,11 @@ jobs:
               run: |
                   if [[ -n "$CSC_LINK" && -n "$API_KEY" && -n "$APPLE_API_KEY_ID" && -n "$APPLE_API_ISSUER" ]]; then
                       echo "$API_KEY" > apple.p8
-                      pnpm electron-builder --mac --publish always
+                      pnpm electron-builder --mac --publish never
                   else
                       unset CSC_LINK CSC_KEY_PASSWORD API_KEY APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER
                       export CSC_IDENTITY_AUTO_DISCOVERY=false
-                      pnpm electron-builder --mac --publish always --config.mac.notarize=false
+                      pnpm electron-builder --mac --publish never --config.mac.notarize=false
                   fi
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -105,6 +103,23 @@ jobs:
                   APPLE_API_KEY: apple.p8
                   APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
                   APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+
+            # electron-builder derives its GitHub tag from the Vesktop app version
+            # (v1.6.5), while DockView releases use the independent plugin/shell
+            # version (v0.1.x). Build locally, then upload every platform artifact to
+            # the already-created DockView prerelease instead of letting
+            # electron-builder create a second, incorrectly tagged draft release.
+            - name: Attach platform packages to the DockView prerelease
+              shell: bash
+              run: |
+                  TAG=$(node scripts/print-dockview-release-metadata.mjs --field tag)
+                  shopt -s nullglob
+                  files=(dist/*.exe dist/*.AppImage dist/*.deb dist/*.rpm dist/*.tar.gz \
+                         dist/*.zip dist/*.blockmap dist/latest*.yml)
+                  test ${#files[@]} -gt 0
+                  gh release upload "$TAG" "${files[@]}" --clobber
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Attach DockView runtime bundle
               if: matrix.platform == 'linux'

@@ -401,6 +401,10 @@ test("fresh package, test, and release paths regenerate the complete chunk set",
     assert.match(releaseWorkflow, /fail-fast:\s*false/);
     assert.match(releaseWorkflow, /CSC_IDENTITY_AUTO_DISCOVERY=false/);
     assert.match(releaseWorkflow, /--config\.mac\.notarize=false/);
+    assert.doesNotMatch(releaseWorkflow, /electron-builder[^\n]*--publish always/);
+    assert.equal((releaseWorkflow.match(/electron-builder[^\n]*--publish never/g) ?? []).length, 3);
+    assert.match(releaseWorkflow, /gh release upload "\$TAG" "\$\{files\[@\]\}" --clobber/);
+    assert.match(releaseWorkflow, /dist\/\*\.blockmap/);
     assert.doesNotMatch(releaseWorkflow, /verify-output|provenance\.json/);
     for (const workflow of ["meta.yml", "update-vencord-dev.yml", "winget-submission.yml"])
         assert.equal(existsSync(join(process.cwd(), ".github/workflows", workflow)), false);
