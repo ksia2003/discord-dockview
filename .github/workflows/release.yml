@@ -115,7 +115,7 @@ jobs:
                   TAG=$(node scripts/print-dockview-release-metadata.mjs --field tag)
                   shopt -s nullglob
                   files=(dist/*.exe dist/*.AppImage dist/*.deb dist/*.rpm dist/*.tar.gz \
-                         dist/*.zip dist/*.blockmap dist/latest*.yml)
+                         dist/*.zip dist/*.dmg dist/*.blockmap dist/latest*.yml)
                   test ${#files[@]} -gt 0
                   gh release upload "$TAG" "${files[@]}" --clobber
               env:
