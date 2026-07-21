@@ -74,17 +74,17 @@ test("Vencord pin updater changes one strict tag and full commit pair", () => {
     assert.throws(() => replaceVencordRef(`${source}${source}`, "v1.14.17", "b".repeat(40)), /exactly one/);
 });
 
-test("Windows pnpm invocation uses cmd with strictly quoted inert tokens", () => {
+test("Windows pnpm invocation uses cmd with strictly validated inert tokens", () => {
     const invocation = pnpmInvocation(["add", "-w", "@scope/package"], {
         platform: "win32",
         env: { ComSpec: "C:\\Windows\\System32\\cmd.exe" }
     });
     assert.equal(invocation.executable, "C:\\Windows\\System32\\cmd.exe");
-    assert.deepEqual(invocation.args, ["/d", "/s", "/c", 'pnpm add "-w" "@scope/package"']);
+    assert.deepEqual(invocation.args, ["/d", "/s", "/c", "pnpm add -w @scope/package"]);
     assert.throws(() => quoteWindowsCmdToken("package&whoami"), /Unsafe Windows command token/);
     assert.throws(
         () => pnpmInvocation(["add&whoami", "safe"], { platform: "win32", env: {} }),
-        /Unsafe Windows pnpm subcommand/
+        /Unsafe Windows command token/
     );
 });
 
