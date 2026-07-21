@@ -179,14 +179,16 @@ function unexposeDebug(): void {
     try { delete (window as any).__dockView; } catch { /* ignore */ }
 }
 
-/** Extract a plain website URL from Discord's link context-menu arguments. Discord
- * reuses the `image-context` menu for anchors and supplies their destination as
- * `href`. Restrict the action to HTTP(S) pages that DockView classifies as web
- * content, so file attachments keep their existing viewer/download menu. */
+/** Extract a plain website URL from Discord's context-menu arguments. Links inside
+ * messages use the `message` menu and expose their destination as `itemHref`; linked
+ * images may instead arrive through `image-context` as `href`. Restrict the action
+ * to external HTTP(S) targets, so Discord-owned navigation stays native. */
 function contextMenuWebUrl(props: any): string | null {
-    const raw = typeof props?.href === "string"
-        ? props.href
-        : props?.target?.closest?.("a[href]")?.href;
+    const raw = typeof props?.itemHref === "string"
+        ? props.itemHref
+        : typeof props?.href === "string"
+            ? props.href
+            : props?.target?.closest?.("a[href]")?.href;
     if (typeof raw !== "string" || !raw) return null;
 
     try {
@@ -310,6 +312,7 @@ export default definePlugin({
         // Ordinary clicks remain Vesktop's upstream behavior (OS browser). This
         // explicit context-menu action is the only path that turns a web link into
         // a DockView tab; Discord's untrusted-domain confirmation is untouched.
+        "message": addOpenInDockViewItem,
         "image-context": addOpenInDockViewItem
     },
 

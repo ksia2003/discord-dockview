@@ -40,6 +40,8 @@ test("ordinary link clicks stay upstream while right-click offers Open in DockVi
     );
 
     assert.equal(externalLinks, upstreamExternalLinks);
+    assert.match(plugin, /props\?\.itemHref/);
+    assert.match(plugin, /"message": addOpenInDockViewItem/);
     assert.match(plugin, /"image-context": addOpenInDockViewItem/);
     assert.match(plugin, /id: "dockview-open-web-link"/);
     assert.match(plugin, /isExternalWebUrl\(url\.href\)/);

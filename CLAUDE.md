@@ -15,7 +15,8 @@ The Vesktop base is pinned in `src/shared/dockviewRelease.ts`. Vencord is pinned
 ## Important boundaries
 
 - Ordinary HTTP(S) left-clicks use Vesktop's upstream OS-browser behavior.
-- A link's `image-context` menu gets the explicit **Open in DockView** action.
+- A message link's `message` menu (and linked-image `image-context` menu) gets the
+  explicit **Open in DockView** action without replacing Discord's existing items.
 - Discord's untrusted-domain confirmation is not patched.
 - Embedded sites use only `persist:dockview-web`. The main process denies guest
   permissions, Node/preload injection, non-HTTP(S) navigation, and guest popups.
