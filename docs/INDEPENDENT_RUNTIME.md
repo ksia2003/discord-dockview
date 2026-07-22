@@ -1,7 +1,8 @@
 # Independent DockView runtime
 
-This branch is the single experiment for separating DockView from Vencord. It
-does not change the released `v0.1.42` runtime.
+This branch is the release candidate for separating DockView from Vencord. The
+released `v0.1.42` runtime remains unchanged until the candidate passes real-use
+testing.
 
 ## Runtime ownership
 
@@ -36,8 +37,9 @@ directory with the bundled, unmodified pinned Vencord build and installs the
 bundled DockView runtime in `dockviewFiles/`. Later DockView updates never touch
 `vencordFiles/`.
 
-Rollback is a shell rollback: the released `v0.1.42` package still understands
-the combined layout and remains untouched while this branch is experimental.
+Rollback is a shell rollback: reinstalling the released `v0.1.42` package restores
+the combined runtime. The old package and release assets remain available while
+the separated runtime is tested as a development prerelease.
 
 ## Acceptance gates
 

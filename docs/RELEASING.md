@@ -67,9 +67,10 @@ unknown field; all existing plugin, shell, and files fields keep their shape.
    the upstream Linux, Windows, and macOS build legs, then:
     - creates the `v0.1.26` prerelease page before any platform uploads,
     - uploads the platform installers + `latest*.yml`,
-    - regenerates `manifest.json` and uploads the plugin bundle (the four
-      `vencordDesktop*` files, `version.txt`, the `chunk-*.js` files, and
-      `manifest.json`) as extra assets on the same release.
+    - regenerates `manifest.json` and uploads the independent DockView runtime
+      (`dockviewMain.js`, `dockviewRenderer.js`, `version.txt`, the
+      `chunk-*.js` files, and `manifest.json`) as extra assets on the same
+      release. Official Vencord files are never part of a DockView update.
 
     The macOS leg signs and notarizes when the complete Apple secret set exists.
     Forks without those secrets produce an explicitly unsigned prerelease package
@@ -94,7 +95,8 @@ unknown field; all existing plugin, shell, and files fields keep their shape.
     gh release view v0.1.26 --json assets -q '.assets[].name' | grep manifest.json
     ```
 
-    You should also see `vencordDesktopRenderer.js` and the `chunk-*.js` files.
+    You should also see `dockviewRenderer.js`, `dockviewMain.js`, and the
+    `chunk-*.js` files.
 
 7. **Mark it latest** (CI usually does, but confirm):
 
