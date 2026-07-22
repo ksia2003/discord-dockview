@@ -7,14 +7,14 @@
 /*
  * DockView — in-app APP-SHELL updater (main process).
  * ---------------------------------------------------------------------------
- * The plugin bundle updates itself over the air (plugin/native.ts rewrites the
- * files under VENCORD_FILES_DIR and reloads). The SHELL — the Vesktop main/preload
+ * The DockView runtime updates itself over the air (plugin/native.ts rewrites the
+ * files under dockviewFiles and reloads). The SHELL — the Vesktop main/preload
  * that ships inside app.asar — can't be patched that way; only an INSTALLER rewrites
  * it. This module drives that installer from inside the app, so a shell change lands
  * with one Apply instead of a manual download + reinstall.
  *
- * WHY MAIN, NOT THE PLUGIN. The plugin's native.ts runs in the Vencord compilation
- * domain and can't reach Electron's app/quit/relaunch or the OS. The shell installer
+ * WHY MAIN, NOT THE DOCKVIEW RUNTIME. DockView's portable native bundle deliberately
+ * has no Electron dependency or app lifecycle access. The shell installer
  * flow needs exactly those (spawn the setup exe, replace the running AppImage, pkexec
  * dpkg/rpm, then relaunch), so it lives here in Vesktop main and is exposed over the
  * VesktopNative.shellUpdate.* preload bridge — a SEPARATE channel from the plugin

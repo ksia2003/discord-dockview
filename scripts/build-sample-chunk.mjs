@@ -5,10 +5,10 @@
  *
  * Builds chunk-samples.js: the example fixtures behind the "Examples / supported
  * formats" gallery in the DockView settings tab, base64-embedded and assigned to a
- * global. It ships ALONGSIDE the renderer (in VENCORD_FILES_DIR / vencordFilesCustom)
+ * global. It ships alongside the renderer in DockView's own runtime directory,
  * exactly like the out-of-bundle LIB chunks (chunk-mermaid.js, chunk-three.js, …),
  * and is loaded ON DEMAND over the SAME readChunk IPC (plugin/native.ts) the first
- * time the gallery is opened. It is therefore NOT inline in vencordDesktopRenderer.js
+ * time the gallery is opened. It is therefore NOT inline in dockviewRenderer.js
  * — the fixtures never cost a byte at Vesktop startup.
  *
  * SHAPE — identical contract to a lib chunk so the existing wiring is reused verbatim:

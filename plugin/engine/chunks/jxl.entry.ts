@@ -5,7 +5,7 @@
  * Emscripten codec: a small JS glue (jxl_dec.js) + an 849 KB jxl_dec.wasm.
  *
  * Why a CHUNK (not inline):
- *   1. The wasm is 849 KB. Keeping the whole codec out of vencordDesktopRenderer.js
+ *   1. The wasm is 849 KB. Keeping the whole codec out of dockviewRenderer.js
  *      keeps the base renderer lean (the bytes load on first .jxl open over the chunk
  *      IPC, behind the "Loading JPEG XL decoder…" dock state — like the other chunks).
  *   2. The codec's default wasm fetch is `fetch(new URL("jxl_dec.wasm", import.meta.url))`,

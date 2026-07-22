@@ -1,9 +1,9 @@
 /*
  * DockView — self-update settings panel (renderer).
  * ---------------------------------------------------------------------------
- * DockView's compiled Vencord bundle can update independently of the Vesktop
- * application. Vesktop itself deliberately keeps upstream's electron-updater;
- * this panel does not duplicate app-installer behavior.
+ * DockView's independent runtime can update separately from Vencord and the
+ * Vesktop application. Vesktop itself deliberately keeps upstream's
+ * electron-updater; this panel does not duplicate app-installer behavior.
  */
 
 import { Button, Forms, React, Switch, Text } from "@vencord/types/webpack/common";

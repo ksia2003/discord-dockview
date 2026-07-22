@@ -1,7 +1,7 @@
 /*
  * DockView Examples gallery — on-demand sample loader.
  * ---------------------------------------------------------------------------
- * The gallery's fixtures are NOT inline in vencordDesktopRenderer.js. They ship as
+ * The gallery's fixtures are NOT inline in dockviewRenderer.js. They ship as
  * chunk-samples.js (built by scripts/build-sample-chunk.mjs), the same out-of-bundle
  * delivery the heavy LIB chunks use: a `"use strict"` file that assigns a base64 map
  * to the `__dockviewChunk_samples` global, shipped next to the renderer and pulled in

@@ -13,7 +13,7 @@
  * three.js is HEAVY and code-dense (~23 ms of startup V8 compile, measured). It is
  * CHUNKED: three + every example loader is bundled into chunk-three.js
  * (engine/chunks/three.entry.ts) and EXTERNALIZED from the renderer, so its bytes
- * leave vencordDesktopRenderer.js entirely (not just its execution). The viewer
+ * leave dockviewRenderer.js entirely (not just its execution). The viewer
  * pulls the module + loaders from ONE withLibLoading("three") call, which loadLib
  * routes to the on-disk chunk (read over IPC + eval'd). NEVER add a static
  * `import … from "three"` (it re-inlines three and undoes the chunk) and NEVER a

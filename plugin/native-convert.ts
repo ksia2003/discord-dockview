@@ -2,7 +2,7 @@
  * DockView — MAIN-process attachment converters (native-convert.ts).
  * ---------------------------------------------------------------------------
  * This module runs in the Electron MAIN process (imported by native.ts, so it is
- * bundled into vencordDesktopMain.js — the Node target, which has NO CSP and NO
+ * bundled into dockviewMain.js — the Node target, which has NO CSP and NO
  * esbuild browser-builtin ban). It holds the per-format converters the
  * convertAttachment IPC dispatches to: formats that CANNOT be decoded in the
  * renderer because they need a Node-only library.
@@ -25,7 +25,7 @@
  * scripts/prepare-vencord.mjs's deriveDockviewDeps() scans plugin/**\/*.ts for
  * external import specifiers and `pnpm add`s + bundles them. Because native.ts
  * imports THIS module and this module imports the libs below, they are auto-derived
- * into the Vencord clone and bundled into vencordDesktopMain.js (Node target — no
+ * into the disposable build checkout and bundled into dockviewMain.js (Node target — no
  * browser-builtin ban). No hand-maintained dep list.
  *
  * CONTRACT — each converter returns { mime, bytes } (raw output bytes) or throws a

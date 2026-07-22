@@ -17,10 +17,10 @@
  * crypto) plus the global `fetch` (Node 18+). The ONE npm dependency is the
  * attachment-converter module (./native-convert), which the convertAttachment IPC
  * dispatches to: those Node-only libs (@kenjiuno/msgreader, utif, …) belong in the
- * MAIN bundle precisely because the renderer can't run them (Buffer / web-Worker
+ * DockView main bundle precisely because the renderer can't run them (Buffer / web-Worker
  * bans). The build's deriveDockviewDeps() scans plugin/**\/*.ts for external-package
  * import specifiers and `pnpm add`s + bundles them — so importing native-convert here
- * pulls its libs into vencordDesktopMain.js (Node target, no browser-builtin ban)
+ * pulls its libs into dockviewMain.js (Node target, no browser-builtin ban)
  * automatically. We still declare a local minimal stand-in for Electron's
  * IpcMainInvokeEvent rather than importing "electron" (the event is never read, so
  * the exact type is immaterial and an electron type-dep is avoided).
@@ -163,8 +163,8 @@ export async function readInstalledVersion(_: IpcMainInvokeEvent): Promise<strin
  * ---------------------------------------------------------------------------
  * The code-dense heavy libs (mermaid, pptx, codemirror, pdfjs, three) are built
  * as standalone chunk-<lib>.js files that ship ALONGSIDE the renderer/main
- * bundles in VENCORD_FILES_DIR (the same dir an OTA writes into). They are NOT
- * inline in vencordDesktopRenderer.js — that is the whole point (their bytes no
+ * bundles in DockView's runtime directory (the same dir an OTA writes into). They
+ * are NOT inline in dockviewRenderer.js — that is the whole point (their bytes no
  * longer cost V8 compile at startup). The renderer pulls one in on first use via
  * this IPC: engine/lazyLib.ts asks for "chunk-mermaid.js", main reads it off disk
  * and returns the source, and the renderer eval()s it (CSP allows 'unsafe-eval').
@@ -304,7 +304,7 @@ export async function applyUpdate(
     }
 
     // Order the names so version.txt is committed LAST in Phase B. Every other
-    // file (the four bundles, or any future addition) is committed before it.
+    // DockView runtime file is committed before it.
     const names = Object.keys(files);
     if (names.length === 0) {
         return { ok: false, needsRelaunch: false, error: "Manifest files map is empty" };
@@ -414,8 +414,8 @@ export async function applyUpdate(
 }
 
 /** Prefix of the DockView-versioned release tags ("vX.Y.Z"). These are the SAME
- *  clean releases that carry the app installers; the plugin bundle now ships as
- *  extra assets on them (a manifest.json + the four bundle files + chunks), so the
+ *  clean releases that carry the app installers; the DockView runtime now ships as
+ *  extra assets on them (a manifest.json + renderer/main + chunks), so the
  *  in-app updater and the installers share one release stream. This is a SEPARATE
  *  update channel from the app's electron-updater (which is tied to the Vesktop
  *  version) — it delivers DockView-version plugin updates. discoverManifest only

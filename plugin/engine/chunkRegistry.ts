@@ -1,6 +1,6 @@
 /*
  * Out-of-bundle CHUNK REGISTRY — the single source of truth for which heavy libs
- * ship as separate on-disk chunk files instead of inline in vencordDesktopRenderer.js.
+ * ship as separate on-disk chunk files instead of inline in dockviewRenderer.js.
  *
  * WHY (measured, see lazyLib.ts header for the full story)
  * -------------------------------------------------------

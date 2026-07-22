@@ -2,7 +2,7 @@
  * Chunk entry for PDF.JS — see engine/chunkRegistry.ts (exportMode "star").
  * ---------------------------------------------------------------------------
  * pdf.js is code-dense (~28 ms of startup V8 compile, measured) and is taken OUT
- * of vencordDesktopRenderer.js as chunk-pdfjs.js. The PDF viewer needs the main
+ * of dockviewRenderer.js as chunk-pdfjs.js. The PDF viewer needs the main
  * pdfjs surface (getDocument, TextLayer, …) PLUS the worker module's
  * WorkerMessageHandler export — the renderer registers it on globalThis.pdfjsWorker
  * so pdf.js runs the worker handler ON THE MAIN THREAD (CSP-safe; no real Worker /

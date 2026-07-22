@@ -19,8 +19,8 @@
  *
  * DOCKVIEW_SHELL_VERSION, by contrast, DOES live here. It stamps the app SHELL
  * (the Vesktop main/preload/renderer that ships inside app.asar) — the layer the
- * in-app plugin updater CAN'T touch, since a plugin-bundle patch only rewrites the
- * files under VENCORD_FILES_DIR, never app.asar. Bump it by hand whenever a shell
+ * in-app DockView updater CAN'T touch, since a runtime patch only rewrites files
+ * under dockviewFiles, never app.asar. Bump it by hand whenever a shell
  * change ships (a new src/main IPC, a tray item, an account-switch fix, …), the
  * same way plugin/version.ts is bumped per plugin change. The release manifest
  * records the shell version a release REQUIRES; the shell-update flow compares this

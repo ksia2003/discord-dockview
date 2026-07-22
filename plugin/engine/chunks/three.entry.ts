@@ -2,7 +2,7 @@
  * Chunk entry for THREE — see engine/chunkRegistry.ts (exportMode "entry").
  * ---------------------------------------------------------------------------
  * three is code-dense (~23 ms of startup V8 compile, measured) and is taken OUT
- * of vencordDesktopRenderer.js as a standalone chunk-three.js. Unlike a single-
+ * of dockviewRenderer.js as a standalone chunk-three.js. Unlike a single-
  * package chunk (mermaid/pptx), the 3D viewer needs three PLUS several
  * three/examples/jsm loaders — each its own ESM module that internally imports
  * "three". Bundling them ALL here means esbuild dedupes "three" to ONE instance

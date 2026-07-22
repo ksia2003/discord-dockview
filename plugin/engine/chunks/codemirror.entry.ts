@@ -4,7 +4,7 @@
  * The code/text viewer (viewers/text/cm.ts) pulls in 6 core @codemirror/* packages,
  * @lezer/highlight, and 14 @codemirror/lang-* packs — ~30 ms of startup V8 compile,
  * measured. Bundling them ALL here (one deduped chunk-codemirror.js) takes their
- * bytes out of vencordDesktopRenderer.js. esbuild dedupes the shared @codemirror/*
+ * bytes out of dockviewRenderer.js. esbuild dedupes the shared @codemirror/*
  * internals across the lang packs, so the chunk is far smaller than the sum.
  *
  * Each package is re-exported as a NAMED NAMESPACE so cm.ts reads the same module

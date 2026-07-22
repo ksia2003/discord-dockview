@@ -56,7 +56,7 @@ const DIST = join(ROOT, "static", "dockviewDist");
 // The core artifacts in a DockView-only patch release. Official Vencord files are
 // deliberately absent. Every file is recorded in the manifest. The out-of-bundle
 // CHUNK files (chunk-*.js) are ADDED below — they ship alongside the renderer (the
-// code-dense libs that were taken out of vencordDesktopRenderer.js to cut Vesktop
+// code-dense libs that were taken out of dockviewRenderer.js to cut Vesktop
 // startup parse), and applyUpdate verifies + commits them atomically with the rest.
 const CORE_FILES = [
     "dockviewMain.js",
@@ -215,7 +215,7 @@ const pluginVersion = RELEASE_METADATA.pluginVersion;
 const needsRelaunch = await detectNeedsRelaunch(pluginVersion, files);
 
 // ---- Shell (app) update block -------------------------------------------------
-// The plugin bundle above only patches VENCORD_FILES_DIR. The SHELL (app.asar) is
+// The DockView runtime above only patches dockviewFiles. The SHELL (app.asar) is
 // updated by re-running an installer. Record the shell version this release requires
 // and, when the installer artifacts are on disk, each installer's sha256 + size so
 // the in-app shell updater can pick + verify the one for the running platform.

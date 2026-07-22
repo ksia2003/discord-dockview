@@ -3,8 +3,8 @@
  *
  * WHY THIS EXISTS (measured, not assumed)
  * ---------------------------------------
- * The whole plugin ships as a SINGLE vencordDesktopRenderer.js: Vencord builds the
- * renderer as an esbuild IIFE bundle with no code-splitting, so a dynamic import()
+ * The core plugin ships as a single dockviewRenderer.js. The DockView build emits
+ * an esbuild IIFE with no automatic code-splitting, so a dynamic import()
  * does NOT emit a separate chunk — the bytes ship inline either way. What a dynamic
  * import() DOES still buy us is DEFERRED EXECUTION: a statically-imported module runs
  * its top-level code at Vencord init (proven: registry.ts statically importing a
@@ -65,7 +65,7 @@ function chunkGlobalName(spec: ChunkSpec): string {
  * Load an out-of-bundle CHUNK lib: ask main (over the readChunk IPC) for the
  * chunk-<lib>.js source that ships next to the renderer bundle, eval it (CSP
  * allows 'unsafe-eval'), and hand back the module export. This is the byte-removal
- * path: the lib is NOT inline in vencordDesktopRenderer.js, so its V8 compile cost
+ * path: the lib is NOT inline in dockviewRenderer.js, so its V8 compile cost
  * left startup; the eval here is the deferred, on-first-open cost the dock's
  * loading label already covers.
  *

@@ -5,7 +5,7 @@
  * Ghostscript compiled to WASM (@jspawn/ghostscript-wasm — GPL Ghostscript 9.56.0).
  *
  * Why a CHUNK (not inline):
- *   1. The wasm is ~16 MB. Keeping the whole interpreter out of vencordDesktopRenderer.js
+ *   1. The wasm is ~16 MB. Keeping the whole interpreter out of dockviewRenderer.js
  *      keeps the base renderer lean (the bytes load on first .eps / non-PDF .ai open over
  *      the chunk IPC, behind the "Converting PostScript…" dock state — like the other
  *      chunks). Being a chunk it costs ~0 ms at startup (data, not pre-parsed code) and
