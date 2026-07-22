@@ -19,7 +19,7 @@
  * proxy to call time (no module-top access → the plugin can't silently die).
  */
 
-import { Forms, React, Switch } from "@webpack/common";
+import { Forms, React, Switch } from "@vencord/types/webpack/common";
 
 import type { ViewerCategory } from "../engine/categoryMap";
 import { settings } from "../settings";

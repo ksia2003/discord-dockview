@@ -30,7 +30,7 @@ export type DiscoverResult =
     | { ok: false; code: "httpError"; httpStatus: number };
 
 /** The subset of native.ts (main process) the renderer updater calls. Reached via
- *  Vencord's pluginHelpers bridge, so every method is async (ipcRenderer.invoke). */
+ *  Vesktop.s fixed DockView bridge, so every method is async (ipcRenderer.invoke). */
 export interface DockViewNative {
     discoverManifest: (owner: string, repo: string, includePrerelease?: boolean) => Promise<DiscoverResult>;
     readInstalledVersion: () => Promise<string | null>;
@@ -58,7 +58,7 @@ export interface ShellNative {
  *  function is callable before trusting it. */
 export function getNative(): DockViewNative | null {
     try {
-        const native = (window as any).VencordNative?.pluginHelpers?.DockView;
+        const native = (window as any).VesktopNative?.dockview;
         if (
             native &&
             typeof native.discoverManifest === "function" &&

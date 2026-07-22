@@ -19,9 +19,8 @@
  * disk untouched (port source for the remaining phases), just unreferenced.
  */
 
-import { findGroupChildrenByChildId } from "@api/ContextMenu";
-import definePlugin from "@utils/types";
-import { Menu, React } from "@webpack/common";
+import { findGroupChildrenByChildId } from "@vencord/types/api/ContextMenu";
+import { Menu, React } from "@vencord/types/webpack/common";
 
 import managedStyle from "./style.css?managed";
 
@@ -215,7 +214,7 @@ function addOpenInDockViewItem(children: any[], props: any): void {
     );
 }
 
-export default definePlugin({
+const dockViewPlugin = {
     name: "DockView",
     description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images. The dock is always the right rail (channel-bound tabs; the member list / profile / threads become dock tabs; PDF refits on resize).",
     authors: [{ name: "seonin", id: 0n }],
@@ -454,4 +453,6 @@ export default definePlugin({
         //    leaves the sidebar exactly as we found it (no stale/duplicate section).
         uninstallDockViewSection();
     }
-});
+};
+
+export default dockViewPlugin;

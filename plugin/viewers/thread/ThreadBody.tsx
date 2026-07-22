@@ -16,7 +16,7 @@
  * NO module-top React.createElement / webpack access.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { requestRender } from "../../engine/forceRender";
 import { getActiveWindow } from "../../engine/window";

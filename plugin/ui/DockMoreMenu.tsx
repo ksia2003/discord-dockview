@@ -16,7 +16,7 @@
  * own name (its hidden header has no inline bar).
  */
 
-import { ContextMenuApi, Menu, React } from "@webpack/common";
+import { ContextMenuApi, Menu, React } from "@vencord/types/webpack/common";
 
 import { getActiveWindow } from "../engine/window";
 import { absUrl, copyText, downloadUrl } from "../external/openExternal";

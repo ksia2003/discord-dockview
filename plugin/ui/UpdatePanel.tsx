@@ -6,7 +6,7 @@
  * this panel does not duplicate app-installer behavior.
  */
 
-import { Button, Forms, React, Switch, Text } from "@webpack/common";
+import { Button, Forms, React, Switch, Text } from "@vencord/types/webpack/common";
 
 import { downloadUrl } from "../external/openExternal";
 import { settings } from "../settings";

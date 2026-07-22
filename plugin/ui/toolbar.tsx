@@ -16,7 +16,7 @@
  * inside a function. Do not "promote" any of these to a module-top element.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { STRINGS } from "../strings";
 import type { ContentType } from "../engine/types";

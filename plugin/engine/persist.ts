@@ -19,7 +19,7 @@
  * persist — only the width (LS_WIDTH).
  */
 
-import * as DataStore from "@api/DataStore";
+import * as DataStore from "@vencord/types/api/DataStore";
 
 export const LS_WIDTH = "dockview.dock.width";
 

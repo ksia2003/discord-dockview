@@ -12,7 +12,7 @@
  * so the dock reads consistently across states.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { retryActiveLoad } from "../engine/load";
 import { getActiveWindow } from "../engine/window";

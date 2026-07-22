@@ -28,8 +28,8 @@
  * lookups returning objects (no elements), safe at module eval per panel.tsx.
  */
 
-import { findCssClasses } from "@webpack";
-import { React } from "@webpack/common";
+import { findCssClasses } from "@vencord/types/webpack";
+import { React } from "@vencord/types/webpack/common";
 
 import { dvFetch } from "../engine/fetch";
 import { getLiveController, requestRender, isRenderer, setRenderer } from "../engine/forceRender";

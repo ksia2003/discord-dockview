@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -20,20 +20,42 @@ import {
 import { pnpmInvocation, quoteWindowsCmdToken } from "../scripts/lib/commandInvocation.mjs";
 import { dependencySpecs, VENCORD_DEPENDENCIES } from "../scripts/lib/vencordDependencies.mjs";
 import { computeVencordBuildIdentity, VENCORD_BUILD_INPUT_FILES } from "../scripts/lib/vencordBuildIdentity.mjs";
-import { inspectVencordBundle } from "../scripts/lib/vencordBundle.mjs";
 import { readDockViewReleaseMetadata } from "../scripts/lib/readDockViewReleaseMetadata.mjs";
 import {
-    inspectVencordCheckout,
-    VENCORD_CORE_OUTPUT_FILES,
-    VENCORD_PROVENANCE_RECORD
-} from "../scripts/lib/vencordProvenance.mjs";
+    CHUNK_RUNTIME_OUTPUT_PATHS,
+    inspectRuntimeCheckout,
+    RUNTIME_OUTPUT_PATHS,
+    RUNTIME_PROVENANCE_RECORD,
+    TRACKED_RUNTIME_OUTPUT_PATHS
+} from "../scripts/lib/runtimeProvenance.mjs";
+import { inspectRuntimeBundles } from "../scripts/lib/runtimeBundles.mjs";
 import { VENCORD_COMMIT, VENCORD_REF } from "../scripts/lib/vencordRef.mjs";
-import { VENCORD_OUTPUT_FILES } from "../scripts/lib/vencordOutputs.mjs";
+import { DOCKVIEW_OUTPUT_FILES, VENCORD_OUTPUT_FILES } from "../scripts/lib/vencordOutputs.mjs";
+import { createCandidate, verifyCandidate, verifyGeneratedOutput } from "../scripts/runtime-candidate.mjs";
 import { replaceVencordRef } from "../scripts/set-vencord-ref.mjs";
 import { AUTOMATION_MARKER } from "../scripts/sync-upstream-issues.mjs";
-import { createCandidate, verifyCandidate, verifyGeneratedOutput } from "../scripts/vencord-candidate.mjs";
 
 const CURRENT_PLUGIN_VERSION = readDockViewReleaseMetadata(process.cwd()).pluginVersion;
+
+function writeRuntimeFixture(staticDirectory, { pluginVersion = "0.1.37", vencordRef = VENCORD_REF, buildIdentity } = {}) {
+    const vencordDir = join(staticDirectory, "vencordDist");
+    const dockviewDir = join(staticDirectory, "dockviewDist");
+    mkdirSync(vencordDir, { recursive: true });
+    mkdirSync(dockviewDir, { recursive: true });
+    for (const file of VENCORD_OUTPUT_FILES) {
+        writeFileSync(join(vencordDir, file), file === "vencordDesktopRenderer.js" ? "official Vencord fixture\n" : `fixture:${file}\n`);
+    }
+    for (const file of DOCKVIEW_OUTPUT_FILES) {
+        writeFileSync(
+            join(dockviewDir, file),
+            file === "version.txt"
+                ? `dockview:${pluginVersion} ${vencordRef} ${buildIdentity}\n`
+                : file === "dockviewRenderer.js"
+                  ? "DockView independent fixture\n"
+                  : `fixture:${file}\n`
+        );
+    }
+}
 
 test("stable upstream release selection is numeric and excludes drafts and prereleases", () => {
     const latest = selectLatestStableRelease([
@@ -101,17 +123,12 @@ test("candidate provenance binds exact source, Vencord pin, file set, and digest
     const directory = mkdtempSync(join(tmpdir(), "dockview-candidate-test-"));
     const buildIdentity = `${"c".repeat(40)}-${"d".repeat(64)}`;
     try {
-        for (const file of VENCORD_OUTPUT_FILES) {
-            writeFileSync(
-                join(directory, file),
-                file === "version.txt" ? `dockview:0.1.37 v1.14.17 ${buildIdentity}\n` : `fixture:${file}\n`
-            );
-        }
+        writeRuntimeFixture(directory, { vencordRef: "v1.14.17", buildIdentity });
         createCandidate(directory, "a".repeat(40), "v1.14.17", "b".repeat(40));
         const verified = verifyCandidate(directory, "a".repeat(40), "v1.14.17", "b".repeat(40));
         assert.equal(verified.sourceCommit, "a".repeat(40));
         assert.equal(verified.buildIdentity, buildIdentity);
-        writeFileSync(join(directory, VENCORD_OUTPUT_FILES[0]), "tampered\n");
+        writeFileSync(join(directory, "vencordDist", VENCORD_OUTPUT_FILES[0]), "tampered\n");
         assert.throws(() => verifyCandidate(directory, "a".repeat(40), "v1.14.17", "b".repeat(40)), /digest mismatch/);
     } finally {
         rmSync(directory, { recursive: true, force: true });
@@ -121,94 +138,48 @@ test("candidate provenance binds exact source, Vencord pin, file set, and digest
 test("verify-generated accepts a complete tree without a persisted record", () => {
     const directory = mkdtempSync(join(tmpdir(), "dockview-generated-tree-test-"));
     const buildIdentity = computeVencordBuildIdentity(process.cwd());
+    const staticDirectory = join(directory, "static");
+    const verify = () =>
+        verifyGeneratedOutput(directory, {
+            pluginVersion: CURRENT_PLUGIN_VERSION,
+            vencordRef: VENCORD_REF,
+            vencordCommit: VENCORD_COMMIT,
+            buildIdentity
+        });
     try {
-        for (const file of VENCORD_OUTPUT_FILES) {
-            writeFileSync(
-                join(directory, file),
-                file === "version.txt"
-                    ? `dockview:${CURRENT_PLUGIN_VERSION} ${VENCORD_REF} ${buildIdentity}\n`
-                    : file === "vencordDesktopRenderer.js"
-                      ? "DockView generated verifier fixture\n"
-                      : `fixture:${file}\n`
-            );
-        }
-        assert.equal(verifyGeneratedOutput(directory).length, VENCORD_OUTPUT_FILES.length);
-        assert.ok(VENCORD_OUTPUT_FILES.some(file => file.startsWith("chunk-")));
+        writeRuntimeFixture(staticDirectory, { pluginVersion: CURRENT_PLUGIN_VERSION, buildIdentity });
+        assert.equal(verify().length, RUNTIME_OUTPUT_PATHS.length);
 
-        const chunk = VENCORD_OUTPUT_FILES.find(file => file.startsWith("chunk-"));
-        rmSync(join(directory, chunk), { force: true });
-        assert.throws(() => verifyGeneratedOutput(directory), /file set mismatch/);
-        writeFileSync(join(directory, chunk), `fixture:${chunk}\n`);
-        writeFileSync(join(directory, "unexpected.js"), "unexpected\n");
-        assert.throws(() => verifyGeneratedOutput(directory), /file set mismatch/);
-        rmSync(join(directory, "unexpected.js"));
+        const chunk = DOCKVIEW_OUTPUT_FILES.find(file => file.startsWith("chunk-"));
+        rmSync(join(staticDirectory, "dockviewDist", chunk), { force: true });
+        assert.throws(verify, /missing output/);
+        writeFileSync(join(staticDirectory, "dockviewDist", chunk), `fixture:${chunk}\n`);
+        writeFileSync(join(staticDirectory, "dockviewDist", "unexpected.js"), "unexpected\n");
+        assert.throws(verify, /unexpected output/);
+        rmSync(join(staticDirectory, "dockviewDist", "unexpected.js"));
 
-        writeFileSync(join(directory, "version.txt"), `dockview:0.1.36 ${VENCORD_REF} ${buildIdentity}\n`);
-        assert.throws(() => verifyGeneratedOutput(directory), /version.txt plugin/);
+        writeFileSync(join(staticDirectory, "dockviewDist", "version.txt"), `dockview:0.1.36 ${VENCORD_REF} ${buildIdentity}\n`);
+        assert.throws(verify, /DockView version/);
         writeFileSync(
-            join(directory, "version.txt"),
+            join(staticDirectory, "dockviewDist", "version.txt"),
             `dockview:${CURRENT_PLUGIN_VERSION} ${VENCORD_REF} ${"a".repeat(40)}-${"b".repeat(64)}\n`
         );
-        assert.throws(() => verifyGeneratedOutput(directory), /build provenance/);
+        assert.throws(verify, /build identity/);
     } finally {
         rmSync(directory, { recursive: true, force: true });
     }
 });
 
-test("generated bundle verification requires the exact output set and stable build provenance", () => {
+test("runtime verification rejects DockView code in the official Vencord renderer", () => {
     const directory = mkdtempSync(join(tmpdir(), "dockview-bundle-test-"));
     const buildIdentity = `${"c".repeat(40)}-${"d".repeat(64)}`;
     try {
-        for (const file of VENCORD_OUTPUT_FILES) {
-            writeFileSync(
-                join(directory, file),
-                file === "version.txt"
-                    ? `dockview:0.1.37 ${VENCORD_REF} ${buildIdentity}\n`
-                    : file === "vencordDesktopRenderer.js"
-                      ? "DockView runtime fixture\n"
-                      : `fixture:${file}\n`
-            );
-        }
-        assert.equal(
-            inspectVencordBundle(directory, {
-                pluginVersion: "0.1.37",
-                vencordRef: VENCORD_REF,
-                buildIdentity
-            }).current,
-            true
-        );
-        writeFileSync(
-            join(directory, "version.txt"),
-            `dockview:0.1.37 ${VENCORD_REF} ${"c".repeat(40)}-${"e".repeat(64)}\n`
-        );
-        const stale = inspectVencordBundle(directory, {
-            pluginVersion: "0.1.37",
-            vencordRef: VENCORD_REF,
-            buildIdentity
-        });
-        assert.equal(stale.current, false);
-        assert.match(stale.reasons.join("; "), /build provenance/);
-
-        writeFileSync(join(directory, "version.txt"), `dockview:0.1.37 ${VENCORD_REF} ${buildIdentity}\n`);
-        const chunk = VENCORD_OUTPUT_FILES.find(file => file.startsWith("chunk-"));
-        rmSync(join(directory, chunk), { force: true });
-        const missing = inspectVencordBundle(directory, {
-            pluginVersion: "0.1.37",
-            vencordRef: VENCORD_REF,
-            buildIdentity
-        });
-        assert.equal(missing.current, false);
-        assert.match(missing.reasons.join("; "), /missing required output/);
-
-        writeFileSync(join(directory, chunk), `fixture:${chunk}\n`);
-        writeFileSync(join(directory, "unexpected.js"), "unexpected\n");
-        const extra = inspectVencordBundle(directory, {
-            pluginVersion: "0.1.37",
-            vencordRef: VENCORD_REF,
-            buildIdentity
-        });
-        assert.equal(extra.current, false);
-        assert.match(extra.reasons.join("; "), /unexpected bundle output/);
+        writeRuntimeFixture(join(directory, "static"), { buildIdentity });
+        assert.equal(inspectRuntimeBundles(directory, { pluginVersion: "0.1.37", vencordRef: VENCORD_REF, buildIdentity }).current, true);
+        writeFileSync(join(directory, "static", "vencordDist", "vencordDesktopRenderer.js"), "DockView was injected\n");
+        const result = inspectRuntimeBundles(directory, { pluginVersion: "0.1.37", vencordRef: VENCORD_REF, buildIdentity });
+        assert.equal(result.current, false);
+        assert.match(result.reasons.join("; "), /official Vencord renderer contains DockView/);
     } finally {
         rmSync(directory, { recursive: true, force: true });
     }
@@ -219,28 +190,21 @@ test("git archive clean checkout uses the persisted record without requiring ign
     const clean = mkdtempSync(join(tmpdir(), "dockview-provenance-clean-"));
     const buildIdentity = `${"c".repeat(40)}-${"d".repeat(64)}`;
     const sourceCommit = "e".repeat(40);
-    const staticDir = join(repo, "static", "vencordDist");
-    const recordPath = join(repo, VENCORD_PROVENANCE_RECORD);
+    const staticDir = join(repo, "static");
+    const recordPath = join(repo, RUNTIME_PROVENANCE_RECORD);
     try {
-        mkdirSync(staticDir, { recursive: true });
-        for (const file of VENCORD_CORE_OUTPUT_FILES) {
-            writeFileSync(
-                join(staticDir, file),
-                file === "version.txt"
-                    ? `dockview:0.1.37 ${VENCORD_REF} ${buildIdentity}\n`
-                    : file === "vencordDesktopRenderer.js"
-                      ? "DockView clean checkout fixture\n"
-                      : `core fixture:${file}\n`
-            );
+        writeRuntimeFixture(staticDir, { buildIdentity });
+        for (const path of CHUNK_RUNTIME_OUTPUT_PATHS) {
+            rmSync(join(staticDir, path), { force: true });
         }
         const files = Object.fromEntries(
-            VENCORD_OUTPUT_FILES.map(file => [
-                file,
-                VENCORD_CORE_OUTPUT_FILES.includes(file)
+            RUNTIME_OUTPUT_PATHS.map(path => [
+                path,
+                TRACKED_RUNTIME_OUTPUT_PATHS.includes(path)
                     ? createHash("sha256")
-                          .update(readFileSync(join(staticDir, file)))
+                          .update(readFileSync(join(staticDir, path)))
                           .digest("hex")
-                    : createHash("sha256").update(`ignored chunk fixture:${file}`).digest("hex")
+                    : createHash("sha256").update(`ignored chunk fixture:${path}`).digest("hex")
             ])
         );
         writeFileSync(
@@ -274,29 +238,24 @@ test("git archive clean checkout uses the persisted record without requiring ign
             vencordCommit: VENCORD_COMMIT,
             buildIdentity
         };
-        const current = inspectVencordCheckout(
-            join(clean, "static/vencordDist"),
-            join(clean, VENCORD_PROVENANCE_RECORD),
-            options
-        );
+        const current = inspectRuntimeCheckout(join(clean, "static"), join(clean, RUNTIME_PROVENANCE_RECORD), options);
         assert.equal(current.current, true);
         assert.deepEqual(current.presentChunks, []);
-        assert.deepEqual(readdirSync(join(clean, "static/vencordDist")).sort(), [...VENCORD_CORE_OUTPUT_FILES].sort());
 
-        const cleanRecord = join(clean, VENCORD_PROVENANCE_RECORD);
+        const cleanRecord = join(clean, RUNTIME_PROVENANCE_RECORD);
         const baseline = JSON.parse(readFileSync(cleanRecord, "utf-8"));
         const expectStale = (name, mutate, reason) => {
             const variant = structuredClone(baseline);
             mutate(variant);
             writeFileSync(cleanRecord, `${JSON.stringify(variant)}\n`);
-            const stale = inspectVencordCheckout(join(clean, "static/vencordDist"), cleanRecord, options);
+            const stale = inspectRuntimeCheckout(join(clean, "static"), cleanRecord, options);
             assert.equal(stale.current, false, name);
             assert.match(stale.reasons.join("; "), reason, name);
         };
         rmSync(cleanRecord);
-        const missingRecord = inspectVencordCheckout(join(clean, "static/vencordDist"), cleanRecord, options);
+        const missingRecord = inspectRuntimeCheckout(join(clean, "static"), cleanRecord, options);
         assert.equal(missingRecord.current, false);
-        assert.match(missingRecord.reasons.join("; "), /Could not read Vencord provenance/);
+        assert.match(missingRecord.reasons.join("; "), /Could not read runtime provenance/);
         writeFileSync(cleanRecord, `${JSON.stringify(baseline)}\n`);
         expectStale(
             "tampered record",
@@ -329,16 +288,16 @@ test("git archive clean checkout uses the persisted record without requiring ign
         expectStale(
             "mismatched tracked core hash",
             variant => {
-                variant.files["version.txt"] = "f".repeat(64);
+                variant.files["dockviewDist/version.txt"] = "f".repeat(64);
             },
             /tracked output digest mismatch/
         );
         expectStale(
             "incomplete chunk hash set",
             variant => {
-                delete variant.files["chunk-samples.js"];
+                delete variant.files["dockviewDist/chunk-samples.js"];
             },
-            /exact runtime output key set/
+            /exact output path set/
         );
     } finally {
         rmSync(repo, { recursive: true, force: true });
@@ -382,20 +341,22 @@ test("build identity ignores automation-only commits but changes with plugin inp
     }
 });
 
-test("fresh package, test, and release paths regenerate the complete chunk set", () => {
+test("package, test, release, and maintenance paths preserve split runtime ownership", () => {
     const packageJson = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf-8"));
     assert.match(packageJson.scripts.package, /prepareVencord/);
-    assert.match(packageJson.scripts.package, /verify-generated static\/vencordDist/);
+    assert.match(packageJson.scripts.package, /verify-runtime-bundles/);
     assert.doesNotMatch(packageJson.scripts.package, /provenance\.json/);
     assert.match(packageJson.scripts["package:dir"], /prepareVencord/);
-    assert.match(packageJson.scripts["package:dir"], /verify-generated static\/vencordDist/);
+    assert.match(packageJson.scripts["package:dir"], /verify-runtime-bundles/);
     assert.doesNotMatch(packageJson.scripts["package:dir"], /provenance\.json/);
     const testWorkflow = readFileSync(join(process.cwd(), ".github/workflows/test.yml"), "utf-8");
     assert.match(testWorkflow, /pnpm prepareVencord/);
-    assert.match(testWorkflow, /node scripts\/vencord-candidate\.mjs verify-generated static\/vencordDist/);
+    assert.match(testWorkflow, /node scripts\/verify-runtime-bundles\.mjs/);
     const releaseWorkflow = readFileSync(join(process.cwd(), ".github/workflows/release.yml"), "utf-8");
     assert.match(releaseWorkflow, /node scripts\/prepare-vencord\.mjs/);
-    assert.match(releaseWorkflow, /verify-generated static\/vencordDist/);
+    assert.match(releaseWorkflow, /verify-runtime-bundles\.mjs/);
+    assert.match(releaseWorkflow, /static\/dockviewDist\/dockviewMain\.js/);
+    assert.doesNotMatch(releaseWorkflow, /static\/vencordDist\/vencordDesktopMain\.js static\/vencordDist\/vencordDesktopPreload\.js/);
     assert.match(releaseWorkflow, /gh release create "\$TAG" --verify-tag --prerelease/);
     assert.match(releaseWorkflow, /needs:\s*prepare-release/);
     assert.match(releaseWorkflow, /fail-fast:\s*false/);
@@ -409,20 +370,17 @@ test("fresh package, test, and release paths regenerate the complete chunk set",
     assert.doesNotMatch(releaseWorkflow, /verify-output|provenance\.json/);
     for (const workflow of ["meta.yml", "update-vencord-dev.yml", "winget-submission.yml"])
         assert.equal(existsSync(join(process.cwd(), ".github/workflows", workflow)), false);
-    assert.ok(
-        VENCORD_OUTPUT_FILES.every(
-            file => file === "version.txt" || file.startsWith("vencordDesktop") || file.startsWith("chunk-")
-        )
-    );
+    assert.ok(VENCORD_OUTPUT_FILES.every(file => file.startsWith("vencordDesktop")));
+    assert.ok(DOCKVIEW_OUTPUT_FILES.every(file => file === "version.txt" || file.startsWith("dockview") || file.startsWith("chunk-")));
     const maintenanceWorkflow = readFileSync(
         join(process.cwd(), ".github/workflows/upstream-maintenance.yml"),
         "utf-8"
     );
     assert.match(maintenanceWorkflow, /always\(\)\s*&&\s*needs\.detect\.result == 'failure'/);
-    assert.match(maintenanceWorkflow, /node scripts\/vencord-candidate\.mjs verify-generated static\/vencordDist/);
-    assert.match(maintenanceWorkflow, /static\/vencordDist\.provenance\.json/);
+    assert.match(maintenanceWorkflow, /node scripts\/runtime-candidate\.mjs verify-generated "\$PWD"/);
+    assert.match(maintenanceWorkflow, /static\/runtimeDist\.provenance\.json/);
     const artifactVerify = maintenanceWorkflow.indexOf(
-        'node scripts/vencord-candidate.mjs verify "$RUNNER_TEMP/candidate"'
+        'node scripts/runtime-candidate.mjs verify "$RUNNER_TEMP/candidate"'
     );
     const recordCopy = maintenanceWorkflow.indexOf('cp -- "$RUNNER_TEMP/candidate/candidate-provenance.json"');
     assert.ok(artifactVerify >= 0 && artifactVerify < recordCopy);
@@ -652,8 +610,8 @@ test("live inspection compares Vencord tags and Vesktop review cursors", async (
     };
 
     const result = await inspectUpstreams({ fetchImpl, token: "test-token" });
-    assert.equal(result.vencord.updateAvailable, true);
-    assert.equal(result.vencord.bundleCurrent, false);
+    assert.equal(result.vencord.updateAvailable, false);
+    assert.equal(result.vencord.bundleCurrent, true);
     assert.equal(result.vencord.latestCommit, VENCORD_COMMIT);
     assert.equal(result.vesktop.releaseUpdateAvailable, false);
     assert.equal(result.vesktop.headUpdateAvailable, true);

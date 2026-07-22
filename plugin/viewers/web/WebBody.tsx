@@ -22,7 +22,7 @@
  * proxy is only invoked inside the component body below (the lazy-init trap).
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { getActiveWindow } from "../../engine/window";
 import type { DockWindow } from "../../engine/types";

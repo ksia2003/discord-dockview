@@ -4,7 +4,7 @@
  * This is the CANONICAL HOME of the running plugin version. DOCKVIEW_PLUGIN_VERSION
  * is the compiled/running patch version, bumped per patch release. The build
  * (scripts/prepare-vencord.mjs) reads this literal at build time and is the SOLE
- * writer of static/vencordDist/version.txt.
+ * writer of static/dockviewDist/version.txt.
  *
  * version.txt has three tolerated shapes (see parseVersionTxt):
  *   (a) new     "dockview:0.1.1 v1.14.13 abc1234"

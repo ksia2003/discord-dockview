@@ -24,7 +24,7 @@
  * reads React + the active window at call time.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { getActiveWindow } from "../../engine/window";
 import { STRINGS } from "../../strings";

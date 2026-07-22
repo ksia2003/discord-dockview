@@ -14,7 +14,7 @@
  * viewer's body wires that keyboard shortcut to the same toggle).
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { STRINGS } from "../strings";
 import type { FindBarModel } from "../engine/types";

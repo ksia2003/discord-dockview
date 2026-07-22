@@ -1,5 +1,5 @@
 /*
- * Stable identity for the DockView inputs that produce static/vencordDist.
+ * Stable identity for the inputs that produce static/dockviewDist.
  *
  * Do not use HEAD here: documentation/workflow commits do not alter the
  * generated bundle. The plugin Git tree and the helper sources are hashed
@@ -24,6 +24,7 @@ export const VENCORD_BUILD_INPUT_FILES = Object.freeze([
     "package.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
+    "scripts/build-dockview.mjs",
     "scripts/build-chunks.mjs",
     "scripts/build-sample-chunk.mjs",
     "scripts/chunkList.mjs",
@@ -32,10 +33,8 @@ export const VENCORD_BUILD_INPUT_FILES = Object.freeze([
     "scripts/lib/vencordDependencies.mjs",
     "scripts/lib/vencordOutputs.mjs",
     "scripts/lib/readDockViewReleaseMetadata.mjs",
-    "scripts/patch-vencord-build.mjs",
     "scripts/utils/node-empty-stub.mjs",
     "scripts/utils/util-browser-stub.mjs",
-    "scripts/vencord-patch/dockview-chunk-external.mjs",
     "scripts/prepare-vencord.mjs"
 ]);
 

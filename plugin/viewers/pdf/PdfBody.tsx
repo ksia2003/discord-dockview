@@ -41,7 +41,7 @@
  * lazily (loadPdfjs) inside the effect, React is read at call time.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { dockHasFocus, isTextEntryFocused } from "../../engine/dockKeyboard";
 import { clearLiveController, getLiveController, requestRender, setLiveController } from "../../engine/forceRender";

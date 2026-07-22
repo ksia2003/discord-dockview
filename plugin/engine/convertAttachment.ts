@@ -7,7 +7,7 @@
  * no CSP in main), runs the Node-only library, and returns renderable bytes as base64 +
  * a mime type. This module is the renderer's thin caller: it invokes the IPC exactly
  * the way engine/lazyLib's loadChunk invokes readChunk
- * (VencordNative.pluginHelpers.DockView.convertAttachment), then turns the base64 reply
+ * (VesktopNative.dockview.convertAttachment), then turns the base64 reply
  * into a same-origin `blob:` URL the viewer can drop into an <img> or an iframe.
  *
  * The msg viewer routes the returned text/html into the dark sandboxed iframe shell;
@@ -58,7 +58,7 @@ function base64ToBytes(b64: string): Uint8Array {
  * revokes it, like the dxf/raster retype path).
  */
 export async function convertAttachment(kind: "msg" | "raw", url: string, allowRemote = false): Promise<ConvertedAttachment> {
-    const native = (window as any).VencordNative?.pluginHelpers?.DockView;
+    const native = (window as any).VesktopNative?.dockview;
     if (!native || typeof native.convertAttachment !== "function") {
         throw new Error(
             "DockView: convertAttachment IPC unavailable — relaunch Vesktop to pick up the new main process."
@@ -88,7 +88,7 @@ export async function convertAttachment(kind: "msg" | "raw", url: string, allowR
  * remote images load or block to match the .eml path.
  */
 export async function convertAttachmentText(kind: "msg" | "raw", url: string, allowRemote = false): Promise<ConvertedText> {
-    const native = (window as any).VencordNative?.pluginHelpers?.DockView;
+    const native = (window as any).VesktopNative?.dockview;
     if (!native || typeof native.convertAttachment !== "function") {
         throw new Error(
             "DockView: convertAttachment IPC unavailable — relaunch Vesktop to pick up the new main process."

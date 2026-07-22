@@ -8,7 +8,7 @@
  * engine. (The rest of host/ — mount, layout geometry, exclusivity — is Phase 2.)
  */
 
-import { findByProps } from "@webpack";
+import { findByProps } from "@vencord/types/webpack";
 
 /** Resolve the currently-selected channel id (store first, URL fallback). */
 export function getCurrentChannelId(): string | null {

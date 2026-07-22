@@ -3,13 +3,9 @@
  * Copyright (c) 2026 DockView contributors
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Reproducibly builds Vencord with the DockView userplugin bundled in, then
- * copies the complete fixed desktop/chunk output set into static/vencordDist/
- * so it ships inside the DockView app package (see src/main/utils/vencordLoader.ts).
- * version.txt records a stable identity of the plugin tree and build helpers.
- *
- * The DockView userplugin source lives in this repo under plugin/ and is copied
- * straight into Vencord's src/userplugins/ — no separate clone.
+ * Reproducibly builds the pinned, unmodified Vencord desktop runtime and the
+ * independent DockView runtime. The two output trees are deliberately disjoint:
+ * static/vencordDist and static/dockviewDist.
  *
  * Usage:
  *   node scripts/prepare-vencord.mjs
@@ -37,14 +33,13 @@ import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
-import { chunkExternalPackages } from "./chunkList.mjs";
 import { pnpmInvocation } from "./lib/commandInvocation.mjs";
 import { computeVencordBuildIdentity } from "./lib/vencordBuildIdentity.mjs";
 import { readDockViewReleaseMetadata } from "./lib/readDockViewReleaseMetadata.mjs";
-import { inspectVencordBundle } from "./lib/vencordBundle.mjs";
 import { dependencySpecs } from "./lib/vencordDependencies.mjs";
 import { VENCORD_COMMIT as PINNED_VENCORD_COMMIT, VENCORD_REF as PINNED_VENCORD_REF } from "./lib/vencordRef.mjs";
 import { VENCORD_OUTPUT_FILES } from "./lib/vencordOutputs.mjs";
+import { assertRuntimeBundles } from "./lib/runtimeBundles.mjs";
 
 // Node builtins (with and without the "node:" prefix). The plugin runs in the
 // renderer and shouldn't import these, but guard against future drift.
@@ -60,7 +55,7 @@ const VENCORD_EXPECTED_COMMIT = process.env.VENCORD_REF ? process.env.VENCORD_EX
 
 const PNPM = "pnpm";
 
-// DockView userplugin source, shipped in this repo.
+// DockView source, shipped in this repo and built independently.
 const PLUGIN_SRC = join(ROOT, "plugin");
 
 // Import prefixes that Vencord already provides — never `pnpm add` these.
@@ -146,20 +141,8 @@ function deriveDockviewDeps() {
 const DOCKVIEW_DEPS = deriveDockviewDeps();
 const DOCKVIEW_DEP_SPECS = dependencySpecs(DOCKVIEW_DEPS);
 
-// The core desktop bundle files plus the out-of-bundle CHUNK files (chunk-<lib>.js)
-// the chunk build emits. The chunked code-dense libs (mermaid, pptx, three, pdfjs,
-// codemirror) are externalized from the renderer and shipped as these separate
-// files so they no longer cost V8 compile at every Vesktop startup. chunk-samples.js
-// (the gallery's example fixtures, base64) ships the same way — out of the renderer,
-// loaded on demand over readChunk when the Examples gallery is first opened.
-const FILES = VENCORD_OUTPUT_FILES.filter(file => file !== "version.txt");
-
-// Packages the renderer build must treat as external (their bytes go into a chunk
-// file instead of inline) — passed to Vencord's esbuild via DOCKVIEW_CHUNK_EXTERNALS,
-// read by the dockview-chunk-external plugin the build patch injects.
-const CHUNK_EXTERNALS = chunkExternalPackages();
-
-const OUT_DIR = join(ROOT, "static", "vencordDist");
+const VENCORD_OUT_DIR = join(ROOT, "static", "vencordDist");
+const DOCKVIEW_OUT_DIR = join(ROOT, "static", "dockviewDist");
 
 // Print the derived deps so a build log is auditable — if the plugin grows a
 // new import, it shows up here without anyone touching this script.
@@ -181,15 +164,12 @@ function run(cmd, args, cwd, extraEnv) {
 }
 
 function verifyOutput() {
-    const bundle = inspectVencordBundle(OUT_DIR, {
+    assertRuntimeBundles(ROOT, {
         pluginVersion: RELEASE_METADATA.pluginVersion,
         vencordRef: VENCORD_REF,
         buildIdentity: BUILD_IDENTITY
     });
-    if (!bundle.current) throw new Error(`Bundle verification failed: ${bundle.reasons.join("; ")}`);
-    const renderer = readFileSync(join(OUT_DIR, "vencordDesktopRenderer.js"), "utf-8");
-    const count = (renderer.match(/DockView/g) || []).length;
-    console.log(`✔ static/vencordDist ready. DockView references in renderer: ${count}; build identity ${BUILD_IDENTITY}`);
+    console.log(`✔ official Vencord and independent DockView outputs verified; build identity ${BUILD_IDENTITY}`);
 }
 
 const BUILD_IDENTITY = (() => {
@@ -231,53 +211,41 @@ try {
         console.log(`✔ Vencord ref ${VENCORD_REF} resolved to pinned commit ${actualCommit}`);
     }
 
-    // 2. Inject the DockView userplugin from this repo's plugin/ folder.
-    if (!existsSync(PLUGIN_SRC)) throw new Error(`Plugin source not found: ${PLUGIN_SRC}`);
-    const pluginDest = join(vencordDir, "src", "userplugins", "dockView");
-    mkdirSync(dirname(pluginDest), { recursive: true });
-    cpSync(PLUGIN_SRC, pluginDest, { recursive: true });
+    // 2. Install and build the pinned official source without copying or patching
+    //    DockView into the checkout.
+    run(PNPM, ["install", "--frozen-lockfile"], vencordDir);
+    run(PNPM, ["build"], vencordDir);
 
-    // 3. Add DockView runtime deps to Vencord. `-w`: Vencord is a pnpm workspace
-    //    and `pnpm add` to a workspace root refuses (ERR_PNPM_ADDING_TO_ROOT)
-    //    without it.
+    rmSync(VENCORD_OUT_DIR, { recursive: true, force: true });
+    mkdirSync(VENCORD_OUT_DIR, { recursive: true });
+    for (const file of VENCORD_OUTPUT_FILES) {
+        cpSync(join(vencordDir, "dist", file), join(VENCORD_OUT_DIR, file));
+    }
+
+    // 3. Install DockView's exact extra dependencies into the disposable checkout.
+    //    This happens only after the official Vencord bytes have been built/copied.
+    if (!existsSync(PLUGIN_SRC)) throw new Error(`Plugin source not found: ${PLUGIN_SRC}`);
     run(PNPM, ["add", "-w", "--save-exact", ...DOCKVIEW_DEP_SPECS], vencordDir);
 
-    // 3b. Patch Vencord's renderer build to EXTERNALIZE the chunked libs (their
-    //     bytes go into chunk-<lib>.js instead of inline) — mirrors the dev path.
-    run("node", [join(__dirname, "patch-vencord-build.mjs"), vencordDir], ROOT);
+    // 4. Build the independent DockView renderer/main and lazy chunks.
+    rmSync(DOCKVIEW_OUT_DIR, { recursive: true, force: true });
+    mkdirSync(DOCKVIEW_OUT_DIR, { recursive: true });
+    run("node", [join(__dirname, "build-dockview.mjs"), vencordDir, DOCKVIEW_OUT_DIR], ROOT);
 
-    // 4. Install + build Vencord. The chunk externals are passed via env so the
-    //    injected plugin marks them external in the renderer (IIFE) bundle.
-    run(PNPM, ["install", "--frozen-lockfile"], vencordDir);
-    run(PNPM, ["build"], vencordDir, { DOCKVIEW_CHUNK_EXTERNALS: CHUNK_EXTERNALS.join(",") });
-
-    // 4b. Emit the standalone chunk-<lib>.js files (a separate esbuild pass that
-    //     bundles each externalized lib). Writes into <vencordDir>/dist alongside
-    //     the renderer; the registry is read from the injected plugin copy.
-    run("node", [join(__dirname, "build-chunks.mjs"), vencordDir], ROOT, {
-        DOCKVIEW_CHUNK_REGISTRY: join(vencordDir, "src", "userplugins", "dockView", "engine", "chunkRegistry.ts"),
-        DOCKVIEW_PLUGIN_DIR: join(vencordDir, "src", "userplugins", "dockView")
+    run("node", [join(__dirname, "build-chunks.mjs"), vencordDir, DOCKVIEW_OUT_DIR], ROOT, {
+        DOCKVIEW_CHUNK_REGISTRY: join(PLUGIN_SRC, "engine", "chunkRegistry.ts"),
+        DOCKVIEW_PLUGIN_DIR: PLUGIN_SRC
     });
 
-    // 4c. Emit the gallery SAMPLES data chunk (chunk-samples.js) — the example
-    //     fixtures base64-embedded, written next to the renderer like a lib chunk
-    //     and loaded on demand over readChunk when the Examples gallery is opened.
-    run("node", [join(__dirname, "build-sample-chunk.mjs"), join(vencordDir, "dist")], ROOT, {
-        DOCKVIEW_SAMPLES_DIR: join(vencordDir, "src", "userplugins", "dockView", "gallery", "samples")
+    run("node", [join(__dirname, "build-sample-chunk.mjs"), DOCKVIEW_OUT_DIR], ROOT, {
+        DOCKVIEW_SAMPLES_DIR: join(PLUGIN_SRC, "gallery", "samples")
     });
 
-    // 5. Copy the desktop dist files + the chunk files into static/vencordDist.
-    // Do not leave a chunk from an older registry in the staging directory. The
-    // exact output allowlist is part of the bundle's provenance contract.
-    rmSync(OUT_DIR, { recursive: true, force: true });
-    mkdirSync(OUT_DIR, { recursive: true });
-    for (const f of FILES) {
-        cpSync(join(vencordDir, "dist", f), join(OUT_DIR, f));
-    }
+    // 5. Stamp only the DockView-owned tree.
     const ver = RELEASE_METADATA.pluginVersion;
-    writeFileSync(join(OUT_DIR, "version.txt"), `dockview:${ver} ${VENCORD_REF} ${BUILD_IDENTITY}\n`);
+    writeFileSync(join(DOCKVIEW_OUT_DIR, "version.txt"), `dockview:${ver} ${VENCORD_REF} ${BUILD_IDENTITY}\n`);
 
-    // 6. Verify DockView made it in.
+    // 6. Prove Vencord stayed clean and DockView is complete.
     verifyOutput();
 } finally {
     rmSync(work, { recursive: true, force: true });

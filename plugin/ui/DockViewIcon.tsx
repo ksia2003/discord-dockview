@@ -13,7 +13,7 @@
  * like Discord's own settings icons.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 interface IconProps {
     width?: number | string;

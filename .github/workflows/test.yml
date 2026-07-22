@@ -23,14 +23,12 @@ jobs:
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
 
-            # Build the real pinned Vencord with the current DockView source before
-            # testing the Vesktop shell. The committed bundle alone can stay green even
-            # when a plugin change no longer compiles against the pinned Vencord.
-            - name: Prepare bundled Vencord with DockView
+            # Build the pinned official Vencord and the independent DockView runtime.
+            - name: Prepare independent runtime bundles
               run: pnpm prepareVencord
 
-            - name: Verify complete generated Vencord output (including chunks)
-              run: node scripts/vencord-candidate.mjs verify-generated static/vencordDist
+            - name: Verify disjoint runtime ownership
+              run: node scripts/verify-runtime-bundles.mjs
 
             - name: Run tests
               run: pnpm test

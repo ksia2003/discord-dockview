@@ -8,7 +8,7 @@
  * cutting edit/ layer (toggleEditMode flips the CM read↔edit compartment in place).
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { requestRender } from "../../engine/forceRender";
 import { fallbackCopy } from "../../engine/fetch";

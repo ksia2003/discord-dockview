@@ -20,7 +20,7 @@
  * latent XSS drift).
  */
 
-import { findByProps } from "@webpack";
+import { findByProps } from "@vencord/types/webpack";
 
 // highlight.js (bundled) — the FALLBACK code highlighter. We prefer Discord's
 // OWN bundled hljs (resolved at runtime via Webpack) and only fall back here.

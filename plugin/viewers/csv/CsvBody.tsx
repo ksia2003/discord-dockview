@@ -17,7 +17,7 @@
  * built inside the effect.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { escapeAttr, escapeHtml } from "../../engine/html";
 import { consumePendingScroll } from "../../engine/viewState";

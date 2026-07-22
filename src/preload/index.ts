@@ -24,3 +24,4 @@ Function(
 
 webFrame.executeJavaScript(ipcRenderer.sendSync(IpcEvents.GET_VENCORD_RENDERER_SCRIPT));
 webFrame.executeJavaScript(ipcRenderer.sendSync(IpcEvents.GET_VESKTOP_RENDERER_SCRIPT));
+webFrame.executeJavaScript(ipcRenderer.sendSync(IpcEvents.GET_DOCKVIEW_RENDERER_SCRIPT));

@@ -19,7 +19,7 @@
  * built inside the component; the active window is read at call time.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { dockHasFocus, isTextEntryFocused } from "../../engine/dockKeyboard";
 import { getCacheEntry } from "../../engine/cache";

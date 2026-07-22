@@ -5,7 +5,7 @@
  * controls. DockView only owns privacy choices made inside its own viewers.
  */
 
-import { Forms, React, Switch } from "@webpack/common";
+import { Forms, React, Switch } from "@vencord/types/webpack/common";
 
 import { settings } from "../settings";
 import { STRINGS } from "../strings";

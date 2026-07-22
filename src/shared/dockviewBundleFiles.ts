@@ -4,17 +4,18 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-/** Exact runtime files in a complete bundled DockView/Vencord distribution.
- * A unit test keeps this app-domain list aligned with the plugin build registry. */
-export const DOCKVIEW_VENCORD_CORE_FILES = [
+/** Exact files owned by the unmodified official Vencord runtime. */
+export const VENCORD_CORE_FILES = [
     "vencordDesktopMain.js",
     "vencordDesktopPreload.js",
     "vencordDesktopRenderer.js",
     "vencordDesktopRenderer.css"
 ] as const;
 
-export const DOCKVIEW_VENCORD_BUNDLE_FILES = [
-    ...DOCKVIEW_VENCORD_CORE_FILES,
+/** Exact files owned and updated by DockView. */
+export const DOCKVIEW_RUNTIME_FILES = [
+    "dockviewMain.js",
+    "dockviewRenderer.js",
     "chunk-mermaid.js",
     "chunk-agpsd.js",
     "chunk-jxl.js",

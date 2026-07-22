@@ -11,7 +11,7 @@
  * tree is built inside the component; the active window is read at call time.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { fallbackCopy } from "../../engine/fetch";
 import { getActiveWindow } from "../../engine/window";

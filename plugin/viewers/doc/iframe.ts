@@ -27,7 +27,7 @@
  * is only string-concatenated inside wrapMarkdownDoc, never evaluated.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { escapeHtml } from "../../engine/html";
 import { getActiveWindow } from "../../engine/window";

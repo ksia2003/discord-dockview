@@ -22,7 +22,7 @@
  * tree is built inside the component; the active window is read at call time.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { clearLiveController, getLiveController, requestRender, setLiveController } from "../../engine/forceRender";
 import { getActiveWindow } from "../../engine/window";

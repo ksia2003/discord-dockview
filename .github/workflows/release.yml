@@ -66,14 +66,14 @@ jobs:
                   TAG=$(node scripts/print-dockview-release-metadata.mjs --field tag)
                   test "${{ github.ref_name }}" = "$TAG"
 
-            - name: Prepare bundled Vencord with DockView
+            - name: Prepare official Vencord and independent DockView
               run: node scripts/prepare-vencord.mjs
 
-            - name: Verify complete generated Vencord output
-              run: node scripts/vencord-candidate.mjs verify-generated static/vencordDist
+            - name: Verify disjoint runtime ownership
+              run: node scripts/verify-runtime-bundles.mjs
 
             - name: Verify DockView release metadata
-              run: node scripts/verify-dockview-release-metadata.mjs --version-file static/vencordDist/version.txt
+              run: node scripts/verify-dockview-release-metadata.mjs --version-file static/dockviewDist/version.txt
 
             - name: Build
               run: pnpm build
@@ -127,9 +127,8 @@ jobs:
               run: |
                   TAG=$(node scripts/print-dockview-release-metadata.mjs --field tag)
                   shopt -s nullglob
-                  files=(static/vencordDist/vencordDesktopMain.js static/vencordDist/vencordDesktopPreload.js \
-                         static/vencordDist/vencordDesktopRenderer.js static/vencordDist/vencordDesktopRenderer.css \
-                         static/vencordDist/version.txt static/vencordDist/chunk-*.js)
+                  files=(static/dockviewDist/dockviewMain.js static/dockviewDist/dockviewRenderer.js \
+                         static/dockviewDist/version.txt static/dockviewDist/chunk-*.js)
                   gh release upload "$TAG" "${files[@]}" --clobber
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -149,9 +148,9 @@ jobs:
               shell: bash
               run: |
                   TAG=$(node scripts/print-dockview-release-metadata.mjs --field tag)
-                  mkdir -p static/vencordDist installers
-                  gh release download "$TAG" --dir static/vencordDist --clobber \
-                      --pattern "vencordDesktop*.js" --pattern "vencordDesktopRenderer.css" \
+                  mkdir -p static/dockviewDist installers
+                  gh release download "$TAG" --dir static/dockviewDist --clobber \
+                      --pattern "dockview*.js" \
                       --pattern "version.txt" --pattern "chunk-*.js"
                   gh release download "$TAG" --dir installers --clobber \
                       --pattern "*.exe" --pattern "*.AppImage" --pattern "*.deb" --pattern "*.rpm" \
@@ -160,11 +159,11 @@ jobs:
                   export DOCKVIEW_INSTALLERS_DIR="$PWD/installers"
                   node scripts/make-plugin-manifest.mjs
                   node scripts/verify-dockview-release-metadata.mjs \
-                      --version-file static/vencordDist/version.txt \
-                      --manifest static/vencordDist/manifest.json \
+                      --version-file static/dockviewDist/version.txt \
+                      --manifest static/dockviewDist/manifest.json \
                       --installers-dir installers \
                       --release-base "$DOCKVIEW_RELEASE_BASE" \
                       --latest-yml installers
-                  gh release upload "$TAG" static/vencordDist/manifest.json --clobber
+                  gh release upload "$TAG" static/dockviewDist/manifest.json --clobber
               env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -16,7 +16,7 @@
  * No module-top React access — the proxy is only invoked inside the component.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { getActiveWindow } from "../../engine/window";
 import { STRINGS } from "../../strings";

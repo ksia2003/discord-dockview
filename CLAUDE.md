@@ -9,8 +9,8 @@ Discord and Vesktop behavior should stay upstream unless a product decision says
 otherwise.
 
 The Vesktop base is pinned in `src/shared/dockviewRelease.ts`. Vencord is pinned in
-`scripts/lib/vencordRef.mjs`; DockView is compiled into that pinned Vencord build by
-`scripts/prepare-vencord.mjs`.
+`scripts/lib/vencordRef.mjs`; `scripts/prepare-vencord.mjs` builds the official
+Vencord source unchanged, then builds DockView as a separate runtime.
 
 ## Important boundaries
 
@@ -35,16 +35,18 @@ an explicit reason.
 
 ## Layout
 
-- `plugin/` — DockView Vencord user plugin, viewers, host, settings, and native
-  conversion/update helpers.
+- `plugin/` — DockView renderer, viewers, host, settings, and native
+  conversion/update helpers. It consumes Vencord's exported globals but is not
+  copied into Vencord's plugin tree.
 - `src/main/dockviewWebview.ts` — the isolated Electron webview boundary.
-- `src/main/utils/vencordLoader.ts` — installs/repairs the bundled DockView Vencord
-  distribution.
+- `src/main/utils/vencordLoader.ts` — installs/repairs only official Vencord files.
+- `src/main/utils/dockviewLoader.ts` — installs/updates only DockView-owned files.
 - `src/main/shellUpdate.ts` — narrow app-installer migration path.
-- `scripts/` — pinned Vencord composition, chunk builds, provenance, release
+- `scripts/` — independent Vencord/DockView builds, chunk builds, provenance, release
   metadata, and upstream monitoring.
-- `static/vencordDist/` — generated Vencord core files. Heavy `chunk-*.js` files
-  are ignored and must be regenerated for tests/packages/releases.
+- `static/vencordDist/` — generated official Vencord core files.
+- `static/dockviewDist/` — generated DockView renderer/main. Heavy `chunk-*.js`
+  files are ignored and regenerated for tests/packages/releases.
 - `docs/` — release and upstream-maintenance procedures.
 
 ## Common commands
@@ -52,14 +54,15 @@ an explicit reason.
 ```bash
 pnpm install --frozen-lockfile
 pnpm prepareVencord
-node scripts/vencord-candidate.mjs verify-generated static/vencordDist
+node scripts/verify-runtime-bundles.mjs
 pnpm test
 pnpm build
 pnpm package:dir
 ```
 
 `pnpm prepareVencord` clones the exact Vencord tag, verifies its full commit,
-injects DockView, builds all heavy chunks, and writes the generated distribution.
+builds it without modification, then builds DockView and all heavy chunks into a
+different output tree.
 Run it after any `plugin/`, Vencord dependency, or build-script change. The build
 contains a Vencord timestamp, so the renderer bundle may differ byte-for-byte across
 runs while its source identity and functional inputs remain the same.

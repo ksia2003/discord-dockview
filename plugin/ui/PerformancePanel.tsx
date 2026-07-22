@@ -5,7 +5,7 @@
  * DOM, voice, and screen-share behavior stays with upstream Vesktop/Discord.
  */
 
-import { Forms, React, Select, Switch } from "@webpack/common";
+import { Forms, React, Select, Switch } from "@vencord/types/webpack/common";
 
 import { DECODER_CONTROLS, type DecoderMode } from "../engine/decoderModes";
 import { settings } from "../settings";

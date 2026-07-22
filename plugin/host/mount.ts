@@ -26,7 +26,7 @@
  * The heartbeat/observer live ONLY in this fallback path.
  */
 
-import { createRoot, React } from "@webpack/common";
+import { createRoot, React } from "@vencord/types/webpack/common";
 import type { Root } from "react-dom/client";
 
 import { DockPanel } from "../ui/DockPanel";

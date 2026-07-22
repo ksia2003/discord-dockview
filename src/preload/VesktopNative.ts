@@ -64,6 +64,25 @@ export const VesktopNative = {
                 baseUrl
             )
     },
+    dockview: {
+        readInstalledVersion: () => invoke<string | null>(IpcEvents.DOCKVIEW_READ_INSTALLED_VERSION),
+        readChunk: (name: string) => invoke<string | null>(IpcEvents.DOCKVIEW_READ_CHUNK, name),
+        convertAttachment: (kind: "msg" | "raw", url: string, allowRemote = false) =>
+            invoke<{ ok: boolean; mime?: string; b64?: string; error?: string }>(
+                IpcEvents.DOCKVIEW_CONVERT_ATTACHMENT,
+                kind,
+                url,
+                allowRemote
+            ),
+        discoverManifest: (owner: string, repo: string, includePrerelease = false) =>
+            invoke<any>(IpcEvents.DOCKVIEW_DISCOVER_MANIFEST, owner, repo, includePrerelease),
+        applyUpdate: (manifest: unknown, baseUrl: string) =>
+            invoke<{ ok: boolean; needsRelaunch: boolean; error?: string }>(
+                IpcEvents.DOCKVIEW_APPLY_UPDATE,
+                manifest,
+                baseUrl
+            )
+    },
     fileManager: {
         isUsingCustomVencordDir: () => sendSync<boolean>(IpcEvents.IS_USING_CUSTOM_VENCORD_DIR),
         showCustomVencordDir: () => invoke<void>(IpcEvents.SHOW_CUSTOM_VENCORD_DIR),

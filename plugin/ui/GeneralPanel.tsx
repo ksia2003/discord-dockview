@@ -21,7 +21,7 @@
  * the plugin). No import cycle: this imports ../settings (store-only) + host/layout.
  */
 
-import { Forms, React, Slider, Switch } from "@webpack/common";
+import { Forms, React, Slider, Switch } from "@vencord/types/webpack/common";
 
 import {
     DEFAULT_WIDTH, getDockWidth, MAX_WIDTH_FRAC, MIN_WIDTH, setDockWidthPersisted

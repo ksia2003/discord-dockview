@@ -35,7 +35,7 @@
  * NO module-top webpack/DOM access — FluxDispatcher is grabbed inside install().
  */
 
-import { FluxDispatcher } from "@webpack/common";
+import { FluxDispatcher } from "@vencord/types/webpack/common";
 
 import { getCurrentChannelMemId } from "../engine/channelMemory";
 import { isContextActive, isSealBypassed, setContextActive } from "../engine/contextTab";

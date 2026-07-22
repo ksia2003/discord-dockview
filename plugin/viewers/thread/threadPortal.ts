@@ -25,7 +25,7 @@
  * inside the functions below.
  */
 
-import { createRoot, React } from "@webpack/common";
+import { createRoot, React } from "@vencord/types/webpack/common";
 import type { Root } from "react-dom/client";
 
 import { liveHost } from "../../host/mount";

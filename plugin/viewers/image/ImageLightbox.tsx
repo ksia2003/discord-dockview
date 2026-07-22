@@ -20,7 +20,7 @@
  * path-data strings. The element tree is built inside the component.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { requestRender } from "../../engine/forceRender";
 import { getActiveWindow } from "../../engine/window";

@@ -24,7 +24,7 @@
  * same neutral handle index.tsx exposes), so it never imports the engine directly.
  */
 
-import { Button, Forms, React, Text } from "@webpack/common";
+import { Button, Forms, React, Text } from "@vencord/types/webpack/common";
 
 import { SAMPLE_CATALOG, type SampleEntry } from "../gallery/catalog";
 import { isSampleChunkLoaded, sampleBlobUrl } from "../gallery/samples";

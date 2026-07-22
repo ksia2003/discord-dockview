@@ -1,13 +1,12 @@
 /*
  * DockView — main-process update primitives (native.ts).
  * ---------------------------------------------------------------------------
- * This module runs in the Electron MAIN process, not the renderer. Vencord
- * auto-registers each exported async function of a plugin's native.ts as an
- * ipcMain handler keyed by the definePlugin `name` ("DockView", see index.tsx):
+ * This module runs in the Electron MAIN process, not the renderer. Vesktop
+ * exposes each exported async function through a fixed DockView-only bridge:
  *
  *     export async function readChunk(_, name) { ... }
- *        ⇒ ipcMain.handle("VencordPluginNative_DockView_readChunk", ...)
- *        ⇒ renderer calls VencordNative.pluginHelpers.DockView.readChunk(name)
+ *        ⇒ ipcMain.handle(IpcEvents.DOCKVIEW_READ_CHUNK, ...)
+ *        ⇒ renderer calls VesktopNative.dockview.readChunk(name)
  *
  * Electron injects the IpcMainInvokeEvent as the FIRST argument; the renderer
  * only supplies the real arguments after it. Every export here therefore has the
@@ -67,20 +66,18 @@ const FETCH_TIMEOUT_MS = 15_000;
 /** Suffix for staged, not-yet-committed payloads written during Phase A. */
 const TMP_SUFFIX = ".dockview-tmp";
 
-/** The four renderer/main bundle files plus the version stamp. version.txt is
- * committed LAST (see applyUpdate). */
+/** DockView-owned renderer/main files plus the version stamp. version.txt is
+ * committed LAST (see applyUpdate). Official Vencord files are never allowed. */
 const VERSION_FILE = "version.txt";
 
-/** Vencord loads this bundle from the active vencordFiles directory. Keeping the
- * install root in the main-process bundle removes the old renderer-controlled
- * arbitrary target-directory argument from every file operation. */
+/** Vesktop loads this bundle from the active dockviewFiles directory. Keeping the
+ * install root in the main-process bundle removes any renderer-controlled target
+ * directory from file operations. */
 const INSTALL_DIR = __dirname;
 
 const CORE_INSTALL_FILES = new Set([
-    "vencordDesktopMain.js",
-    "vencordDesktopPreload.js",
-    "vencordDesktopRenderer.js",
-    "vencordDesktopRenderer.css",
+    "dockviewMain.js",
+    "dockviewRenderer.js",
     VERSION_FILE
 ]);
 
@@ -148,7 +145,7 @@ function sha256Hex(bytes: Uint8Array): string {
 }
 
 /**
- * Read the active Vencord install's version.txt (utf-8, trimmed) and return the raw string, or
+ * Read the active DockView install's version.txt (utf-8, trimmed) and return the raw string, or
  * null if it is missing or unreadable. Comparison is the renderer's job (it uses
  * plugin/version.ts's comparator); native does not interpret the value.
  */
@@ -209,7 +206,7 @@ interface ConvertResult { ok: boolean; mime?: string; b64?: string; error?: stri
  * browser-builtin ban), by fetching + decoding it HERE in main and handing back
  * renderable bytes.
  * ---------------------------------------------------------------------------
- * The renderer calls VencordNative.pluginHelpers.DockView.convertAttachment(kind, url)
+ * The renderer calls VesktopNative.dockview.convertAttachment(kind, url)
  * for two formats that need a Node-only library:
  *   kind "msg" → @kenjiuno/msgreader parses the binary Outlook OLE message → a clean
  *                HTML doc (header block + body + attachment list; remote images
@@ -280,7 +277,7 @@ export async function convertAttachment(_: IpcMainInvokeEvent, kind: string, url
 }
 
 /**
- * Atomically apply an update into the active Vencord install. See the ATOMIC APPLY CONTRACT in the
+ * Atomically apply an update into the active DockView install. See the ATOMIC APPLY CONTRACT in the
  * module header: download + sha256-verify EVERY file to ".dockview-tmp" first,
  * then rename them all over the live files (version.txt last). Never returns a
  * partially-applied install. Returns a structured result instead of throwing.

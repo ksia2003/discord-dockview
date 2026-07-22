@@ -14,7 +14,7 @@
  * browser via the same openExternalLink the markdown/artifact sandbox uses.
  */
 
-import { Button, Forms, React, Text } from "@webpack/common";
+import { Button, Forms, React, Text } from "@vencord/types/webpack/common";
 
 import { openExternalLink } from "../external/openExternal";
 import { STRINGS } from "../strings";

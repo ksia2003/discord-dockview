@@ -5,8 +5,8 @@ import { join, relative } from "node:path";
 import test from "node:test";
 
 import { isExternalWebUrl } from "../plugin/engine/detectType.ts";
-import { VENCORD_OUTPUT_FILES } from "../scripts/lib/vencordOutputs.mjs";
-import { DOCKVIEW_VENCORD_BUNDLE_FILES } from "../src/shared/dockviewBundleFiles.ts";
+import { DOCKVIEW_OUTPUT_FILES, VENCORD_OUTPUT_FILES } from "../scripts/lib/vencordOutputs.mjs";
+import { DOCKVIEW_RUNTIME_FILES, VENCORD_CORE_FILES } from "../src/shared/dockviewBundleFiles.ts";
 
 const ROOT = process.cwd();
 const UPSTREAM_VESKTOP_COMMIT = "f054ca2f0312e31d8d620bb5f5b1766d9e6ee4f0";
@@ -25,8 +25,13 @@ function walk(directory) {
     return result;
 }
 
-test("runtime bundle validation exactly matches the plugin build output contract", () => {
-    assert.deepEqual([...DOCKVIEW_VENCORD_BUNDLE_FILES], [...VENCORD_OUTPUT_FILES]);
+test("official Vencord and DockView runtime contracts are exact and disjoint", () => {
+    assert.deepEqual([...VENCORD_CORE_FILES], [...VENCORD_OUTPUT_FILES]);
+    assert.deepEqual([...DOCKVIEW_RUNTIME_FILES], [...DOCKVIEW_OUTPUT_FILES]);
+    assert.deepEqual(VENCORD_OUTPUT_FILES.filter(file => DOCKVIEW_OUTPUT_FILES.includes(file)), []);
+    assert.ok(DOCKVIEW_OUTPUT_FILES.includes("dockviewRenderer.js"));
+    assert.ok(DOCKVIEW_OUTPUT_FILES.includes("dockviewMain.js"));
+    assert.equal(DOCKVIEW_OUTPUT_FILES.some(file => file.startsWith("vencordDesktop")), false);
 });
 
 test("ordinary link clicks stay upstream while right-click offers Open in DockView", () => {
@@ -54,11 +59,14 @@ test("ordinary link clicks stay upstream while right-click offers Open in DockVi
 test("the Vesktop overlay is restricted to the documented DockView seams", () => {
     const allowed = new Set([
         "src/main/dockviewWebview.ts",
+        "src/main/dockviewFilesDir.ts",
         "src/main/ipc.ts",
         "src/main/mainWindow.ts",
         "src/main/shellUpdate.ts",
+        "src/main/utils/dockviewLoader.ts",
         "src/main/utils/vencordLoader.ts",
         "src/preload/VesktopNative.ts",
+        "src/preload/index.ts",
         "src/shared/dockviewBundleFiles.ts",
         "src/shared/IpcEvents.ts",
         "src/shared/dockviewRelease.ts",
@@ -142,7 +150,30 @@ test("native DockView file operations do not accept a renderer-controlled direct
     assert.doesNotMatch(native, /targetDir/);
     assert.match(native, /isAllowedInstallFile/);
     assert.match(native, /const REQUIRED_UPDATE_FILES = new Set/);
+    assert.match(native, /"dockviewMain\.js"/);
+    assert.match(native, /"dockviewRenderer\.js"/);
+    assert.doesNotMatch(native, /"vencordDesktopMain\.js"/);
+    assert.doesNotMatch(native, /"vencordDesktopRenderer\.js"/);
     assert.match(native, /approval\.manifestJson !== JSON\.stringify\(manifest\)/);
     assert.match(native, /owner !== RELEASE_OWNER \|\| repo !== RELEASE_REPO/);
     assert.doesNotMatch(native, /export async function fetchManifest/);
+});
+
+test("DockView is built and loaded independently of official Vencord", () => {
+    const prepare = source("scripts/prepare-vencord.mjs");
+    const preload = source("src/preload/index.ts");
+    const ipc = source("src/main/ipc.ts");
+    const vencordLoader = source("src/main/utils/vencordLoader.ts");
+    const dockviewLoader = source("src/main/utils/dockviewLoader.ts");
+
+    assert.doesNotMatch(prepare, /src["', ]+userplugins/);
+    assert.doesNotMatch(prepare, /patch-vencord-build/);
+    assert.match(prepare, /static", "dockviewDist/);
+    assert.ok(preload.indexOf("GET_VENCORD_RENDERER_SCRIPT") < preload.indexOf("GET_DOCKVIEW_RENDERER_SCRIPT"));
+    assert.match(ipc, /DOCKVIEW_FILES_DIR.*dockviewRenderer\.js/s);
+    assert.match(vencordLoader, /Bundled official Vencord/);
+    assert.match(vencordLoader, /any non-empty stamp identifies the combined runtime/);
+    assert.doesNotMatch(vencordLoader, /dockviewDist/);
+    assert.match(dockviewLoader, /dockviewDist/);
+    assert.doesNotMatch(dockviewLoader, /VENCORD_FILES_DIR/);
 });

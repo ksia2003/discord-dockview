@@ -24,7 +24,7 @@
  * React proxy is only invoked inside the component bodies below.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { dockHasFocus } from "../../engine/dockKeyboard";
 import { clearLiveController, getLiveController, requestRender, setLiveController } from "../../engine/forceRender";

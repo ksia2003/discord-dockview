@@ -77,7 +77,7 @@ function chunkGlobalName(spec: ChunkSpec): string {
  */
 async function loadChunk(spec: ChunkSpec): Promise<any> {
     const w = window as any;
-    const native = w.VencordNative?.pluginHelpers?.DockView;
+    const native = w.VesktopNative?.dockview;
     if (!native || typeof native.readChunk !== "function") {
         throw new Error("DockView: readChunk IPC unavailable (build/preload out of date) for " + spec.chunkId);
     }

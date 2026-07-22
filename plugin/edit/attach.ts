@@ -17,8 +17,8 @@
  * the channel stores are resolved at call time, never at module eval.
  */
 
-import { getCurrentChannel } from "@utils/discord";
-import { Button, ChannelStore, DraftType, React, SelectedChannelStore, UploadHandler } from "@webpack/common";
+import { getCurrentChannel } from "@vencord/types/utils";
+import { Button, ChannelStore, DraftType, React, SelectedChannelStore, UploadHandler } from "@vencord/types/webpack/common";
 
 import { dvFetch, fallbackCopy } from "../engine/fetch";
 import { requestRender } from "../engine/forceRender";

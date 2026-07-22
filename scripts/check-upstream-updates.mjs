@@ -11,7 +11,7 @@ import { fileURLToPath } from "url";
 
 import { readDockViewReleaseMetadata } from "./lib/readDockViewReleaseMetadata.mjs";
 import { computeVencordBuildIdentity } from "./lib/vencordBuildIdentity.mjs";
-import { inspectVencordCheckout, VENCORD_PROVENANCE_RECORD } from "./lib/vencordProvenance.mjs";
+import { inspectRuntimeCheckout, RUNTIME_PROVENANCE_RECORD } from "./lib/runtimeProvenance.mjs";
 import { VENCORD_COMMIT, VENCORD_REF } from "./lib/vencordRef.mjs";
 import { VESKTOP_REVIEWED_COMMIT, VESKTOP_REVIEWED_VERSION } from "./lib/vesktopReview.mjs";
 
@@ -127,9 +127,9 @@ export async function inspectUpstreams({ fetchImpl = fetch, token = process.env.
     const vesktopLatest = selectLatestStableRelease(vesktopReleases).parsed;
     const currentVencord = parseStableTag(VENCORD_REF);
     if (!currentVencord) throw new Error(`Pinned Vencord ref is not a stable release tag: ${VENCORD_REF}`);
-    const bundle = inspectVencordCheckout(
-        join(root, "static", "vencordDist"),
-        join(root, VENCORD_PROVENANCE_RECORD),
+    const bundle = inspectRuntimeCheckout(
+        join(root, "static"),
+        join(root, RUNTIME_PROVENANCE_RECORD),
         {
             pluginVersion: current.pluginVersion,
             vencordRef: VENCORD_REF,
@@ -208,7 +208,7 @@ export function formatReport(result) {
                 (bundleCurrent
                     ? "The persisted Vencord provenance record and tracked core outputs match the DockView inputs. "
                     : `The persisted Vencord provenance or tracked core outputs are not current: ${bundleReasons.join("; ")}. `) +
-                "Vencord candidates are rebuilt with DockView and tested before an automated draft PR is opened. " +
+                "Vencord and DockView candidates are rebuilt independently and tested before an automated draft PR is opened. " +
                 "Vesktop changes are never merged automatically because they can overlap Electron, voice, screen-share, and updater code."
         ].join("\n") + "\n"
     );

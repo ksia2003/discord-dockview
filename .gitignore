@@ -7,3 +7,5 @@ node_modules
 .pnpm-store/
 shots/
 static/vencordDist/chunk-*.js
+static/dockviewDist/chunk-*.js
+static/dockviewDist/manifest.json

@@ -18,7 +18,7 @@
  * proxy is only invoked inside the component body below.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { getActiveWindow } from "../../engine/window";
 import { settings } from "../../settings";

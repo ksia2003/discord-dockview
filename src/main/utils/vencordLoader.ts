@@ -1,82 +1,84 @@
 /*
  * Vesktop, a desktop app aiming to give you a snappier Discord Experience
- * Copyright (c) 2023 Vendicated and Vencord contributors
+ * Copyright (c) 2026 Vendicated and Vesktop contributors
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 import { existsSync } from "fs";
-import { copyFile, mkdir, readFile, writeFile } from "fs/promises";
+import { copyFile, mkdir, readFile, unlink, writeFile } from "fs/promises";
 import { VENCORD_FILES_DIR } from "main/vencordFilesDir";
 import { join } from "path";
-import { DOCKVIEW_VENCORD_BUNDLE_FILES, DOCKVIEW_VENCORD_CORE_FILES } from "shared/dockviewBundleFiles";
-import { compareDockviewVersions, parseVersionTxt } from "shared/dockviewVersion";
+import { VENCORD_CORE_FILES } from "shared/dockviewBundleFiles";
 import { STATIC_DIR } from "shared/paths";
 
-/** DockView is compiled into Vencord, so the matching distribution is shipped
- * with the app instead of downloading stock Vencord at runtime. */
 const BUNDLED_DIR = join(STATIC_DIR, "vencordDist");
-const VERSION_FILE = "version.txt";
+const LEGACY_VERSION_FILE = "version.txt";
+const LEGACY_DOCKVIEW_FILES = [
+    LEGACY_VERSION_FILE,
+    "chunk-mermaid.js",
+    "chunk-agpsd.js",
+    "chunk-jxl.js",
+    "chunk-pptx.js",
+    "chunk-dicomparser.js",
+    "chunk-three.js",
+    "chunk-ghostscript.js",
+    "chunk-pdfjs.js",
+    "chunk-codemirror.js",
+    "chunk-samples.js"
+] as const;
 
-export const FILES_TO_DOWNLOAD = DOCKVIEW_VENCORD_CORE_FILES;
-
-function readText(path: string): Promise<string | null> {
-    return readFile(path, "utf-8")
-        .then(value => value.trim())
-        .catch(() => null);
-}
+export const FILES_TO_DOWNLOAD = VENCORD_CORE_FILES;
 
 function filesExist(dir: string, names: readonly string[]): boolean {
     return names.every(name => existsSync(join(dir, name)));
 }
 
-/** The custom-directory picker calls this synchronously in upstream Vesktop.
- * Require the full DockView runtime set, not only the four Vencord core files. */
 export function isValidVencordInstall(dir: string): boolean {
-    if (typeof dir !== "string" || !dir) return false;
-    if (!existsSync(join(dir, "package.json")) || !existsSync(join(dir, VERSION_FILE))) return false;
-
-    return filesExist(dir, DOCKVIEW_VENCORD_BUNDLE_FILES);
+    return (
+        typeof dir === "string" && !!dir && existsSync(join(dir, "package.json")) && filesExist(dir, VENCORD_CORE_FILES)
+    );
 }
 
-async function assertBundledDistribution(): Promise<readonly string[]> {
-    if (!filesExist(BUNDLED_DIR, DOCKVIEW_VENCORD_BUNDLE_FILES) || !(await readText(join(BUNDLED_DIR, VERSION_FILE)))) {
-        throw new Error("[VencordLoader] Bundled DockView distribution is incomplete. Run pnpm prepareVencord.");
+async function assertBundledDistribution(): Promise<void> {
+    if (!filesExist(BUNDLED_DIR, VENCORD_CORE_FILES)) {
+        throw new Error(
+            "[VencordLoader] Bundled official Vencord distribution is incomplete. Run pnpm prepareVencord."
+        );
     }
-    return DOCKVIEW_VENCORD_BUNDLE_FILES;
 }
 
-async function copyBundledDistribution(names: readonly string[]): Promise<void> {
+async function copyBundledDistribution(removeLegacy = false): Promise<void> {
     await mkdir(VENCORD_FILES_DIR, { recursive: true });
-    await Promise.all(names.map(name => copyFile(join(BUNDLED_DIR, name), join(VENCORD_FILES_DIR, name))));
-
-    // Both writes are awaited. Force Update must never relaunch with an incomplete
-    // package marker or version stamp still buffered in an abandoned promise.
+    await Promise.all(VENCORD_CORE_FILES.map(name => copyFile(join(BUNDLED_DIR, name), join(VENCORD_FILES_DIR, name))));
     await writeFile(join(VENCORD_FILES_DIR, "package.json"), "{}\n");
+    if (removeLegacy) {
+        await Promise.all(LEGACY_DOCKVIEW_FILES.map(name => unlink(join(VENCORD_FILES_DIR, name)).catch(() => {})));
+    }
 }
 
-/** Repair/Force Update entry point. The operation is local and deterministic. */
+async function isLegacyCombinedInstall(): Promise<boolean> {
+    try {
+        const version = await readFile(join(VENCORD_FILES_DIR, LEGACY_VERSION_FILE), "utf-8");
+        // Every DockView release before the split wrote version.txt beside the
+        // Vencord core. Older releases used bare and "+dockview-" stamps; newer
+        // ones use "dockview:". Official Vencord writes no version.txt here, so
+        // any non-empty stamp identifies the combined runtime and must migrate.
+        return version.trim().length > 0;
+    } catch {
+        return false;
+    }
+}
+
+/** Upstream-compatible repair/Force Update entry point. */
 export async function downloadVencordFiles(): Promise<void> {
-    const names = await assertBundledDistribution();
-    await copyBundledDistribution(names);
+    await assertBundledDistribution();
+    await copyBundledDistribution(await isLegacyCombinedInstall());
 }
 
 export async function ensureVencordFiles(): Promise<void> {
-    const names = await assertBundledDistribution();
-    const bundledVersion = await readText(join(BUNDLED_DIR, VERSION_FILE));
-    const installedVersion = await readText(join(VENCORD_FILES_DIR, VERSION_FILE));
-    const complete = filesExist(VENCORD_FILES_DIR, ["package.json", ...names]);
-
-    let shouldCopy = !complete || installedVersion == null || bundledVersion == null;
-    if (!shouldCopy && bundledVersion && installedVersion) {
-        const order = compareDockviewVersions(installedVersion, bundledVersion);
-        shouldCopy = order < 0;
-
-        if (order === 0) {
-            const installedBuild = parseVersionTxt(installedVersion).gitHash;
-            const bundledBuild = parseVersionTxt(bundledVersion).gitHash;
-            shouldCopy = installedBuild !== bundledBuild;
-        }
+    await assertBundledDistribution();
+    const legacy = await isLegacyCombinedInstall();
+    if (legacy || !isValidVencordInstall(VENCORD_FILES_DIR)) {
+        await copyBundledDistribution(legacy);
     }
-
-    if (shouldCopy) await copyBundledDistribution(names);
 }

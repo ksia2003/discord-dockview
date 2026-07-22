@@ -3,7 +3,7 @@
  * Copyright (c) 2026 DockView contributors
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Generates static/vencordDist/manifest.json: the manifest the in-app updater
+ * Generates static/dockviewDist/manifest.json: the manifest the in-app updater
  * (plugin/native.ts applyUpdate) fetches to learn what a plugin update contains.
  * It is the producer side of the in-app update stream — the consumer is the
  * renderer settings panel + plugin/native.ts.
@@ -14,7 +14,7 @@
  * workflows/release.yml attaches the plugin bundle to (the same release that
  * carries the app installers).
  *
- * The manifest is a BUILD ARTIFACT: it is regenerated from static/vencordDist/ on
+ * The manifest is a BUILD ARTIFACT: it is regenerated from static/dockviewDist/ on
  * every release and is NOT committed to the repo.
  *
  * Usage:
@@ -51,18 +51,16 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 const RELEASE_METADATA = readDockViewReleaseMetadata(ROOT);
 
-const DIST = join(ROOT, "static", "vencordDist");
+const DIST = join(ROOT, "static", "dockviewDist");
 
-// The core artifacts in a plugin-only patch release: the four desktop bundle files
-// plus the version stamp. Every one is recorded in the manifest. The out-of-bundle
+// The core artifacts in a DockView-only patch release. Official Vencord files are
+// deliberately absent. Every file is recorded in the manifest. The out-of-bundle
 // CHUNK files (chunk-*.js) are ADDED below — they ship alongside the renderer (the
 // code-dense libs that were taken out of vencordDesktopRenderer.js to cut Vesktop
 // startup parse), and applyUpdate verifies + commits them atomically with the rest.
 const CORE_FILES = [
-    "vencordDesktopMain.js",
-    "vencordDesktopPreload.js",
-    "vencordDesktopRenderer.js",
-    "vencordDesktopRenderer.css",
+    "dockviewMain.js",
+    "dockviewRenderer.js",
     "version.txt"
 ];
 
@@ -165,7 +163,7 @@ async function detectNeedsRelaunch(version, builtFiles) {
         const manRes = await fetch(`https://github.com/${repo}/releases/download/${prev.tag}/manifest.json`, { headers });
         if (!manRes.ok) throw new Error(`prev manifest ${manRes.status}`);
         const prevMan = await manRes.json();
-        const watch = ["vencordDesktopMain.js", "vencordDesktopPreload.js"];
+        const watch = ["dockviewMain.js"];
         const changed = watch.some(f => (prevMan.files?.[f]?.sha256 ?? null) !== (builtFiles[f]?.sha256 ?? null));
         console.log(`  (needsRelaunch auto-detected vs ${prev.tag}: main/preload changed = ${changed})`);
         return changed;
@@ -182,7 +180,7 @@ const baseDownloadUrl = process.env.DOCKVIEW_RELEASE_BASE || "";
 const missing = FILES.filter(f => !existsSync(join(DIST, f)));
 if (missing.length) {
     console.error(`Missing artifacts in ${DIST}: ${missing.join(", ")}`);
-    console.error("Run `node scripts/prepare-vencord.mjs` first to build static/vencordDist.");
+    console.error("Run `node scripts/prepare-vencord.mjs` first to build static/dockviewDist.");
     process.exit(1);
 }
 

@@ -28,6 +28,7 @@ import { DOCKVIEW_SHELL_VERSION } from "../shared/dockviewVersion";
 import { IpcEvents } from "../shared/IpcEvents";
 import { setBadgeCount } from "./appBadge";
 import { autoStart } from "./autoStart";
+import { DOCKVIEW_FILES_DIR } from "./dockviewFilesDir";
 import { mainWin } from "./mainWindow";
 import { Settings, State } from "./settings";
 import { applyShellUpdate, getShellUpdateInfo } from "./shellUpdate";
@@ -42,6 +43,26 @@ handleSync(IpcEvents.GET_VENCORD_PRELOAD_SCRIPT, () =>
 );
 handleSync(IpcEvents.GET_VENCORD_RENDERER_SCRIPT, () =>
     readFileSync(join(VENCORD_FILES_DIR, "vencordDesktopRenderer.js"), "utf-8")
+);
+handleSync(IpcEvents.GET_DOCKVIEW_RENDERER_SCRIPT, () =>
+    readFileSync(join(DOCKVIEW_FILES_DIR, "dockviewRenderer.js"), "utf-8")
+);
+
+let dockviewMain: Record<string, (...args: any[]) => any> | null = null;
+function getDockviewMain() {
+    return (dockviewMain ??= require(join(DOCKVIEW_FILES_DIR, "dockviewMain.js")));
+}
+
+handle(IpcEvents.DOCKVIEW_READ_INSTALLED_VERSION, event => getDockviewMain().readInstalledVersion(event));
+handle(IpcEvents.DOCKVIEW_READ_CHUNK, (event, name: string) => getDockviewMain().readChunk(event, name));
+handle(IpcEvents.DOCKVIEW_CONVERT_ATTACHMENT, (event, kind: string, url: string, allowRemote?: boolean) =>
+    getDockviewMain().convertAttachment(event, kind, url, allowRemote)
+);
+handle(IpcEvents.DOCKVIEW_DISCOVER_MANIFEST, (event, owner: string, repo: string, includePrerelease?: boolean) =>
+    getDockviewMain().discoverManifest(event, owner, repo, includePrerelease)
+);
+handle(IpcEvents.DOCKVIEW_APPLY_UPDATE, (event, manifest: unknown, baseUrl: string) =>
+    getDockviewMain().applyUpdate(event, manifest, baseUrl)
 );
 
 const VESKTOP_RENDERER_JS_PATH = join(__dirname, "renderer.js");

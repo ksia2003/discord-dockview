@@ -16,7 +16,7 @@
  *                              bypassed and detectType routes by the file name).
  *
  * This deliberately mirrors engine/lazyLib.ts's loadChunk: the same
- * VencordNative.pluginHelpers.DockView.readChunk call and the same eval-via-
+ * VesktopNative.dockview.readChunk call and the same eval-via-
  * `new Function` + read-the-global trick (strict eval does NOT leak the var onto
  * globalThis, so we read it through the function's own `return`). No new IPC is
  * needed — readChunk already accepts any `chunk-<safe>.js`.
@@ -49,7 +49,7 @@ export function loadSampleChunk(): Promise<SampleMap> {
     if (chunkPromise) return chunkPromise;
 
     const start = (async (): Promise<SampleMap> => {
-        const native = (window as any).VencordNative?.pluginHelpers?.DockView;
+        const native = (window as any).VesktopNative?.dockview;
         if (!native || typeof native.readChunk !== "function") {
             throw new Error("readChunk IPC unavailable (build/preload out of date).");
         }

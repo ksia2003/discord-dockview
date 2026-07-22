@@ -26,7 +26,7 @@
  *    interception reads it inside the same dispatch.
  */
 
-import { findByProps } from "@webpack";
+import { findByProps } from "@vencord/types/webpack";
 
 import { isSealBypassed } from "../engine/contextTab";
 import { getCurrentChannelId } from "./channel";

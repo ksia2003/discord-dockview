@@ -33,6 +33,7 @@ import { Settings, State, VencordSettings } from "./settings";
 import { createSplashWindow, updateSplashMessage } from "./splash";
 import { destroyTray, initTray } from "./tray";
 import { clearData } from "./utils/clearData";
+import { ensureDockviewFiles } from "./utils/dockviewLoader";
 import { makeLinksOpenExternally } from "./utils/makeLinksOpenExternally";
 import { applyDeckKeyboardFix, askToApplySteamLayout, isDeckGameMode } from "./utils/steamOS";
 import { downloadVencordFiles, ensureVencordFiles } from "./utils/vencordLoader";
@@ -453,7 +454,7 @@ export async function createWindows() {
         if (isDeckGameMode) splash.setFullScreen(true);
     }
 
-    await ensureVencordFiles();
+    await Promise.all([ensureVencordFiles(), ensureDockviewFiles()]);
     runVencordMain();
 
     mainWin = createMainWindow();

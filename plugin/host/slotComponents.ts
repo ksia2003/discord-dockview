@@ -33,7 +33,7 @@
  * NO module-top webpack access: every findByProps/React touch is inside a function.
  */
 
-import { findByProps } from "@webpack";
+import { findByProps } from "@vencord/types/webpack";
 
 import { getCurrentChannelId } from "./channel";
 import { findPageInner } from "./layout";

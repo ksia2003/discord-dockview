@@ -27,7 +27,7 @@
  * silent break, never a crash that takes the dock down.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { requestRender } from "../engine/forceRender";
 import { armSealBypass } from "../engine/contextTab";

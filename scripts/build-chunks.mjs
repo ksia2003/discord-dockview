@@ -68,7 +68,7 @@ const pluginDir = process.env.DOCKVIEW_PLUGIN_DIR || join(vencordDir, "src", "us
 const requireFromVencord = createRequire(join(vencordDir, "package.json"));
 const esbuild = requireFromVencord("esbuild");
 
-const distDir = join(vencordDir, "dist");
+const distDir = process.argv[3] || join(vencordDir, "dist");
 mkdirSync(distDir, { recursive: true });
 
 const chunks = readChunks();
@@ -108,6 +108,10 @@ for (const c of chunks) {
             minify: true,
             target: ["esnext"],
             platform: "browser",
+            // Entries now live in the DockView source/output trees instead of
+            // under the disposable Vencord checkout. Resolve their exact deps
+            // from that checkout explicitly.
+            nodePaths: [join(vencordDir, "node_modules")],
             // A chunk lib may ship a wasm file it loads at runtime (e.g. @jsquash/jxl's
             // jxl_dec.wasm). The renderer can't fetch it (Discord CSP blocks a wasm
             // fetch), so the chunk entry imports the .wasm as raw BYTES and the viewer

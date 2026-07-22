@@ -21,7 +21,7 @@
  * only built inside load(), and the components read React at call time.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { requestRender } from "../../engine/forceRender";
 import { injectNonce, pageNonce, setArtifactHtml } from "../../engine/nonce";

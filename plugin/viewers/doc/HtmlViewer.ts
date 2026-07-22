@@ -30,7 +30,7 @@
  * No module-top work — only imports + function decls; the nonce is read at load time.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { injectNonce, pageNonce, setArtifactHtml } from "../../engine/nonce";
 import { getActiveWindow } from "../../engine/window";

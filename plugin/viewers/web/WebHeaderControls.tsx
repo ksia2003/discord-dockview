@@ -15,7 +15,7 @@
  * No module-top React.createElement — the element tree is built inside the component.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { getActiveWindow } from "../../engine/window";
 import { openExternalLink } from "../../external/openExternal";

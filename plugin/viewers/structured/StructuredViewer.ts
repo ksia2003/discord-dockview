@@ -23,7 +23,7 @@
  * reads React + the active window at call time.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { extOf } from "../../engine/detectType";
 import { STRINGS } from "../../strings";

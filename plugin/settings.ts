@@ -17,8 +17,21 @@
  * so it must NOT import index.tsx at module top level, or we'd create an import cycle.
  */
 
-import { definePluginSettings } from "@api/Settings";
-import { OptionType } from "@utils/types";
+import { definePluginSettings } from "@vencord/types/api/Settings";
+
+// Vencord's OptionType is a const enum and therefore has no runtime export.
+// Keep the wire values locally so the independent renderer does not depend on
+// Vencord's internal @utils/types alias.
+const enum OptionType {
+    STRING,
+    NUMBER,
+    BIGINT,
+    BOOLEAN,
+    SELECT,
+    SLIDER,
+    COMPONENT,
+    CUSTOM
+}
 
 export const settings = definePluginSettings({
     // --- General page -------------------------------------------------------

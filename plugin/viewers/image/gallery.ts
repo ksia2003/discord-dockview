@@ -24,7 +24,7 @@
  * functions below.
  */
 
-import { MessageActions, MessageStore } from "@webpack/common";
+import { MessageActions, MessageStore } from "@vencord/types/webpack/common";
 
 import { requestRender } from "../../engine/forceRender";
 import { loadInPlace } from "../../engine/load";

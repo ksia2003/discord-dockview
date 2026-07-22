@@ -15,8 +15,8 @@
  * inside onNewFile (at click time), never at module eval.
  */
 
-import { getCurrentChannel } from "@utils/discord";
-import { ChannelStore, SelectedChannelStore } from "@webpack/common";
+import { getCurrentChannel } from "@vencord/types/utils";
+import { ChannelStore, SelectedChannelStore } from "@vencord/types/webpack/common";
 
 import { requestRender } from "../engine/forceRender";
 import { setContextActive } from "../engine/contextTab";

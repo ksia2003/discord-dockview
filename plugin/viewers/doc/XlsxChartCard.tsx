@@ -18,7 +18,7 @@
  * the SVG are built inside the component / its effect, read at call time.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { STRINGS } from "../../strings";
 import type { ChartModel, ChartSeries, SupportedChart } from "./XlsxCharts";

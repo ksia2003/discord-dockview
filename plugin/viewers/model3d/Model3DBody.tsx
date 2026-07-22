@@ -21,7 +21,7 @@
  * `import … from "three"` — so this module adds nothing to startup.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { loadLib } from "../../engine/lazyLib";
 import { getActiveWindow } from "../../engine/window";

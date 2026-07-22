@@ -17,7 +17,7 @@
  * the active window are read at call time inside the component.
  */
 
-import { React } from "@webpack/common";
+import { React } from "@vencord/types/webpack/common";
 
 import { escapeHtml } from "../../engine/html";
 import { consumePendingScroll } from "../../engine/viewState";

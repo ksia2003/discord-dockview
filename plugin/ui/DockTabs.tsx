@@ -27,7 +27,7 @@
  * (~180ms ease). The `prefers-reduced-motion` media query short-circuits the animation.
  */
 
-import { ContextMenuApi, React } from "@webpack/common";
+import { ContextMenuApi, React } from "@vencord/types/webpack/common";
 
 import { requestRender } from "../engine/forceRender";
 import { getCurrentChannelMemId } from "../engine/channelMemory";
