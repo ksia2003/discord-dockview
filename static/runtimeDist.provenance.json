@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "sourceCommit": "36dc15cb4b86156aaf8869cbf715130b1496250e",
+  "sourceCommit": "691edc866c614365a0bb02cccf75bb1476e2199a",
   "vencordRef": "v1.14.16",
   "vencordCommit": "fc5466ebf854a82c8385c41742162c4b66f8a119",
-  "buildIdentity": "4c7b1c406e33da0694ad979a265e4a39881325ef-ba16100139c4e0f3682cabeebe889f420b3abba1dbd890578a4f9d1f14ccf068",
+  "buildIdentity": "b283f0b1ff2ac132661a9f106af852541b924e4b-2fb9d5255eb5c393610de2885e54afc97b850a48f0cf6ccf1977547a3b3ce123",
   "files": {
     "vencordDist/vencordDesktopMain.js": "e0c1e45ea03fd255d8c9ca411db599294c0218b8fca02e99875cd50b204b8a75",
     "vencordDist/vencordDesktopPreload.js": "194357d002579960b4bdd99de82aa8e615742ce161e6980282f264587c04eded",
-    "vencordDist/vencordDesktopRenderer.js": "66eea1903192473165f30ae79888e5d1e264ac5235cba4d08fc892bcba7729e2",
+    "vencordDist/vencordDesktopRenderer.js": "4bf94e0619ab74fb431ac4167ec6196723677874b2a10e69a8b35d7a9c72da7b",
     "vencordDist/vencordDesktopRenderer.css": "6fc7c316dd24b8fbd612ae79e3c2da036e0b36983ac6a1293735e6be1b90bb9c",
     "dockviewDist/dockviewMain.js": "792546ceb47334c71a961829f7086b39a4730fc2ac7984f0357fc24173a48584",
-    "dockviewDist/dockviewRenderer.js": "a7933f3725e34d7ef905b39b714cf9821586ae8340941240681cf08b4ee69929",
+    "dockviewDist/dockviewRenderer.js": "4cf23306fd00bd47a07ee681cc16697a692a87c56f3719bd40dfe78a3a27e08d",
     "dockviewDist/chunk-mermaid.js": "c58069db954c9acb7139a82f11332c390669bda95cb8792d2ec03cf884a49d40",
     "dockviewDist/chunk-agpsd.js": "f0c10c583d179b182748c35cec6ec5fc65077873a9fb62e3f4bb6930694dd687",
     "dockviewDist/chunk-jxl.js": "bd6db2bac11394d2e9b70a8a93fe429a43f5d1931e48cc7301510bea6b1f2c3e",
@@ -21,6 +21,6 @@
     "dockviewDist/chunk-pdfjs.js": "afc9a61963bb4f3899b55836f5d7050cd172fe4f0fd1b7db27403a47bebdd3f6",
     "dockviewDist/chunk-codemirror.js": "20f36684cf5a9154886afa258c02938a5e08b78264e5dec000b4614cdb9ff75f",
     "dockviewDist/chunk-samples.js": "12ab4081a39a15597df08ee1f9cff5a85dc672923d39414bfbaa03f388fc6280",
-    "dockviewDist/version.txt": "c5e2d7a43c06f3dc73117a6f5ef3ada091d073bfc3735aa5b6c9e7f4322ad9bc"
+    "dockviewDist/version.txt": "ae73816dbc36fc724bd200bb4f7db13246afbc6e86347e0e31430d8a8d1d8aac"
   }
 }
