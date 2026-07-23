@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "sourceCommit": "3715c60a25eab1150f370e80dcfef538606b02f1",
+  "sourceCommit": "a9c0fe8655f759b034cbc8fe56d8c1140d63bdf7",
   "vencordRef": "v1.14.16",
   "vencordCommit": "fc5466ebf854a82c8385c41742162c4b66f8a119",
-  "buildIdentity": "132f62766fdf3cdacef18d02d760388e1edaf853-ea451b19df93c935882bc24fe5fdc066dc2546434c48c14d5994ed048732dd66",
+  "buildIdentity": "fa81f89a5f147dd4131db5a57b17eb650389aeb7-ea451b19df93c935882bc24fe5fdc066dc2546434c48c14d5994ed048732dd66",
   "files": {
     "vencordDist/vencordDesktopMain.js": "fce3aceefad6dc57c85e96cf3523a92b5bf99bd9a164d109fe2d4cc64a217f89",
     "vencordDist/vencordDesktopPreload.js": "dbad6b49669148beeaf6336ece97a6cfd5eed043eff689118c0a492156065d06",
-    "vencordDist/vencordDesktopRenderer.js": "6acf7ee0a36f02945c7da72f4bc32ce0608fe0817ff249f07b82cac25a1b1049",
+    "vencordDist/vencordDesktopRenderer.js": "d07f907c0db9acb4546b06eb3ca55db9b96206b028cefe9da3e5be4460ded51b",
     "vencordDist/vencordDesktopRenderer.css": "6fc7c316dd24b8fbd612ae79e3c2da036e0b36983ac6a1293735e6be1b90bb9c",
     "dockviewDist/dockviewMain.js": "792546ceb47334c71a961829f7086b39a4730fc2ac7984f0357fc24173a48584",
     "dockviewDist/dockviewRenderer.js": "1901831ef7cab9bb508c93bda673246ef72dac5efce5cf00c54ef45838bc26d7",
@@ -21,6 +21,6 @@
     "dockviewDist/chunk-pdfjs.js": "afc9a61963bb4f3899b55836f5d7050cd172fe4f0fd1b7db27403a47bebdd3f6",
     "dockviewDist/chunk-codemirror.js": "20f36684cf5a9154886afa258c02938a5e08b78264e5dec000b4614cdb9ff75f",
     "dockviewDist/chunk-samples.js": "12ab4081a39a15597df08ee1f9cff5a85dc672923d39414bfbaa03f388fc6280",
-    "dockviewDist/version.txt": "8c71a87d081e59dfe11151b7b5b602b56b7220a4c0352c6e1fdb9bbf1c4f0d5c"
+    "dockviewDist/version.txt": "bf79e7dcf472e5a7aa535dc4563492136ef03b7ae676aa4350f2734fc8d75f6d"
   }
 }
