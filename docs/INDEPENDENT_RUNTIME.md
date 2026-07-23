@@ -1,8 +1,7 @@
 # Independent DockView runtime
 
-This branch is the release candidate for separating DockView from Vencord. The
-released `v0.1.42` runtime remains unchanged until the candidate passes real-use
-testing.
+DockView and Vencord run and update from separate file trees. The stable release
+remains unchanged while a newer development prerelease passes real-use testing.
 
 ## Runtime ownership
 
@@ -13,8 +12,12 @@ testing.
   `dockviewRenderer.js`, `dockviewMain.js`, `version.txt`, and the lazy viewer
   `chunk-*.js` files.
 - Vesktop owns the narrow preload/main bridge that loads those files. Vencord
-  owns its normal update behavior; the DockView updater may only replace files
-  in `dockviewFiles/`.
+  keeps its normal updater UI and four-call native contract. Vesktop's
+  `vencordUpdaterBridge` replaces only its update-check handler with a read-only
+  check against the installed on-disk revision. The unmodified official Vencord
+  handlers still download and apply the update; the bridge never reads or
+  writes `dockviewFiles/`.
+- The DockView updater may only replace files in `dockviewFiles/`.
 
 DockView's renderer consumes the Vencord globals that Vesktop already exposes.
 It is not copied into Vencord's plugin source tree and no Vencord source or
@@ -47,6 +50,8 @@ the separated runtime is tested as a development prerelease.
 - The DockView renderer and main bundles contain no bundled copy of Vencord.
 - Updating or replacing `vencordFiles/` leaves `dockviewFiles/` byte-for-byte
   unchanged and DockView starts after relaunch.
+- Repeated Vencord checks do not duplicate downloads, and a successful update is
+  reported as current immediately, before or after relaunch.
 - A DockView update manifest cannot name a Vencord core file or escape the
   DockView install directory.
 - Existing DockView settings and `version.txt` comparison continue to work.

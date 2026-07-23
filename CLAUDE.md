@@ -40,6 +40,9 @@ an explicit reason.
   copied into Vencord's plugin tree.
 - `src/main/dockviewWebview.ts` — the isolated Electron webview boundary.
 - `src/main/utils/vencordLoader.ts` — installs/repairs only official Vencord files.
+- `src/main/vencordUpdaterBridge.ts` and
+  `src/main/utils/vencordUpdateCheck.ts` — keep Vencord's update check read-only
+  while its unmodified standalone runtime owns download and apply.
 - `src/main/utils/dockviewLoader.ts` — installs/updates only DockView-owned files.
 - `src/main/shellUpdate.ts` — narrow app-installer migration path.
 - `scripts/` — independent Vencord/DockView builds, chunk builds, provenance, release

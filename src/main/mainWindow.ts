@@ -38,6 +38,7 @@ import { makeLinksOpenExternally } from "./utils/makeLinksOpenExternally";
 import { applyDeckKeyboardFix, askToApplySteamLayout, isDeckGameMode } from "./utils/steamOS";
 import { downloadVencordFiles, ensureVencordFiles } from "./utils/vencordLoader";
 import { VENCORD_FILES_DIR } from "./vencordFilesDir";
+import { installVencordUpdaterBridge } from "./vencordUpdaterBridge";
 
 let isQuitting = false;
 
@@ -456,6 +457,7 @@ export async function createWindows() {
 
     await Promise.all([ensureVencordFiles(), ensureDockviewFiles()]);
     runVencordMain();
+    installVencordUpdaterBridge();
 
     mainWin = createMainWindow();
 

@@ -94,6 +94,8 @@ test("the Vesktop overlay is restricted to the documented DockView seams", () =>
         "src/main/shellUpdate.ts",
         "src/main/utils/dockviewLoader.ts",
         "src/main/utils/vencordLoader.ts",
+        "src/main/utils/vencordUpdateCheck.ts",
+        "src/main/vencordUpdaterBridge.ts",
         "src/preload/VesktopNative.ts",
         "src/preload/index.ts",
         "src/shared/dockviewBundleFiles.ts",
@@ -192,7 +194,10 @@ test("DockView is built and loaded independently of official Vencord", () => {
     const prepare = source("scripts/prepare-vencord.mjs");
     const preload = source("src/preload/index.ts");
     const ipc = source("src/main/ipc.ts");
+    const mainWindow = source("src/main/mainWindow.ts");
     const vencordLoader = source("src/main/utils/vencordLoader.ts");
+    const vencordUpdateCheck = source("src/main/utils/vencordUpdateCheck.ts");
+    const vencordUpdaterBridge = source("src/main/vencordUpdaterBridge.ts");
     const dockviewLoader = source("src/main/utils/dockviewLoader.ts");
     const vencordMain = source("static/vencordDist/vencordDesktopMain.js");
 
@@ -206,6 +211,12 @@ test("DockView is built and loaded independently of official Vencord", () => {
     assert.match(vencordLoader, /any non-empty stamp identifies the combined runtime/);
     assert.match(vencordLoader, /repos\/Vendicated\/Vencord\/releases\/latest/);
     assert.doesNotMatch(vencordLoader, /dockviewDist/);
+    assert.match(mainWindow, /runVencordMain\(\);\s*installVencordUpdaterBridge\(\);/);
+    assert.match(vencordUpdaterBridge, /VencordGetUpdates/);
+    assert.doesNotMatch(vencordUpdaterBridge, /"VencordUpdate"|"VencordBuild"/);
+    assert.match(vencordUpdateCheck, /readInstalledVencordHash\(installDir\)/);
+    assert.match(vencordUpdateCheck, /VENCORD_CORE_FILES\.filter/);
+    assert.doesNotMatch(vencordUpdateCheck, /DOCKVIEW_FILES_DIR|DOCKVIEW_RUNTIME_FILES/);
     assert.match(dockviewLoader, /dockviewDist/);
     assert.doesNotMatch(dockviewLoader, /VENCORD_FILES_DIR/);
     assert.match(vencordMain, /Standalone: true/);
