@@ -214,7 +214,10 @@ try {
     // 2. Install and build the pinned official source without copying or patching
     //    DockView into the checkout.
     run(PNPM, ["install", "--frozen-lockfile"], vencordDir);
-    run(PNPM, ["build"], vencordDir);
+    // Vesktop installs these files without a Vencord source checkout. The
+    // standalone build uses Vencord's HTTP updater; the regular build expects
+    // to run git fetch/pull from __dirname and cannot update a packaged app.
+    run(PNPM, ["buildStandalone"], vencordDir);
 
     rmSync(VENCORD_OUT_DIR, { recursive: true, force: true });
     mkdirSync(VENCORD_OUT_DIR, { recursive: true });

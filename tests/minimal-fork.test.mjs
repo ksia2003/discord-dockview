@@ -165,15 +165,20 @@ test("DockView is built and loaded independently of official Vencord", () => {
     const ipc = source("src/main/ipc.ts");
     const vencordLoader = source("src/main/utils/vencordLoader.ts");
     const dockviewLoader = source("src/main/utils/dockviewLoader.ts");
+    const vencordMain = source("static/vencordDist/vencordDesktopMain.js");
 
     assert.doesNotMatch(prepare, /src["', ]+userplugins/);
     assert.doesNotMatch(prepare, /patch-vencord-build/);
     assert.match(prepare, /static", "dockviewDist/);
+    assert.match(prepare, /\["buildStandalone"\]/);
     assert.ok(preload.indexOf("GET_VENCORD_RENDERER_SCRIPT") < preload.indexOf("GET_DOCKVIEW_RENDERER_SCRIPT"));
     assert.match(ipc, /DOCKVIEW_FILES_DIR.*dockviewRenderer\.js/s);
     assert.match(vencordLoader, /Bundled official Vencord/);
     assert.match(vencordLoader, /any non-empty stamp identifies the combined runtime/);
+    assert.match(vencordLoader, /repos\/Vendicated\/Vencord\/releases\/latest/);
     assert.doesNotMatch(vencordLoader, /dockviewDist/);
     assert.match(dockviewLoader, /dockviewDist/);
     assert.doesNotMatch(dockviewLoader, /VENCORD_FILES_DIR/);
+    assert.match(vencordMain, /Standalone: true/);
+    assert.match(vencordMain, /Updater Disabled: false/);
 });

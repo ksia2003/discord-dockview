@@ -11,7 +11,11 @@ import { join } from "path";
 import { VENCORD_CORE_FILES } from "shared/dockviewBundleFiles";
 import { STATIC_DIR } from "shared/paths";
 
+import { USER_AGENT } from "../constants";
+import { downloadFile, fetchie } from "./http";
+
 const BUNDLED_DIR = join(STATIC_DIR, "vencordDist");
+const API_BASE = "https://api.github.com";
 const LEGACY_VERSION_FILE = "version.txt";
 const LEGACY_DOCKVIEW_FILES = [
     LEGACY_VERSION_FILE,
@@ -28,6 +32,13 @@ const LEGACY_DOCKVIEW_FILES = [
 ] as const;
 
 export const FILES_TO_DOWNLOAD = VENCORD_CORE_FILES;
+
+interface ReleaseData {
+    assets: Array<{
+        name: string;
+        browser_download_url: string;
+    }>;
+}
 
 function filesExist(dir: string, names: readonly string[]): boolean {
     return names.every(name => existsSync(join(dir, name)));
@@ -69,10 +80,29 @@ async function isLegacyCombinedInstall(): Promise<boolean> {
     }
 }
 
-/** Upstream-compatible repair/Force Update entry point. */
+/** Restore Vesktop's Force Update behavior without involving DockView files. */
 export async function downloadVencordFiles(): Promise<void> {
-    await assertBundledDistribution();
-    await copyBundledDistribution(await isLegacyCombinedInstall());
+    const release = await fetchie(
+        `${API_BASE}/repos/Vendicated/Vencord/releases/latest`,
+        {
+            headers: {
+                Accept: "application/vnd.github+json",
+                "User-Agent": USER_AGENT
+            }
+        },
+        { retryOnNetworkError: true }
+    );
+    const { assets } = (await release.json()) as ReleaseData;
+
+    await mkdir(VENCORD_FILES_DIR, { recursive: true });
+    await Promise.all(
+        assets
+            .filter(({ name }) => VENCORD_CORE_FILES.some(file => name.startsWith(file)))
+            .map(({ name, browser_download_url }) =>
+                downloadFile(browser_download_url, join(VENCORD_FILES_DIR, name), {}, { retryOnNetworkError: true })
+            )
+    );
+    await writeFile(join(VENCORD_FILES_DIR, "package.json"), "{}\n");
 }
 
 export async function ensureVencordFiles(): Promise<void> {
