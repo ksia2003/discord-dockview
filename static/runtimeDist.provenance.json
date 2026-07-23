@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "sourceCommit": "b4043108c05ac9a63423c09c276665671a99da5e",
+  "sourceCommit": "cf42084750d72b6f559f76a4e278c9a80c397174",
   "vencordRef": "v1.14.16",
   "vencordCommit": "fc5466ebf854a82c8385c41742162c4b66f8a119",
-  "buildIdentity": "132f62766fdf3cdacef18d02d760388e1edaf853-43bb4b3180613637964784c1e0eb07237f538d34c3adad4e18d3bc8d77b38823",
+  "buildIdentity": "132f62766fdf3cdacef18d02d760388e1edaf853-055bf648f57d1be6d43fc0a3580555a77dd98114b415a78bbec6d974684cde1f",
   "files": {
-    "vencordDist/vencordDesktopMain.js": "e0c1e45ea03fd255d8c9ca411db599294c0218b8fca02e99875cd50b204b8a75",
-    "vencordDist/vencordDesktopPreload.js": "194357d002579960b4bdd99de82aa8e615742ce161e6980282f264587c04eded",
-    "vencordDist/vencordDesktopRenderer.js": "dd4cadd6f869bbd9508cfc89dc1abbf25245bb6d5d7c498b874419219debe6b0",
+    "vencordDist/vencordDesktopMain.js": "fce3aceefad6dc57c85e96cf3523a92b5bf99bd9a164d109fe2d4cc64a217f89",
+    "vencordDist/vencordDesktopPreload.js": "dbad6b49669148beeaf6336ece97a6cfd5eed043eff689118c0a492156065d06",
+    "vencordDist/vencordDesktopRenderer.js": "065150fa87682534ed92b3bc9593d650b5a64d65095d14fc70b759d98bb80a90",
     "vencordDist/vencordDesktopRenderer.css": "6fc7c316dd24b8fbd612ae79e3c2da036e0b36983ac6a1293735e6be1b90bb9c",
     "dockviewDist/dockviewMain.js": "792546ceb47334c71a961829f7086b39a4730fc2ac7984f0357fc24173a48584",
     "dockviewDist/dockviewRenderer.js": "4cf23306fd00bd47a07ee681cc16697a692a87c56f3719bd40dfe78a3a27e08d",
@@ -21,6 +21,6 @@
     "dockviewDist/chunk-pdfjs.js": "afc9a61963bb4f3899b55836f5d7050cd172fe4f0fd1b7db27403a47bebdd3f6",
     "dockviewDist/chunk-codemirror.js": "20f36684cf5a9154886afa258c02938a5e08b78264e5dec000b4614cdb9ff75f",
     "dockviewDist/chunk-samples.js": "12ab4081a39a15597df08ee1f9cff5a85dc672923d39414bfbaa03f388fc6280",
-    "dockviewDist/version.txt": "a4dd5d070ad0f77386f6c8e61e5e09c9963be90db550af9786ed16a55cc02008"
+    "dockviewDist/version.txt": "97330af1683b1a505d5e7db080299be141a3a2dfdcc9cba42c66e5fc5b8bddf9"
   }
 }
