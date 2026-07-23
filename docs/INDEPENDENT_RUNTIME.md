@@ -40,12 +40,12 @@ directory with the bundled, unmodified pinned Vencord build and installs the
 bundled DockView runtime in `dockviewFiles/`. Later DockView updates never touch
 `vencordFiles/`.
 
-DockView 0.1.43 also left a valid-looking non-standalone Vencord build in the
-default managed directory after removing the combined `version.txt`. That build
-cannot use its Git updater because the installed directory has no `.git`
-repository. The shell repairs this exact managed state to the bundled standalone
-build once. A user-selected Vencord directory is preserved because it may be a
-real Git checkout.
+DockView 0.1.43 also left a valid-looking non-standalone Vencord build after
+removing the combined `version.txt`. That build cannot use its Git updater when
+the installed directory has no `.git` repository. The shell repairs any such
+file-only install to the bundled standalone build once, including a stale custom
+path. A user-selected non-standalone directory is preserved only when it belongs
+to a real Git checkout.
 
 Rollback is a shell rollback: reinstalling the released `v0.1.42` package restores
 the combined runtime. The old package and release assets remain available while
@@ -59,8 +59,8 @@ the separated runtime is tested as a development prerelease.
   unchanged and DockView starts after relaunch.
 - Repeated Vencord checks do not duplicate downloads, and a successful update is
   reported as current immediately, before or after relaunch.
-- A valid non-standalone runtime in the app-managed directory migrates to the
-  bundled standalone build; a valid user-selected Git runtime does not.
+- A valid file-only non-standalone runtime migrates to the bundled standalone
+  build; a valid user-selected Git runtime does not.
 - A DockView update manifest cannot name a Vencord core file or escape the
   DockView install directory.
 - Existing DockView settings and `version.txt` comparison continue to work.
