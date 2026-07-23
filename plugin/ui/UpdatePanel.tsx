@@ -63,6 +63,10 @@ function versionRow(label: string, value: string | null) {
     );
 }
 
+function versionFromStamp(value: string | null): string | null {
+    return value?.match(/^dockview:(\S+)/)?.[1] ?? value;
+}
+
 export function UpdatePanel() {
     const { useState, useCallback, useEffect } = React;
     const native = getNative();
@@ -75,6 +79,8 @@ export function UpdatePanel() {
     const [status, setStatus] = useState<string | null>(null);
     const [checkFailed, setCheckFailed] = useState(false);
     const [applied, setApplied] = useState(false);
+    const [rollbackVersion, setRollbackVersion] = useState<string | null>(null);
+    const [rollingBack, setRollingBack] = useState(false);
     const shellNative = getShellNative();
     const shellVersion = getShellVersion();
     const [shellInfo, setShellInfo] = useState<ShellUpdateInfo | null>(null);
@@ -90,6 +96,10 @@ export function UpdatePanel() {
             .readInstalledVersion()
             .then(raw => { if (live) setInstalled(raw); })
             .catch(() => { if (live) setInstalled(null); });
+        native
+            .readRollbackVersion?.()
+            .then(raw => { if (live) setRollbackVersion(raw); })
+            .catch(() => { if (live) setRollbackVersion(null); });
         return () => { live = false; };
     }, []);
 
@@ -140,6 +150,7 @@ export function UpdatePanel() {
             }
 
             setApplied(true);
+            setRollbackVersion(installed);
             if (res.needsRelaunch) {
                 setStatus(U.needsRelaunch);
                 relaunchApp();
@@ -152,7 +163,26 @@ export function UpdatePanel() {
         } finally {
             setApplying(false);
         }
-    }, [native, latest]);
+    }, [native, latest, installed]);
+
+    const onRollback = useCallback(async () => {
+        if (!native?.rollbackUpdate) return;
+        setRollingBack(true);
+        setStatus(null);
+        try {
+            const res = await native.rollbackUpdate();
+            if (!res.ok) {
+                setStatus(U.error(res.error ?? "unknown error"));
+                return;
+            }
+            setStatus(U.rollbackApplied);
+            relaunchApp();
+        } catch (err) {
+            setStatus(U.error((err as Error)?.message ?? String(err)));
+        } finally {
+            setRollingBack(false);
+        }
+    }, [native]);
 
     const onShellApply = useCallback(async () => {
         if (!shellNative || !latest?.manifest?.shell) return;
@@ -191,7 +221,7 @@ export function UpdatePanel() {
     const shellUpdateNeeded = shellIsNewer(requiredShell, shellVersion);
     const shellManualOnly = shellUpdateNeeded && !!shellManualUrl;
     const anyUpdateAvailable = updateAvailable || shellUpdateNeeded;
-    const busyApplying = applying || shellApplying;
+    const busyApplying = applying || shellApplying || rollingBack;
 
     let verdict: string;
     if (applied) verdict = status ?? U.appliedNeedsReload;
@@ -226,7 +256,8 @@ export function UpdatePanel() {
             "div",
             { style: { margin: "8px 0" } },
             versionRow(U.current, current),
-            versionRow(U.latest, latestVer)
+            versionRow(U.latest, latestVer),
+            rollbackVersion ? versionRow(U.previous, versionFromStamp(rollbackVersion)) : null
         ),
         shellInfo
             ? React.createElement(
@@ -265,7 +296,19 @@ export function UpdatePanel() {
                     onClick: onApplyUnified
                 },
                 busyApplying ? (shellApplying ? SH.updating : U.applying) : shellManualOnly ? SH.download : U.apply
-            )
+            ),
+            rollbackVersion && native.rollbackUpdate
+                ? React.createElement(
+                    Button,
+                    {
+                        size: Button.Sizes.SMALL,
+                        color: Button.Colors.PRIMARY,
+                        disabled: busyApplying || checking,
+                        onClick: onRollback
+                    },
+                    rollingBack ? U.rollingBack : U.rollback
+                )
+                : null
         ),
         shellManualOnly
             ? React.createElement(

@@ -18,6 +18,9 @@ remains unchanged while a newer development prerelease passes real-use testing.
   handlers still download and apply the update; the bridge never reads or
   writes `dockviewFiles/`.
 - The DockView updater may only replace files in `dockviewFiles/`.
+- Runtime ABI v1 reduces the Vesktop bridge to one generic native invocation and
+  two BrowserWindow lifecycle hooks. Native method registration and the web-tab
+  policy live in `dockviewMain.js`.
 
 DockView's renderer consumes the Vencord globals that Vesktop already exposes.
 It is not copied into Vencord's plugin source tree and no Vencord source or
@@ -47,9 +50,16 @@ file-only install to the bundled standalone build once, including a stale custom
 path. A user-selected non-standalone directory is preserved only when it belongs
 to a real Git checkout.
 
-Rollback is a shell rollback: reinstalling the released `v0.1.42` package restores
-the combined runtime. The old package and release assets remain available while
-the separated runtime is tested as a development prerelease.
+Before a DockView update commits any live file, it copies the complete current
+runtime to `dockviewBackup/`. The Updates page offers **Restore previous version**
+when that snapshot exists. A commit error restores the snapshot immediately; a
+process crash leaves an in-progress marker that makes the next startup recover to
+the compatible runtime bundled with the app.
+
+Vencord recovery remains independent: an invalid or non-standalone app-managed
+runtime is replaced by the pinned official standalone fallback at startup. A full
+app rollback is still available by reinstalling an earlier DockView package, but it
+is no longer the only way to undo a DockView runtime update.
 
 ## Acceptance gates
 
@@ -63,6 +73,8 @@ the separated runtime is tested as a development prerelease.
   build; a valid user-selected Git runtime does not.
 - A DockView update manifest cannot name a Vencord core file or escape the
   DockView install directory.
+- Tampered, incomplete, wrong-ABI, interrupted, and explicit rollback paths restore
+  a complete known-good runtime without changing `vencordFiles/`.
 - Existing DockView settings and `version.txt` comparison continue to work.
 - Unit tests, typecheck, application build, and a real renderer smoke test pass
   before this branch is considered releasable.

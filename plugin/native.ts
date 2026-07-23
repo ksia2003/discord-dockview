@@ -45,7 +45,7 @@
  */
 
 import { createHash } from "crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "fs/promises";
+import { copyFile, mkdir, readFile, rename, rm, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 
 import { CHUNKS } from "./engine/chunkRegistry";
@@ -68,6 +68,7 @@ const FETCH_TIMEOUT_MS = 15_000;
 
 /** Suffix for staged, not-yet-committed payloads written during Phase A. */
 const TMP_SUFFIX = ".dockview-tmp";
+const UPDATE_MARKER = ".dockview-update-in-progress";
 
 /** DockView-owned renderer/main files plus the version stamp. version.txt is
  * committed LAST (see applyUpdate). Official Vencord files are never allowed. */
@@ -77,6 +78,8 @@ const VERSION_FILE = "version.txt";
  * install root in the main-process bundle removes any renderer-controlled target
  * directory from file operations. */
 const INSTALL_DIR = __dirname;
+const BACKUP_DIR = join(INSTALL_DIR, "..", "dockviewBackup");
+const BACKUP_STAGE_DIR = join(INSTALL_DIR, "..", ".dockview-backup-tmp");
 
 const CORE_INSTALL_FILES = new Set([
     "dockviewMain.js",
@@ -89,6 +92,73 @@ const REQUIRED_UPDATE_FILES = new Set([
     ...CHUNKS.map(chunk => `chunk-${chunk.chunkId}.js`),
     "chunk-samples.js"
 ]);
+
+const REQUIRED_UPDATE_NAMES = [...REQUIRED_UPDATE_FILES];
+
+async function createRollbackSnapshot(): Promise<void> {
+    await rm(BACKUP_STAGE_DIR, { recursive: true, force: true });
+    await mkdir(BACKUP_STAGE_DIR, { recursive: true });
+    try {
+        for (const name of REQUIRED_UPDATE_NAMES) {
+            await copyFile(join(INSTALL_DIR, name), join(BACKUP_STAGE_DIR, name));
+        }
+        await rm(BACKUP_DIR, { recursive: true, force: true });
+        await rename(BACKUP_STAGE_DIR, BACKUP_DIR);
+    } catch (error) {
+        await rm(BACKUP_STAGE_DIR, { recursive: true, force: true });
+        throw error;
+    }
+}
+
+async function stageDirectory(sourceDir: string, suffix: string): Promise<void> {
+    for (const name of REQUIRED_UPDATE_NAMES) {
+        await copyFile(join(sourceDir, name), join(INSTALL_DIR, name + suffix));
+    }
+}
+
+async function commitStagedFiles(suffix: string): Promise<void> {
+    const order = [
+        ...REQUIRED_UPDATE_NAMES.filter(name => name !== VERSION_FILE),
+        VERSION_FILE
+    ];
+    for (const name of order) await rename(join(INSTALL_DIR, name + suffix), join(INSTALL_DIR, name));
+}
+
+async function cleanupSuffix(suffix: string): Promise<void> {
+    await Promise.all(
+        REQUIRED_UPDATE_NAMES.map(name => unlink(join(INSTALL_DIR, name + suffix)).catch(() => {}))
+    );
+}
+
+export async function readRollbackVersion(_: IpcMainInvokeEvent): Promise<string | null> {
+    try {
+        return (await readFile(join(BACKUP_DIR, VERSION_FILE), "utf-8")).trim();
+    } catch {
+        return null;
+    }
+}
+
+export async function rollbackUpdate(
+    _: IpcMainInvokeEvent
+): Promise<{ ok: boolean; needsRelaunch: boolean; error?: string }> {
+    const version = await readRollbackVersion(null);
+    if (!version) return { ok: false, needsRelaunch: false, error: "No previous DockView runtime is available" };
+
+    try {
+        await stageDirectory(BACKUP_DIR, TMP_SUFFIX);
+        await writeFile(join(INSTALL_DIR, UPDATE_MARKER), version);
+        await commitStagedFiles(TMP_SUFFIX);
+        await unlink(join(INSTALL_DIR, UPDATE_MARKER)).catch(() => {});
+        return { ok: true, needsRelaunch: true };
+    } catch (error) {
+        await cleanupSuffix(TMP_SUFFIX);
+        return {
+            ok: false,
+            needsRelaunch: false,
+            error: `Rollback failed: ${(error as Error)?.message ?? error}`
+        };
+    }
+}
 
 const [RELEASE_OWNER, RELEASE_REPO] = DOCKVIEW_RELEASE_REPOSITORY.split("/");
 const UPDATE_APPROVAL_TTL_MS = 10 * 60 * 1000;
@@ -328,7 +398,7 @@ export async function applyUpdate(
     if (invalidName) {
         return { ok: false, needsRelaunch: false, error: `Manifest contains disallowed file name: "${invalidName}"` };
     }
-    const missingName = [...REQUIRED_UPDATE_FILES].find(name => !names.includes(name));
+    const missingName = REQUIRED_UPDATE_NAMES.find(name => !names.includes(name));
     if (missingName || names.length !== REQUIRED_UPDATE_FILES.size) {
         return {
             ok: false,
@@ -402,25 +472,47 @@ export async function applyUpdate(
             }
         }
 
+        // Snapshot the complete current runtime before touching live files. The
+        // snapshot remains after success as the one-step user rollback.
+        try {
+            await createRollbackSnapshot();
+        } catch (err) {
+            await cleanupTmps();
+            return {
+                ok: false,
+                needsRelaunch: false,
+                error: `Could not create rollback snapshot: ${(err as Error)?.message ?? err}`
+            };
+        }
+
         // ---- Phase B: commit. All files verified — rename each over its real ----
-        // path, version.txt LAST. A crash mid-loop leaves an older-but-consistent
-        // version.txt (the guard/recovery still recover).
+        // path, version.txt LAST. The marker makes a process crash recover to the
+        // bundled compatible runtime at the next startup.
+        await writeFile(join(INSTALL_DIR, UPDATE_MARKER), manifest.pluginVersion ?? "unknown");
         for (const name of commitOrder) {
             try {
                 await rename(tmpPathOf(name), join(INSTALL_DIR, name));
             } catch (err) {
-                // A failure here is partial (some renames already landed) but every
-                // committed file is a verified payload; only the stamp may lag. Clean
-                // up the remaining tmps and report.
                 await cleanupTmps();
+                let recoveryError: unknown;
+                try {
+                    await stageDirectory(BACKUP_DIR, TMP_SUFFIX);
+                    await commitStagedFiles(TMP_SUFFIX);
+                    await unlink(join(INSTALL_DIR, UPDATE_MARKER)).catch(() => {});
+                } catch (recovery) {
+                    recoveryError = recovery;
+                }
                 return {
                     ok: false,
                     needsRelaunch: false,
-                    error: `Commit (rename) failed for "${name}": ${(err as Error)?.message ?? err}`
+                    error: recoveryError
+                        ? `Commit failed for "${name}" and recovery failed: ${(recoveryError as Error)?.message ?? recoveryError}`
+                        : `Commit failed for "${name}"; the previous runtime was restored`
                 };
             }
         }
 
+        await unlink(join(INSTALL_DIR, UPDATE_MARKER)).catch(() => {});
         return { ok: true, needsRelaunch: !!manifest.needsRelaunch };
     } catch (err) {
         await cleanupTmps();
@@ -621,7 +713,9 @@ const NATIVE_METHODS = new Map<string, (event: IpcMainInvokeEvent, ...args: any[
     ["readChunk", readChunk],
     ["convertAttachment", convertAttachment],
     ["discoverManifest", discoverManifest],
-    ["applyUpdate", applyUpdate]
+    ["applyUpdate", applyUpdate],
+    ["readRollbackVersion", readRollbackVersion],
+    ["rollbackUpdate", rollbackUpdate]
 ]);
 
 /** Runtime ABI v1's sole renderer-callable entry. The method registry lives in

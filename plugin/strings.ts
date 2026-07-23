@@ -538,11 +538,14 @@ export const STRINGS = {
         current: "Version",
         onDisk: "On disk",
         latest: "Latest",
+        previous: "Previous",
         // Buttons.
         check: "Check for updates",
         checking: "Checking…",
         apply: "Apply update",
         applying: "Applying…",
+        rollback: "Restore previous version",
+        rollingBack: "Restoring…",
         // Status verdicts (one line under the version rows).
         upToDate: "You're on the latest build.",
         // {version} -> the latest plugin version available.
@@ -552,6 +555,7 @@ export const STRINGS = {
         appliedNeedsReload: "Update applied — reload to run it.",
         // After a successful apply that touches main/preload (not just renderer).
         needsRelaunch: "Update applied — restarting to finish.",
+        rollbackApplied: "Previous version restored — restarting to finish.",
         // The placeholder verdict before the first check.
         notChecked: "Not checked yet.",
         // Check found no plugin release / couldn't reach GitHub.

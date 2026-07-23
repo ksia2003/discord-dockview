@@ -7,7 +7,7 @@
 // Independent DockView runtime installer/upgrader.
 
 import { existsSync } from "fs";
-import { copyFile, mkdir, readFile } from "fs/promises";
+import { copyFile, mkdir, readFile, unlink } from "fs/promises";
 import { DOCKVIEW_FILES_DIR } from "main/dockviewFilesDir";
 import { join } from "path";
 import { DOCKVIEW_RUNTIME_FILES } from "shared/dockviewBundleFiles";
@@ -18,6 +18,7 @@ import { STATIC_DIR } from "shared/paths";
 const BUNDLED_DIR = join(STATIC_DIR, "dockviewDist");
 const VERSION_FILE = "version.txt";
 const MAIN_FILE = "dockviewMain.js";
+const UPDATE_MARKER = ".dockview-update-in-progress";
 const ABI_BANNER = /^\/\/ DockView Runtime ABI: (\d+)$/m;
 
 function filesExist(dir: string, names: readonly string[]): boolean {
@@ -62,10 +63,12 @@ export async function ensureDockviewFiles(): Promise<void> {
     const installedVersion = await readText(join(DOCKVIEW_FILES_DIR, VERSION_FILE));
     const installedAbi = await readRuntimeAbi(DOCKVIEW_FILES_DIR);
     const complete = filesExist(DOCKVIEW_FILES_DIR, DOCKVIEW_RUNTIME_FILES);
+    const interruptedUpdate = existsSync(join(DOCKVIEW_FILES_DIR, UPDATE_MARKER));
 
     let shouldCopy =
         !complete ||
         installedVersion == null ||
+        interruptedUpdate ||
         (installedAbi != null && installedAbi !== DOCKVIEW_RUNTIME_ABI_VERSION);
     if (!shouldCopy && installedVersion) {
         const order = compareDockviewVersions(installedVersion, bundledVersion);
@@ -74,5 +77,8 @@ export async function ensureDockviewFiles(): Promise<void> {
             shouldCopy = parseVersionTxt(installedVersion).gitHash !== parseVersionTxt(bundledVersion).gitHash;
         }
     }
-    if (shouldCopy) await copyBundledDistribution();
+    if (shouldCopy) {
+        await copyBundledDistribution();
+        await unlink(join(DOCKVIEW_FILES_DIR, UPDATE_MARKER)).catch(() => {});
+    }
 }

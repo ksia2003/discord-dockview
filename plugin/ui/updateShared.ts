@@ -36,6 +36,8 @@ export interface DockViewNative {
     discoverManifest: (owner: string, repo: string, includePrerelease?: boolean) => Promise<DiscoverResult>;
     readInstalledVersion: () => Promise<string | null>;
     applyUpdate: (manifest: any, baseUrl: string) => Promise<{ ok: boolean; needsRelaunch: boolean; error?: string }>;
+    readRollbackVersion?: () => Promise<string | null>;
+    rollbackUpdate?: () => Promise<{ ok: boolean; needsRelaunch: boolean; error?: string }>;
 }
 
 export interface ShellUpdateInfo {
@@ -64,12 +66,17 @@ export function getNative(): DockViewNative | null {
         !hasNativeMethod("applyUpdate")
     ) return null;
 
-    return {
+    const native: DockViewNative = {
         discoverManifest: (owner, repo, includePrerelease) =>
             invokeNative("discoverManifest", owner, repo, includePrerelease),
         readInstalledVersion: () => invokeNative("readInstalledVersion"),
         applyUpdate: (manifest, baseUrl) => invokeNative("applyUpdate", manifest, baseUrl)
     };
+    if (hasNativeMethod("readRollbackVersion") && hasNativeMethod("rollbackUpdate")) {
+        native.readRollbackVersion = () => invokeNative("readRollbackVersion");
+        native.rollbackUpdate = () => invokeNative("rollbackUpdate");
+    }
+    return native;
 }
 
 export function getShellNative(): ShellNative | null {
