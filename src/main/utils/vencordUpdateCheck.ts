@@ -14,7 +14,6 @@ const API_BASE = "https://api.github.com/repos/Vendicated/Vencord";
 const USER_AGENT = "Vesktop-DockView/Vencord-Updater";
 const HASH_BANNER = /^\/\/ Vencord ([0-9a-f]{7,40})\b/im;
 const RELEASE_HASH = /\b([0-9a-f]{7,40})\s*$/i;
-const STANDALONE_BANNER = /^\/\/ Standalone: true$/im;
 const REVISIONED_FILES = VENCORD_CORE_FILES.filter(name => name.endsWith(".js"));
 
 type FetchResponse = Pick<Response, "json">;
@@ -24,11 +23,6 @@ export interface VencordChange {
     hash: string;
     author: string;
     message: string;
-}
-
-export async function isStandaloneVencordInstall(dir: string): Promise<boolean> {
-    const source = await readFile(join(dir, "vencordDesktopMain.js"), "utf8");
-    return STANDALONE_BANNER.test(source.slice(0, 512));
 }
 
 export async function readInstalledVencordHash(dir: string): Promise<string> {

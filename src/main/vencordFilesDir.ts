@@ -10,4 +10,5 @@ import { SESSION_DATA_DIR } from "./constants";
 import { State } from "./settings";
 
 // this is in a separate file to avoid circular dependencies
+export const VENCORD_FILES_DIR_IS_CUSTOM = Boolean(State.store.vencordDir);
 export const VENCORD_FILES_DIR = State.store.vencordDir || join(SESSION_DATA_DIR, "vencordFiles");

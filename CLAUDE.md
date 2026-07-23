@@ -39,7 +39,8 @@ an explicit reason.
   conversion/update helpers. It consumes Vencord's exported globals but is not
   copied into Vencord's plugin tree.
 - `src/main/dockviewWebview.ts` — the isolated Electron webview boundary.
-- `src/main/utils/vencordLoader.ts` — installs/repairs only official Vencord files.
+- `src/main/utils/vencordLoader.ts` and `vencordInstallMode.ts` — install/repair
+  only app-managed official Vencord files while preserving user-selected Git paths.
 - `src/main/vencordUpdaterBridge.ts` and
   `src/main/utils/vencordUpdateCheck.ts` — keep Vencord's update check read-only
   while its unmodified standalone runtime owns download and apply.

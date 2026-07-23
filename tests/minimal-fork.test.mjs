@@ -93,8 +93,10 @@ test("the Vesktop overlay is restricted to the documented DockView seams", () =>
         "src/main/mainWindow.ts",
         "src/main/shellUpdate.ts",
         "src/main/utils/dockviewLoader.ts",
+        "src/main/utils/vencordInstallMode.ts",
         "src/main/utils/vencordLoader.ts",
         "src/main/utils/vencordUpdateCheck.ts",
+        "src/main/vencordFilesDir.ts",
         "src/main/vencordUpdaterBridge.ts",
         "src/preload/VesktopNative.ts",
         "src/preload/index.ts",
@@ -195,6 +197,7 @@ test("DockView is built and loaded independently of official Vencord", () => {
     const preload = source("src/preload/index.ts");
     const ipc = source("src/main/ipc.ts");
     const mainWindow = source("src/main/mainWindow.ts");
+    const vencordInstallMode = source("src/main/utils/vencordInstallMode.ts");
     const vencordLoader = source("src/main/utils/vencordLoader.ts");
     const vencordUpdateCheck = source("src/main/utils/vencordUpdateCheck.ts");
     const vencordUpdaterBridge = source("src/main/vencordUpdaterBridge.ts");
@@ -211,6 +214,9 @@ test("DockView is built and loaded independently of official Vencord", () => {
     assert.match(vencordLoader, /any non-empty stamp identifies the combined runtime/);
     assert.match(vencordLoader, /repos\/Vendicated\/Vencord\/releases\/latest/);
     assert.doesNotMatch(vencordLoader, /dockviewDist/);
+    assert.match(vencordInstallMode, /return !state\.customDir && !state\.standalone/);
+    assert.match(vencordLoader, /VENCORD_FILES_DIR_IS_CUSTOM/);
+    assert.match(vencordLoader, /shouldInstallBundledVencord/);
     assert.match(mainWindow, /runVencordMain\(\);\s*await installVencordUpdaterBridge\(\);/);
     assert.match(vencordUpdaterBridge, /VencordGetUpdates/);
     assert.doesNotMatch(vencordUpdaterBridge, /"VencordUpdate"|"VencordBuild"/);

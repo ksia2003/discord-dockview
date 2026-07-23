@@ -6,13 +6,14 @@
 
 import { existsSync } from "fs";
 import { copyFile, mkdir, readFile, unlink, writeFile } from "fs/promises";
-import { VENCORD_FILES_DIR } from "main/vencordFilesDir";
+import { VENCORD_FILES_DIR, VENCORD_FILES_DIR_IS_CUSTOM } from "main/vencordFilesDir";
 import { join } from "path";
 import { VENCORD_CORE_FILES } from "shared/dockviewBundleFiles";
 import { STATIC_DIR } from "shared/paths";
 
 import { USER_AGENT } from "../constants";
 import { downloadFile, fetchie } from "./http";
+import { isStandaloneVencordInstall, shouldInstallBundledVencord } from "./vencordInstallMode";
 
 const BUNDLED_DIR = join(STATIC_DIR, "vencordDist");
 const API_BASE = "https://api.github.com";
@@ -107,8 +108,17 @@ export async function downloadVencordFiles(): Promise<void> {
 
 export async function ensureVencordFiles(): Promise<void> {
     await assertBundledDistribution();
-    const legacy = await isLegacyCombinedInstall();
-    if (legacy || !isValidVencordInstall(VENCORD_FILES_DIR)) {
-        await copyBundledDistribution(legacy);
+    const legacyCombined = await isLegacyCombinedInstall();
+    const valid = isValidVencordInstall(VENCORD_FILES_DIR);
+    const standalone = valid && (await isStandaloneVencordInstall(VENCORD_FILES_DIR));
+    if (
+        shouldInstallBundledVencord({
+            customDir: VENCORD_FILES_DIR_IS_CUSTOM,
+            legacyCombined,
+            valid,
+            standalone
+        })
+    ) {
+        await copyBundledDistribution(legacyCombined);
     }
 }

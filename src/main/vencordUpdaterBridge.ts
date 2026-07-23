@@ -7,7 +7,8 @@
 import { ipcMain } from "electron";
 
 import { validateSender } from "./utils/ipcWrappers";
-import { getVencordUpdates, isStandaloneVencordInstall } from "./utils/vencordUpdateCheck";
+import { isStandaloneVencordInstall } from "./utils/vencordInstallMode";
+import { getVencordUpdates } from "./utils/vencordUpdateCheck";
 import { VENCORD_FILES_DIR } from "./vencordFilesDir";
 
 const GET_UPDATES = "VencordGetUpdates";

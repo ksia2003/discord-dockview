@@ -10,7 +10,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { getVencordUpdates, isStandaloneVencordInstall } from "../src/main/utils/vencordUpdateCheck.ts";
+import {
+    isStandaloneVencordInstall,
+    shouldInstallBundledVencord
+} from "../src/main/utils/vencordInstallMode.ts";
+import { getVencordUpdates } from "../src/main/utils/vencordUpdateCheck.ts";
 import { VENCORD_CORE_FILES } from "../src/shared/dockviewBundleFiles.ts";
 
 const OLD_HASH = "fc5466e";
@@ -95,4 +99,61 @@ test("the check bridge can distinguish standalone and custom Git Vencord builds"
 
     await writeCore(root, OLD_HASH, false);
     assert.equal(await isStandaloneVencordInstall(root), false);
+});
+
+test("a valid 0.1.43 non-standalone runtime migrates only in the app-managed directory", async t => {
+    const root = await mkdtemp(join(tmpdir(), "dockview-vencord-migration-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await writeCore(root, OLD_HASH, false);
+
+    const standalone = await isStandaloneVencordInstall(root);
+    assert.equal(standalone, false);
+    assert.equal(
+        shouldInstallBundledVencord({
+            customDir: false,
+            legacyCombined: false,
+            valid: true,
+            standalone
+        }),
+        true
+    );
+    assert.equal(
+        shouldInstallBundledVencord({
+            customDir: true,
+            legacyCombined: false,
+            valid: true,
+            standalone
+        }),
+        false
+    );
+});
+
+test("valid standalone runtimes are preserved while invalid or combined runtimes are repaired", () => {
+    assert.equal(
+        shouldInstallBundledVencord({
+            customDir: false,
+            legacyCombined: false,
+            valid: true,
+            standalone: true
+        }),
+        false
+    );
+    assert.equal(
+        shouldInstallBundledVencord({
+            customDir: false,
+            legacyCombined: false,
+            valid: false,
+            standalone: false
+        }),
+        true
+    );
+    assert.equal(
+        shouldInstallBundledVencord({
+            customDir: true,
+            legacyCombined: true,
+            valid: true,
+            standalone: false
+        }),
+        true
+    );
 });
