@@ -15,6 +15,8 @@
  * dock's loading state across the (network-fetch-in-main + decode) round-trip.
  */
 
+import { hasNativeMethod, invokeNative } from "../nativeBridge";
+
 /** The IPC reply shape (mirrors native.ts ConvertResult). */
 interface ConvertReply {
     ok: boolean;
@@ -58,14 +60,13 @@ function base64ToBytes(b64: string): Uint8Array {
  * revokes it, like the dxf/raster retype path).
  */
 export async function convertAttachment(kind: "msg" | "raw", url: string, allowRemote = false): Promise<ConvertedAttachment> {
-    const native = (window as any).VesktopNative?.dockview;
-    if (!native || typeof native.convertAttachment !== "function") {
+    if (!hasNativeMethod("convertAttachment")) {
         throw new Error(
             "DockView: convertAttachment IPC unavailable — relaunch Vesktop to pick up the new main process."
         );
     }
 
-    const reply: ConvertReply = await native.convertAttachment(kind, url, allowRemote);
+    const reply = await invokeNative<ConvertReply>("convertAttachment", kind, url, allowRemote);
     if (!reply || !reply.ok) {
         throw new Error(reply?.error || "Couldn't convert this file");
     }
@@ -88,14 +89,13 @@ export async function convertAttachment(kind: "msg" | "raw", url: string, allowR
  * remote images load or block to match the .eml path.
  */
 export async function convertAttachmentText(kind: "msg" | "raw", url: string, allowRemote = false): Promise<ConvertedText> {
-    const native = (window as any).VesktopNative?.dockview;
-    if (!native || typeof native.convertAttachment !== "function") {
+    if (!hasNativeMethod("convertAttachment")) {
         throw new Error(
             "DockView: convertAttachment IPC unavailable — relaunch Vesktop to pick up the new main process."
         );
     }
 
-    const reply: ConvertReply = await native.convertAttachment(kind, url, allowRemote);
+    const reply = await invokeNative<ConvertReply>("convertAttachment", kind, url, allowRemote);
     if (!reply || !reply.ok) {
         throw new Error(reply?.error || "Couldn't convert this file");
     }

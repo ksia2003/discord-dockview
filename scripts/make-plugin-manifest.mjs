@@ -283,6 +283,7 @@ const shell = {
 const manifest = {
     schema: 2,
     pluginVersion,
+    runtimeAbi: RELEASE_METADATA.runtimeAbi,
     shellVersion,
     vesktop: {
         version: RELEASE_METADATA.appVersion,
@@ -299,6 +300,7 @@ writeFileSync(outPath, JSON.stringify(manifest, null, 4) + "\n");
 
 console.log(`✔ Wrote ${outPath}`);
 console.log(`  pluginVersion: ${manifest.pluginVersion}`);
+console.log(`  runtimeAbi:    ${manifest.runtimeAbi}`);
 console.log(`  shellVersion:  ${manifest.shellVersion}`);
 console.log(`  vencordRef:    ${manifest.vencordRef ?? "(unknown)"}`);
 console.log(`  needsRelaunch: ${manifest.needsRelaunch}`);

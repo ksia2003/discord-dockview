@@ -14,6 +14,7 @@
  */
 
 import { compareDockviewVersions, DOCKVIEW_RELEASE_REPOSITORY } from "../version";
+import { hasNativeMethod, invokeNative } from "../nativeBridge";
 
 /** The public repo the updater checks. */
 export const [OWNER, REPO] = DOCKVIEW_RELEASE_REPOSITORY.split("/") as [string, string];
@@ -57,20 +58,18 @@ export interface ShellNative {
  *  Mirrors the openExternal.ts guard: optional-chain to the helper, then verify each
  *  function is callable before trusting it. */
 export function getNative(): DockViewNative | null {
-    try {
-        const native = (window as any).VesktopNative?.dockview;
-        if (
-            native &&
-            typeof native.discoverManifest === "function" &&
-            typeof native.readInstalledVersion === "function" &&
-            typeof native.applyUpdate === "function"
-        ) {
-            return native as DockViewNative;
-        }
-    } catch {
-        /* fall through to unavailable */
-    }
-    return null;
+    if (
+        !hasNativeMethod("discoverManifest") ||
+        !hasNativeMethod("readInstalledVersion") ||
+        !hasNativeMethod("applyUpdate")
+    ) return null;
+
+    return {
+        discoverManifest: (owner, repo, includePrerelease) =>
+            invokeNative("discoverManifest", owner, repo, includePrerelease),
+        readInstalledVersion: () => invokeNative("readInstalledVersion"),
+        applyUpdate: (manifest, baseUrl) => invokeNative("applyUpdate", manifest, baseUrl)
+    };
 }
 
 export function getShellNative(): ShellNative | null {

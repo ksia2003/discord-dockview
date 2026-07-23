@@ -5,6 +5,11 @@ import { join, relative } from "node:path";
 import test from "node:test";
 
 import { isExternalWebUrl } from "../plugin/engine/detectType.ts";
+import {
+    attachBrowserWindow,
+    configureBrowserWindow,
+    DOCKVIEW_WEB_PARTITION
+} from "../plugin/nativeWebview.ts";
 import { DOCKVIEW_OUTPUT_FILES, VENCORD_OUTPUT_FILES } from "../scripts/lib/vencordOutputs.mjs";
 import { DOCKVIEW_RUNTIME_FILES, VENCORD_CORE_FILES } from "../src/shared/dockviewBundleFiles.ts";
 
@@ -89,6 +94,7 @@ test("the Vesktop overlay is restricted to the documented DockView seams", () =>
     const allowed = new Set([
         "src/main/dockviewWebview.ts",
         "src/main/dockviewFilesDir.ts",
+        "src/main/dockviewRuntime.ts",
         "src/main/ipc.ts",
         "src/main/mainWindow.ts",
         "src/main/shellUpdate.ts",
@@ -101,6 +107,7 @@ test("the Vesktop overlay is restricted to the documented DockView seams", () =>
         "src/preload/VesktopNative.ts",
         "src/preload/index.ts",
         "src/shared/dockviewBundleFiles.ts",
+        "src/shared/dockviewRuntimeAbi.ts",
         "src/shared/IpcEvents.ts",
         "src/shared/dockviewRelease.ts",
         "src/shared/dockviewVersion.ts"
@@ -166,8 +173,10 @@ test("the temporary app updater is release-bound and leaves upstream updater cod
 });
 
 test("web tabs use one isolated partition and a fail-closed main-process boundary", () => {
-    const boundary = source("src/main/dockviewWebview.ts");
+    const boundary = source("plugin/nativeWebview.ts");
+    const legacyBoundary = source("src/main/dockviewWebview.ts");
     const viewer = source("plugin/viewers/web/WebBody.tsx");
+    const runtimeLoader = source("src/main/dockviewRuntime.ts");
 
     assert.match(boundary, /persist:dockview-web/);
     assert.match(boundary, /setPermissionCheckHandler\(\(\) => false\)/);
@@ -176,8 +185,89 @@ test("web tabs use one isolated partition and a fail-closed main-process boundar
     assert.match(boundary, /webPreferences\.nodeIntegration = false/);
     assert.match(boundary, /webPreferences\.contextIsolation = true/);
     assert.match(boundary, /webPreferences\.sandbox = true/);
+    assert.match(legacyBoundary, /persist:dockview-web/);
+    assert.match(runtimeLoader, /installDockViewWebviewSecurity\(win\)/);
     assert.match(viewer, /partition: WEB_PARTITION/);
     assert.doesNotMatch(viewer, /preload\s*:/);
+});
+
+test("runtime webview policy configures and rejects guests without trusting the renderer", () => {
+    const options = { webPreferences: {} };
+    configureBrowserWindow(options);
+    assert.equal(options.webPreferences.webviewTag, true);
+
+    const windowListeners = {};
+    const sessionListeners = {};
+    let permissionCheck;
+    let permissionRequest;
+    const external = [];
+    attachBrowserWindow(
+        {
+            webContents: {
+                on(event, listener) {
+                    windowListeners[event] = listener;
+                }
+            }
+        },
+        {
+            fromPartition(partition) {
+                assert.equal(partition, DOCKVIEW_WEB_PARTITION);
+                return {
+                    setPermissionCheckHandler(handler) {
+                        permissionCheck = handler;
+                    },
+                    setPermissionRequestHandler(handler) {
+                        permissionRequest = handler;
+                    },
+                    on(event, listener) {
+                        sessionListeners[event] = listener;
+                    }
+                };
+            },
+            openExternal(url) {
+                external.push(url);
+            }
+        }
+    );
+
+    assert.equal(permissionCheck(), false);
+    let allowed = true;
+    permissionRequest(null, "media", value => {
+        allowed = value;
+    });
+    assert.equal(allowed, false);
+
+    let rejected = false;
+    windowListeners["will-attach-webview"](
+        { preventDefault: () => { rejected = true; } },
+        {},
+        { partition: "persist:other", src: "https://example.com" }
+    );
+    assert.equal(rejected, true);
+
+    const preferences = { preload: "bad", nodeIntegration: true };
+    const params = {
+        partition: DOCKVIEW_WEB_PARTITION,
+        src: "https://example.com",
+        preload: "bad",
+        nodeintegration: true
+    };
+    windowListeners["will-attach-webview"]({ preventDefault() {} }, preferences, params);
+    assert.equal(preferences.nodeIntegration, false);
+    assert.equal(preferences.contextIsolation, true);
+    assert.equal(preferences.sandbox, true);
+    assert.equal("preload" in preferences, false);
+    assert.equal("preload" in params, false);
+
+    let cancelled = false;
+    let downloadPrevented = false;
+    sessionListeners["will-download"](
+        { preventDefault: () => { downloadPrevented = true; } },
+        { getURL: () => "https://example.com/file", cancel: () => { cancelled = true; } }
+    );
+    assert.equal(cancelled, true);
+    assert.equal(downloadPrevented, true);
+    assert.deepEqual(external, ["https://example.com/file"]);
 });
 
 test("native DockView file operations do not accept a renderer-controlled directory", () => {
@@ -199,6 +289,11 @@ test("DockView is built and loaded independently of official Vencord", () => {
     const prepare = source("scripts/prepare-vencord.mjs");
     const preload = source("src/preload/index.ts");
     const ipc = source("src/main/ipc.ts");
+    const events = source("src/shared/IpcEvents.ts");
+    const native = source("plugin/native.ts");
+    const nativeBridge = source("plugin/nativeBridge.ts");
+    const runtime = source("src/main/dockviewRuntime.ts");
+    const preloadNative = source("src/preload/VesktopNative.ts");
     const mainWindow = source("src/main/mainWindow.ts");
     const vencordInstallMode = source("src/main/utils/vencordInstallMode.ts");
     const vencordLoader = source("src/main/utils/vencordLoader.ts");
@@ -212,7 +307,18 @@ test("DockView is built and loaded independently of official Vencord", () => {
     assert.match(prepare, /static", "dockviewDist/);
     assert.match(prepare, /\["buildStandalone"\]/);
     assert.ok(preload.indexOf("GET_VENCORD_RENDERER_SCRIPT") < preload.indexOf("GET_DOCKVIEW_RENDERER_SCRIPT"));
-    assert.match(ipc, /DOCKVIEW_FILES_DIR.*dockviewRenderer\.js/s);
+    assert.match(ipc, /handle\(IpcEvents\.DOCKVIEW_INVOKE/);
+    assert.doesNotMatch(ipc, /DOCKVIEW_READ_CHUNK|DOCKVIEW_CONVERT_ATTACHMENT|DOCKVIEW_APPLY_UPDATE/);
+    assert.match(events, /DOCKVIEW_INVOKE = "DV_INVOKE"/);
+    assert.doesNotMatch(events, /DOCKVIEW_READ_CHUNK|DOCKVIEW_CONVERT_ATTACHMENT|DOCKVIEW_APPLY_UPDATE/);
+    assert.match(preloadNative, /invoke: invokeDockview/);
+    assert.match(nativeBridge, /typeof bridge\.invoke === "function"/);
+    assert.match(native, /export function invoke\(/);
+    assert.match(native, /const NATIVE_METHODS/);
+    assert.match(native, /DOCKVIEW_RUNTIME_ABI_VERSION/);
+    assert.match(runtime, /const LEGACY_METHODS/);
+    assert.match(runtime, /Unsupported DockView runtime ABI/);
+    assert.match(runtime, /readDockviewRendererScript/);
     assert.match(vencordLoader, /Bundled official Vencord/);
     assert.match(vencordLoader, /any non-empty stamp identifies the combined runtime/);
     assert.match(vencordLoader, /repos\/Vendicated\/Vencord\/releases\/latest/);

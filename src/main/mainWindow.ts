@@ -25,7 +25,7 @@ import { createAboutWindow } from "./about";
 import { initArRPC } from "./arrpc";
 import { CommandLine } from "./cli";
 import { BrowserUserAgent, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH } from "./constants";
-import { enableDockViewWebviews, installDockViewWebviewSecurity } from "./dockviewWebview";
+import { attachDockviewBrowserWindow, configureDockviewBrowserWindow } from "./dockviewRuntime";
 import { AppEvents } from "./events";
 import { darwinURL } from "./index";
 import { sendRendererCommand } from "./ipcCommands";
@@ -370,7 +370,7 @@ function buildBrowserWindowOptions(): BrowserWindowConstructorOptions {
         }
     }
 
-    enableDockViewWebviews(options);
+    configureDockviewBrowserWindow(options);
 
     return options;
 }
@@ -401,7 +401,7 @@ function createMainWindow() {
         win.flashFrame(false);
     });
 
-    installDockViewWebviewSecurity(win);
+    attachDockviewBrowserWindow(win);
 
     initWindowBoundsListeners(win);
     if (!isDeckGameMode && (Settings.store.tray ?? true) && process.platform !== "darwin")

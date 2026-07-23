@@ -22,6 +22,8 @@
  * needed — readChunk already accepts any `chunk-<safe>.js`.
  */
 
+import { hasNativeMethod, invokeNative } from "../nativeBridge";
+
 /** The chunk file name + the global its IIFE assigns the payload to (matches the
  *  `__dockviewChunk_<id>` convention build-sample-chunk.mjs emits). */
 const SAMPLE_CHUNK_FILE = "chunk-samples.js";
@@ -49,12 +51,11 @@ export function loadSampleChunk(): Promise<SampleMap> {
     if (chunkPromise) return chunkPromise;
 
     const start = (async (): Promise<SampleMap> => {
-        const native = (window as any).VesktopNative?.dockview;
-        if (!native || typeof native.readChunk !== "function") {
+        if (!hasNativeMethod("readChunk")) {
             throw new Error("readChunk IPC unavailable (build/preload out of date).");
         }
 
-        const src: string | null = await native.readChunk(SAMPLE_CHUNK_FILE);
+        const src = await invokeNative<string | null>("readChunk", SAMPLE_CHUNK_FILE);
         if (typeof src !== "string" || !src) {
             throw new Error(`Samples chunk missing or empty: ${SAMPLE_CHUNK_FILE}`);
         }

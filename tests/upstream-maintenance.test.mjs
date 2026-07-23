@@ -59,7 +59,9 @@ function writeRuntimeFixture(staticDirectory, { pluginVersion = "0.1.37", vencor
                 ? `dockview:${pluginVersion} ${vencordRef} ${buildIdentity}\n`
                 : file === "dockviewRenderer.js"
                   ? "DockView independent fixture\n"
-                  : `fixture:${file}\n`
+                  : file === "dockviewMain.js"
+                    ? "// DockView Runtime ABI: 1\nfixture:dockviewMain.js\n"
+                    : `fixture:${file}\n`
         );
     }
 }

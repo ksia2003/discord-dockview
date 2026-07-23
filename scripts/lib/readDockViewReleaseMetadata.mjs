@@ -120,6 +120,25 @@ function readLiteral(path, name) {
     return matches[0].line.match(declaration)[1] ?? matches[0].line.match(declaration)[2];
 }
 
+function readIntegerLiteral(path, name) {
+    const { cleaned, codeMask } = commentSafeSource(readText(path));
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const declaration = new RegExp(`^\\s*export\\s+const\\s+${escapedName}\\s*=\\s*(\\d+)\\s*;?\\s*$`);
+    const declarationMask = new RegExp(`^\\s*export\\s+const\\s+${escapedName}\\s*=\\s*\\d+\\s*;?\\s*$`);
+    const cleanedLines = cleaned.split(/\r?\n/);
+    const maskLines = codeMask.split(/\r?\n/);
+    const matches = cleanedLines
+        .map((line, index) => ({ line, mask: maskLines[index] }))
+        .filter(({ line, mask }) => declaration.test(line) && declarationMask.test(mask));
+
+    if (matches.length !== 1) {
+        fail(
+            `expected exactly one real exported integer literal declaration for ${name} in ${path}, found ${matches.length}`
+        );
+    }
+    return Number(matches[0].line.match(declaration)[1]);
+}
+
 function githubSlug(value, label) {
     if (typeof value !== "string" || !value) fail(`${label} must be a non-empty GitHub repository value`);
     let slug = value.trim();
@@ -174,6 +193,11 @@ export function readDockViewReleaseMetadata(root) {
         readLiteral(join(root, "plugin", "version.ts"), "DOCKVIEW_RELEASE_REPOSITORY"),
         "plugin release repository"
     );
+    const runtimeAbi = readIntegerLiteral(
+        join(root, "plugin", "version.ts"),
+        "DOCKVIEW_RUNTIME_ABI_VERSION"
+    );
+    if (!Number.isSafeInteger(runtimeAbi) || runtimeAbi < 1) fail("runtime ABI must be a positive integer");
     const shellVersion = validateVersion(
         readLiteral(join(root, "src", "shared", "dockviewVersion.ts"), "DOCKVIEW_SHELL_VERSION"),
         "shell version"
@@ -195,6 +219,7 @@ export function readDockViewReleaseMetadata(root) {
     return {
         appVersion,
         pluginVersion,
+        runtimeAbi,
         shellVersion,
         vesktopCommit: vesktopCommit.toLowerCase(),
         repository: {

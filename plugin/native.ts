@@ -1,12 +1,12 @@
 /*
  * DockView — main-process update primitives (native.ts).
  * ---------------------------------------------------------------------------
- * This module runs in the Electron MAIN process, not the renderer. Vesktop
- * exposes each exported async function through a fixed DockView-only bridge:
+ * This module runs in the Electron MAIN process, not the renderer. Runtime ABI
+ * v1 exposes the native functions through one generic DockView-only bridge:
  *
  *     export async function readChunk(_, name) { ... }
- *        ⇒ ipcMain.handle(IpcEvents.DOCKVIEW_READ_CHUNK, ...)
- *        ⇒ renderer calls VesktopNative.dockview.readChunk(name)
+ *        ⇒ invoke(event, "readChunk", [name])
+ *        ⇒ renderer calls VesktopNative.dockview.invoke("readChunk", name)
  *
  * Electron injects the IpcMainInvokeEvent as the FIRST argument; the renderer
  * only supplies the real arguments after it. Every export here therefore has the
@@ -50,7 +50,10 @@ import { join } from "path";
 
 import { CHUNKS } from "./engine/chunkRegistry";
 import { runConverter } from "./native-convert";
-import { DOCKVIEW_RELEASE_REPOSITORY } from "./version";
+import { attachBrowserWindow, configureBrowserWindow } from "./nativeWebview";
+import { DOCKVIEW_RELEASE_REPOSITORY, DOCKVIEW_RUNTIME_ABI_VERSION } from "./version";
+
+export { attachBrowserWindow, configureBrowserWindow, DOCKVIEW_RUNTIME_ABI_VERSION };
 
 /**
  * Local stand-in for Electron's IpcMainInvokeEvent. We do NOT import it from
@@ -106,6 +109,7 @@ interface ManifestFile {
 interface UpdateManifest {
     schema?: unknown;
     pluginVersion?: string;
+    runtimeAbi?: unknown;
     vencordRef?: string;
     needsRelaunch?: boolean;
     files?: Record<string, ManifestFile>;
@@ -296,6 +300,17 @@ export async function applyUpdate(
         approval.manifestJson !== JSON.stringify(manifest)
     ) {
         return { ok: false, needsRelaunch: false, error: "Update approval expired; check for updates again" };
+    }
+
+    if (
+        manifest.runtimeAbi !== undefined &&
+        manifest.runtimeAbi !== DOCKVIEW_RUNTIME_ABI_VERSION
+    ) {
+        return {
+            ok: false,
+            needsRelaunch: false,
+            error: `This DockView build requires runtime ABI ${String(manifest.runtimeAbi)}`
+        };
     }
 
     const files = manifest?.files;
@@ -599,4 +614,28 @@ export async function discoverManifest(
         expiresAt: Date.now() + UPDATE_APPROVAL_TTL_MS
     };
     return { ok: true, manifest, releaseTag: release.tag_name, baseUrl };
+}
+
+const NATIVE_METHODS = new Map<string, (event: IpcMainInvokeEvent, ...args: any[]) => unknown>([
+    ["readInstalledVersion", readInstalledVersion],
+    ["readChunk", readChunk],
+    ["convertAttachment", convertAttachment],
+    ["discoverManifest", discoverManifest],
+    ["applyUpdate", applyUpdate]
+]);
+
+/** Runtime ABI v1's sole renderer-callable entry. The method registry lives in
+ * DockView, not Vesktop, so adding a native DockView feature no longer changes
+ * app.asar. Only own, explicitly registered methods are callable. */
+export function invoke(
+    event: IpcMainInvokeEvent,
+    method: string,
+    args: unknown[]
+): unknown {
+    if (typeof method !== "string" || !Array.isArray(args)) {
+        throw new Error("Invalid DockView runtime invocation");
+    }
+    const handler = NATIVE_METHODS.get(method);
+    if (!handler) throw new Error(`Unknown DockView runtime method: ${method}`);
+    return handler(event, ...args);
 }

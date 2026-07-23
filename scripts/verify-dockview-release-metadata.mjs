@@ -143,6 +143,8 @@ function checkManifest(path, metadata, releaseBase, installersDir) {
         fail(
             `manifest pluginVersion is ${JSON.stringify(manifest?.pluginVersion)}, expected ${metadata.pluginVersion}`
         );
+    if (manifest?.runtimeAbi !== metadata.runtimeAbi)
+        fail(`manifest runtimeAbi is ${JSON.stringify(manifest?.runtimeAbi)}, expected ${metadata.runtimeAbi}`);
     if (manifest?.shellVersion !== metadata.shellVersion)
         fail(`manifest shellVersion is ${JSON.stringify(manifest?.shellVersion)}, expected ${metadata.shellVersion}`);
     if (manifest?.shell?.version !== metadata.shellVersion)

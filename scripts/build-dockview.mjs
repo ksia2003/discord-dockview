@@ -100,6 +100,7 @@ await esbuild.build({
     target: ["node22"],
     platform: "node",
     nodePaths,
+    banner: { js: "// DockView Runtime ABI: 1" },
     legalComments: "none",
     logLevel: "warning"
 });

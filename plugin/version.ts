@@ -22,7 +22,11 @@
  */
 
 /** The compiled/running plugin patch version. Bump this per patch release. */
-export const DOCKVIEW_PLUGIN_VERSION = "0.1.47";
+export const DOCKVIEW_PLUGIN_VERSION = "0.1.48";
+
+/** Main/preload contract implemented by dockviewMain.js. Keep this mirrored with
+ * src/shared/dockviewRuntimeAbi.ts, which lives in the separate app build domain. */
+export const DOCKVIEW_RUNTIME_ABI_VERSION = 1;
 
 /**
  * Intentional mirror of the app-domain release repository. The plugin compiles

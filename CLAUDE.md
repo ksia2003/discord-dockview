@@ -38,7 +38,10 @@ an explicit reason.
 - `plugin/` — DockView renderer, viewers, host, settings, and native
   conversion/update helpers. It consumes Vencord's exported globals but is not
   copied into Vencord's plugin tree.
-- `src/main/dockviewWebview.ts` — the isolated Electron webview boundary.
+- `src/main/dockviewRuntime.ts` — the stable Runtime ABI v1 loader and the
+  pre-ABI compatibility path.
+- `src/main/dockviewWebview.ts` — the isolated Electron webview boundary retained
+  only for runtimes predating ABI v1; current policy lives in `plugin/nativeWebview.ts`.
 - `src/main/utils/vencordLoader.ts` and `vencordInstallMode.ts` — install/repair
   only app-managed official Vencord files while preserving user-selected Git paths.
 - `src/main/vencordUpdaterBridge.ts` and
@@ -81,5 +84,8 @@ by `.github/workflows/release.yml` after an explicit matching version tag.
 - `src/shared/dockviewVersion.ts` is the app-shell migration version.
 - Shell changes require installers and a shell-version bump; plugin-only changes
   require only a plugin-version bump.
+- Runtime ABI v1 is a stable generic invocation/window-lifecycle contract. New
+  DockView native methods must be registered in `plugin/native.ts`; they must not
+  add one-off app IPC/preload methods.
 - Keep Linux, Windows, and upstream macOS release legs. DockView runtime assets and
   the verified manifest extend that workflow; they do not replace platform builds.

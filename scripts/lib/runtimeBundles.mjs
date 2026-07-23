@@ -63,6 +63,10 @@ export function inspectRuntimeBundles(
     if (/vencordDesktop(?:Main|Preload|Renderer)/.test(dockviewRenderer)) {
         result.reasons.push("DockView renderer contains a Vencord desktop bundle marker");
     }
+    const dockviewMain = readFileSync(join(dockviewDirectory, "dockviewMain.js"), "utf-8");
+    if (!/^\/\/ DockView Runtime ABI: 1$/m.test(dockviewMain.slice(0, 512))) {
+        result.reasons.push("DockView main bundle has no supported Runtime ABI banner");
+    }
 
     const versionText = readFileSync(join(dockviewDirectory, "version.txt"), "utf-8").trim();
     const version = versionText.match(VERSION);

@@ -48,6 +48,7 @@
 import { CHUNK_BY_KEY, type ChunkSpec } from "./chunkRegistry";
 import { DecoderDisabledError, decoderLabelFor, modeFor } from "./decoderModes";
 import type { ViewerContext } from "./types";
+import { hasNativeMethod, invokeNative } from "../nativeBridge";
 
 /** Memoised module promises, keyed by a stable string a viewer chooses (usually the
  *  package name). The promise — not the resolved module — is cached so two near-
@@ -76,14 +77,12 @@ function chunkGlobalName(spec: ChunkSpec): string {
  * is missing, the read fails, or the eval doesn't produce the expected export.
  */
 async function loadChunk(spec: ChunkSpec): Promise<any> {
-    const w = window as any;
-    const native = w.VesktopNative?.dockview;
-    if (!native || typeof native.readChunk !== "function") {
+    if (!hasNativeMethod("readChunk")) {
         throw new Error("DockView: readChunk IPC unavailable (build/preload out of date) for " + spec.chunkId);
     }
 
     const fileName = `chunk-${spec.chunkId}.js`;
-    const src: string | null = await native.readChunk(fileName);
+    const src = await invokeNative<string | null>("readChunk", fileName);
     if (typeof src !== "string" || !src) {
         throw new Error("DockView: chunk file missing or empty: " + fileName);
     }

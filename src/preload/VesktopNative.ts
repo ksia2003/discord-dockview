@@ -16,6 +16,8 @@ type SpellCheckerResultCallback = (word: string, suggestions: string[]) => void;
 
 const spellCheckCallbacks = new Set<SpellCheckerResultCallback>();
 
+const invokeDockview = <T>(method: string, ...args: unknown[]) => invoke<T>(IpcEvents.DOCKVIEW_INVOKE, method, args);
+
 ipcRenderer.on(IpcEvents.SPELLCHECK_RESULT, (_, w: string, s: string[]) => {
     spellCheckCallbacks.forEach(cb => cb(w, s));
 });
@@ -65,23 +67,22 @@ export const VesktopNative = {
             )
     },
     dockview: {
-        readInstalledVersion: () => invoke<string | null>(IpcEvents.DOCKVIEW_READ_INSTALLED_VERSION),
-        readChunk: (name: string) => invoke<string | null>(IpcEvents.DOCKVIEW_READ_CHUNK, name),
+        invoke: invokeDockview,
+        // Named methods keep DockView runtimes through 0.1.47 compatible with the
+        // Runtime ABI v1 shell. New runtime code uses invoke() directly.
+        readInstalledVersion: () => invokeDockview<string | null>("readInstalledVersion"),
+        readChunk: (name: string) => invokeDockview<string | null>("readChunk", name),
         convertAttachment: (kind: "msg" | "raw", url: string, allowRemote = false) =>
-            invoke<{ ok: boolean; mime?: string; b64?: string; error?: string }>(
-                IpcEvents.DOCKVIEW_CONVERT_ATTACHMENT,
+            invokeDockview<{ ok: boolean; mime?: string; b64?: string; error?: string }>(
+                "convertAttachment",
                 kind,
                 url,
                 allowRemote
             ),
         discoverManifest: (owner: string, repo: string, includePrerelease = false) =>
-            invoke<any>(IpcEvents.DOCKVIEW_DISCOVER_MANIFEST, owner, repo, includePrerelease),
+            invokeDockview<any>("discoverManifest", owner, repo, includePrerelease),
         applyUpdate: (manifest: unknown, baseUrl: string) =>
-            invoke<{ ok: boolean; needsRelaunch: boolean; error?: string }>(
-                IpcEvents.DOCKVIEW_APPLY_UPDATE,
-                manifest,
-                baseUrl
-            )
+            invokeDockview<{ ok: boolean; needsRelaunch: boolean; error?: string }>("applyUpdate", manifest, baseUrl)
     },
     fileManager: {
         isUsingCustomVencordDir: () => sendSync<boolean>(IpcEvents.IS_USING_CUSTOM_VENCORD_DIR),
