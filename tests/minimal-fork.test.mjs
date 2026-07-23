@@ -211,9 +211,10 @@ test("DockView is built and loaded independently of official Vencord", () => {
     assert.match(vencordLoader, /any non-empty stamp identifies the combined runtime/);
     assert.match(vencordLoader, /repos\/Vendicated\/Vencord\/releases\/latest/);
     assert.doesNotMatch(vencordLoader, /dockviewDist/);
-    assert.match(mainWindow, /runVencordMain\(\);\s*installVencordUpdaterBridge\(\);/);
+    assert.match(mainWindow, /runVencordMain\(\);\s*await installVencordUpdaterBridge\(\);/);
     assert.match(vencordUpdaterBridge, /VencordGetUpdates/);
     assert.doesNotMatch(vencordUpdaterBridge, /"VencordUpdate"|"VencordBuild"/);
+    assert.match(vencordUpdaterBridge, /if \(!\(await isStandaloneVencordInstall\(VENCORD_FILES_DIR\)\)\) return;/);
     assert.match(vencordUpdateCheck, /readInstalledVencordHash\(installDir\)/);
     assert.match(vencordUpdateCheck, /VENCORD_CORE_FILES\.filter/);
     assert.doesNotMatch(vencordUpdateCheck, /DOCKVIEW_FILES_DIR|DOCKVIEW_RUNTIME_FILES/);

@@ -457,7 +457,7 @@ export async function createWindows() {
 
     await Promise.all([ensureVencordFiles(), ensureDockviewFiles()]);
     runVencordMain();
-    installVencordUpdaterBridge();
+    await installVencordUpdaterBridge();
 
     mainWin = createMainWindow();
 

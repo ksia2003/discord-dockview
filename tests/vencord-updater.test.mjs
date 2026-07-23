@@ -10,17 +10,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { getVencordUpdates } from "../src/main/utils/vencordUpdateCheck.ts";
+import { getVencordUpdates, isStandaloneVencordInstall } from "../src/main/utils/vencordUpdateCheck.ts";
 import { VENCORD_CORE_FILES } from "../src/shared/dockviewBundleFiles.ts";
 
 const OLD_HASH = "fc5466e";
 const NEW_HASH = "4b9c27d";
 const API = "https://api.github.com/repos/Vendicated/Vencord";
 
-async function writeCore(dir, hash) {
+async function writeCore(dir, hash, standalone = true) {
     await mkdir(dir, { recursive: true });
     for (const name of VENCORD_CORE_FILES) {
-        const contents = name.endsWith(".js") ? `// Vencord ${hash}\nfixture:${name}\n` : `fixture:${name}\n`;
+        const contents = name.endsWith(".js")
+            ? `// Vencord ${hash}\n// Standalone: ${standalone}\nfixture:${name}\n`
+            : `fixture:${name}\n`;
         await writeFile(join(dir, name), contents);
     }
 }
@@ -82,4 +84,15 @@ test("Vencord update checks reject mixed installed revisions", async t => {
     const transport = fakeFetch();
     await assert.rejects(getVencordUpdates(root, transport.fetch), /inconsistent revisions/);
     assert.equal(transport.calls.some(url => url.includes("/compare/")), false);
+});
+
+test("the check bridge can distinguish standalone and custom Git Vencord builds", async t => {
+    const root = await mkdtemp(join(tmpdir(), "dockview-vencord-mode-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+
+    await writeCore(root, OLD_HASH, true);
+    assert.equal(await isStandaloneVencordInstall(root), true);
+
+    await writeCore(root, OLD_HASH, false);
+    assert.equal(await isStandaloneVencordInstall(root), false);
 });

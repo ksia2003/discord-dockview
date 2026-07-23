@@ -7,7 +7,7 @@
 import { ipcMain } from "electron";
 
 import { validateSender } from "./utils/ipcWrappers";
-import { getVencordUpdates } from "./utils/vencordUpdateCheck";
+import { getVencordUpdates, isStandaloneVencordInstall } from "./utils/vencordUpdateCheck";
 import { VENCORD_FILES_DIR } from "./vencordFilesDir";
 
 const GET_UPDATES = "VencordGetUpdates";
@@ -36,7 +36,9 @@ function serialize<T>(fn: () => T | Promise<T>) {
  * only the standalone check handler so checks stay read-only and use the
  * installed on-disk revision.
  */
-export function installVencordUpdaterBridge(): void {
+export async function installVencordUpdaterBridge(): Promise<void> {
+    if (!(await isStandaloneVencordInstall(VENCORD_FILES_DIR))) return;
+
     const handler = serialize(() => getVencordUpdates(VENCORD_FILES_DIR));
     ipcMain.removeHandler(GET_UPDATES);
     ipcMain.handle(GET_UPDATES, invokeEvent => {
