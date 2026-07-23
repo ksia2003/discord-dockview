@@ -617,6 +617,9 @@ html.dockview-open .dockview-page-inner {
     height: 100%;
     min-height: 0;
     width: 100%;
+    /* Let only this dock instance drive the member-list breakpoints. A narrow dock stays
+       single-column even when the Vesktop window itself is wide. */
+    container: dockview-members / inline-size;
 }
 
 /* WIDTH FLUIDITY (member list + profile fill the dock, no dead gutter). Discord's own
@@ -634,6 +637,42 @@ html.dockview-open .dockview-page-inner {
 .dockview-context-native [class*="members_"] {
     width: 100% !important;
     max-width: 100% !important;
+}
+
+/* RESPONSIVE MEMBER COLUMNS. Discord's native row was designed for its narrow right rail;
+   stretching one row across a wide dock leaves most of it empty. Keep the native headings,
+   rows, hover states, popouts, and scroller, but arrange complete native-sized rows into a
+   compact directory when the dock has room. Role/status headings and virtualization spacers
+   span the grid, so each section still starts on its own line. DOM and keyboard order remain
+   unchanged: left-to-right, then down. */
+@container dockview-members (min-width: 520px) {
+    .dockview-context-native [class*="members_"][class*="scrollerBase"]
+        > [class*="content_"]:has(> [class*="membersGroup"]) {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-content: start;
+    }
+
+    .dockview-context-native [class*="members_"][class*="scrollerBase"]
+        > [class*="content_"]:has(> [class*="membersGroup"])
+        > [class*="member_"] {
+        width: auto !important;
+        min-width: 0;
+        max-width: none !important;
+    }
+
+    .dockview-context-native [class*="members_"][class*="scrollerBase"]
+        > [class*="content_"]:has(> [class*="membersGroup"])
+        > :not([class*="member_"]) {
+        grid-column: 1 / -1;
+    }
+}
+
+@container dockview-members (min-width: 800px) {
+    .dockview-context-native [class*="members_"][class*="scrollerBase"]
+        > [class*="content_"]:has(> [class*="membersGroup"]) {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
 }
 .dockview-context-body aside [class*="outer_"],
 .dockview-context-body aside [class*="inner_"] {

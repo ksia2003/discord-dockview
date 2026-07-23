@@ -56,6 +56,35 @@ test("ordinary link clicks stay upstream while right-click offers Open in DockVi
     assert.equal(isExternalWebUrl("https://cdn.discordapp.com/file/page.html"), false);
 });
 
+test("the native member list gains dock-scoped responsive columns", () => {
+    const css = source("plugin/style.css");
+    const layout = source("plugin/host/layout.ts");
+
+    assert.match(layout, /export const MIN_WIDTH = 560;/);
+    assert.match(layout, /export const DEFAULT_WIDTH = MIN_WIDTH;/);
+    assert.match(layout, /export const DOCK_MIN_WIDTH = MIN_WIDTH;/);
+    assert.match(
+        css,
+        /\.dockview-context-native\s*\{[^}]*container:\s*dockview-members\s*\/\s*inline-size;/s
+    );
+    assert.match(
+        css,
+        /@container dockview-members \(min-width: 520px\)\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/
+    );
+    assert.match(
+        css,
+        /@container dockview-members \(min-width: 800px\)\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/
+    );
+    assert.match(
+        css,
+        /> \[class\*="content_"\]:has\(> \[class\*="membersGroup"\]\)[\s\S]*?> \[class\*="member_"\]\s*\{[^}]*width:\s*auto !important;[^}]*min-width:\s*0;[^}]*max-width:\s*none !important;/
+    );
+    assert.match(
+        css,
+        /> :not\(\[class\*="member_"\]\)\s*\{[^}]*grid-column:\s*1 \/ -1;/s
+    );
+});
+
 test("the Vesktop overlay is restricted to the documented DockView seams", () => {
     const allowed = new Set([
         "src/main/dockviewWebview.ts",

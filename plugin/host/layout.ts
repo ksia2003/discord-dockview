@@ -19,8 +19,11 @@ import { getActiveWindow } from "../engine/window";
 
 const HOST_ID = "dockview-root";
 
-export const MIN_WIDTH = 360;
-export const DEFAULT_WIDTH = 420;
+// Two native member rows need about 520px together. Keep an extra 40px for the dock's
+// resize affordance, scrollbar gutter, and card chrome so the minimum layout reliably
+// reaches the two-column Members breakpoint instead of oscillating around it.
+export const MIN_WIDTH = 560;
+export const DEFAULT_WIDTH = MIN_WIDTH;
 export const MAX_WIDTH_FRAC = 0.6; // of window width
 
 // ---------------------------------------------------------------------------
@@ -38,7 +41,7 @@ export const MAX_WIDTH_FRAC = 0.6; // of window width
 //     cover the chat). The float width is capped to (content − this).
 // All tune-able: change here, nothing else.
 export const CHAT_MIN_WIDTH = 420;
-export const DOCK_MIN_WIDTH = 280;
+export const DOCK_MIN_WIDTH = MIN_WIDTH;
 export const FLOAT_CHAT_SLIVER = 48;
 
 let dockWidth = DEFAULT_WIDTH;
