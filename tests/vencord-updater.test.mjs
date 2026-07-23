@@ -11,6 +11,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+    isGitVencordInstall,
     isStandaloneVencordInstall,
     shouldInstallBundledVencord
 } from "../src/main/utils/vencordInstallMode.ts";
@@ -99,9 +100,13 @@ test("the check bridge can distinguish standalone and custom Git Vencord builds"
 
     await writeCore(root, OLD_HASH, false);
     assert.equal(await isStandaloneVencordInstall(root), false);
+
+    assert.equal(await isGitVencordInstall(root), false);
+    await mkdir(join(root, ".git"));
+    assert.equal(await isGitVencordInstall(root), true);
 });
 
-test("a valid 0.1.43 non-standalone runtime migrates only in the app-managed directory", async t => {
+test("a file-only non-standalone runtime migrates even when a stale custom path points to it", async t => {
     const root = await mkdtemp(join(tmpdir(), "dockview-vencord-migration-"));
     t.after(() => rm(root, { recursive: true, force: true }));
     await writeCore(root, OLD_HASH, false);
@@ -111,6 +116,7 @@ test("a valid 0.1.43 non-standalone runtime migrates only in the app-managed dir
     assert.equal(
         shouldInstallBundledVencord({
             customDir: false,
+            customGitCheckout: false,
             legacyCombined: false,
             valid: true,
             standalone
@@ -120,6 +126,17 @@ test("a valid 0.1.43 non-standalone runtime migrates only in the app-managed dir
     assert.equal(
         shouldInstallBundledVencord({
             customDir: true,
+            customGitCheckout: false,
+            legacyCombined: false,
+            valid: true,
+            standalone
+        }),
+        true
+    );
+    assert.equal(
+        shouldInstallBundledVencord({
+            customDir: true,
+            customGitCheckout: true,
             legacyCombined: false,
             valid: true,
             standalone
@@ -132,6 +149,7 @@ test("valid standalone runtimes are preserved while invalid or combined runtimes
     assert.equal(
         shouldInstallBundledVencord({
             customDir: false,
+            customGitCheckout: false,
             legacyCombined: false,
             valid: true,
             standalone: true
@@ -141,6 +159,7 @@ test("valid standalone runtimes are preserved while invalid or combined runtimes
     assert.equal(
         shouldInstallBundledVencord({
             customDir: false,
+            customGitCheckout: false,
             legacyCombined: false,
             valid: false,
             standalone: false
@@ -150,6 +169,7 @@ test("valid standalone runtimes are preserved while invalid or combined runtimes
     assert.equal(
         shouldInstallBundledVencord({
             customDir: true,
+            customGitCheckout: false,
             legacyCombined: true,
             valid: true,
             standalone: false

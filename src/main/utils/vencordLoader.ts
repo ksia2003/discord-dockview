@@ -13,7 +13,7 @@ import { STATIC_DIR } from "shared/paths";
 
 import { USER_AGENT } from "../constants";
 import { downloadFile, fetchie } from "./http";
-import { isStandaloneVencordInstall, shouldInstallBundledVencord } from "./vencordInstallMode";
+import { isGitVencordInstall, isStandaloneVencordInstall, shouldInstallBundledVencord } from "./vencordInstallMode";
 
 const BUNDLED_DIR = join(STATIC_DIR, "vencordDist");
 const API_BASE = "https://api.github.com";
@@ -56,6 +56,9 @@ async function assertBundledDistribution(): Promise<void> {
         throw new Error(
             "[VencordLoader] Bundled official Vencord distribution is incomplete. Run pnpm prepareVencord."
         );
+    }
+    if (!(await isStandaloneVencordInstall(BUNDLED_DIR))) {
+        throw new Error("[VencordLoader] Bundled Vencord is not a standalone build. Run pnpm prepareVencord.");
     }
 }
 
@@ -111,9 +114,12 @@ export async function ensureVencordFiles(): Promise<void> {
     const legacyCombined = await isLegacyCombinedInstall();
     const valid = isValidVencordInstall(VENCORD_FILES_DIR);
     const standalone = valid && (await isStandaloneVencordInstall(VENCORD_FILES_DIR));
+    const customGitCheckout =
+        valid && VENCORD_FILES_DIR_IS_CUSTOM && !standalone && (await isGitVencordInstall(VENCORD_FILES_DIR));
     if (
         shouldInstallBundledVencord({
             customDir: VENCORD_FILES_DIR_IS_CUSTOM,
+            customGitCheckout,
             legacyCombined,
             valid,
             standalone

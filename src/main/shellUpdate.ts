@@ -359,16 +359,22 @@ export async function applyShellUpdate(shellInput: unknown, baseUrl: string): Pr
 }
 
 /**
- * Windows: run the one-click NSIS Setup exe silently (/S), detached so it outlives us,
- * then quit. A silent (/S) install does NOT relaunch the app on its own — the installer
- * only re-runs the app afterwards when passed --force-run (the same flag electron-updater
- * uses to resume after a silent update). Without it the app just closes and the user has
- * to reopen it, so we pass --force-run and quit shortly after so the running exe isn't
- * holding files the installer replaces; the installer then launches the freshly installed
- * app itself.
+ * Windows: run the one-click NSIS Setup exe through electron-builder's update
+ * path. `--updated` is not cosmetic: its NSIS templates use it for running-app
+ * handling, old-install replacement, shortcut preservation, and update relaunch
+ * semantics. `/S --force-run` keeps the update silent and launches the new build.
+ * Wait for ChildProcess's `spawn` event before reporting success or quitting; an
+ * immediate launch error must remain visible instead of becoming a false success.
  */
 async function applyWindows(setupExe: string): Promise<ShellApplyResult> {
-    const child = spawn(setupExe, ["/S", "--force-run"], { detached: true, stdio: "ignore" });
+    const child = spawn(setupExe, ["--updated", "/S", "--force-run"], {
+        detached: true,
+        stdio: "ignore"
+    });
+    await new Promise<void>((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", reject);
+    });
     child.unref();
     // Quit shortly after so the running exe isn't holding files the installer replaces.
     setTimeout(() => app.quit(), 1500);

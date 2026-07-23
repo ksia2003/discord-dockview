@@ -47,6 +47,14 @@ export function inspectRuntimeBundles(
         if (DOCKVIEW_OUTPUT_FILES.includes(file)) result.reasons.push(`runtime file ownership overlaps: ${file}`);
         if (!lstatSync(join(vencordDirectory, file)).isFile()) result.reasons.push(`Vencord output is not a file: ${file}`);
     }
+    const vencordMain = readFileSync(join(vencordDirectory, "vencordDesktopMain.js"), "utf-8");
+    if (!/^\/\/ Standalone: true$/im.test(vencordMain.slice(0, 512))) {
+        result.reasons.push("official Vencord runtime is not a standalone build");
+    }
+    if (!/^\/\/ Updater Disabled: false$/im.test(vencordMain.slice(0, 512))) {
+        result.reasons.push("official Vencord standalone updater is disabled");
+    }
+
     const vencordRenderer = readFileSync(join(vencordDirectory, "vencordDesktopRenderer.js"), "utf-8");
     if (/DockView/.test(vencordRenderer)) result.reasons.push("official Vencord renderer contains DockView code");
 

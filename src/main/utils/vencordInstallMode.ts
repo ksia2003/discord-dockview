@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { readFile } from "fs/promises";
-import { join } from "path";
+import { lstat, readFile } from "fs/promises";
+import { dirname, join } from "path";
 
 const STANDALONE_BANNER = /^\/\/ Standalone: true$/im;
 
@@ -14,8 +14,27 @@ export async function isStandaloneVencordInstall(dir: string): Promise<boolean> 
     return STANDALONE_BANNER.test(source.slice(0, 512));
 }
 
+/**
+ * A custom regular Vencord build is expected to be either the checkout root or
+ * its dist/ directory. Preserve it only when that checkout really has Git
+ * metadata; a copied file-only non-standalone build cannot use Vencord's Git
+ * updater and must be repaired to standalone just like the old managed install.
+ */
+export async function isGitVencordInstall(dir: string): Promise<boolean> {
+    for (const root of [dir, dirname(dir)]) {
+        try {
+            await lstat(join(root, ".git"));
+            return true;
+        } catch {
+            // Try the other supported checkout shape.
+        }
+    }
+    return false;
+}
+
 interface ManagedInstallState {
     customDir: boolean;
+    customGitCheckout: boolean;
     legacyCombined: boolean;
     valid: boolean;
     standalone: boolean;
@@ -24,10 +43,12 @@ interface ManagedInstallState {
 /**
  * The app owns only its default Vencord directory. A valid non-standalone
  * runtime left there by DockView 0.1.43 has no Git repository and must migrate
- * to the bundled standalone build. A user-selected directory may be an actual
- * Git checkout, so a valid custom runtime is always preserved.
+ * to the bundled standalone build. A user-selected non-standalone directory is
+ * preserved only when it is backed by an actual Git checkout; otherwise its
+ * updater is structurally broken for the same reason and it is repaired too.
  */
 export function shouldInstallBundledVencord(state: ManagedInstallState): boolean {
     if (state.legacyCombined || !state.valid) return true;
-    return !state.customDir && !state.standalone;
+    if (state.standalone) return false;
+    return !state.customDir || !state.customGitCheckout;
 }

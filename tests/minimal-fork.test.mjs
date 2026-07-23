@@ -160,6 +160,9 @@ test("the temporary app updater is release-bound and leaves upstream updater cod
     assert.match(shellUpdate, /DOCKVIEW_RELEASE_REPOSITORY/);
     assert.match(shellUpdate, /Update source is not an official DockView release/);
     assert.match(shellUpdate, /installerUrl\.href\.startsWith\(releaseBase\.href\)/);
+    assert.match(shellUpdate, /spawn\(setupExe, \["--updated", "\/S", "--force-run"\]/);
+    assert.match(shellUpdate, /child\.once\("spawn", resolve\)/);
+    assert.match(shellUpdate, /child\.once\("error", reject\)/);
 });
 
 test("web tabs use one isolated partition and a fail-closed main-process boundary", () => {
@@ -214,7 +217,8 @@ test("DockView is built and loaded independently of official Vencord", () => {
     assert.match(vencordLoader, /any non-empty stamp identifies the combined runtime/);
     assert.match(vencordLoader, /repos\/Vendicated\/Vencord\/releases\/latest/);
     assert.doesNotMatch(vencordLoader, /dockviewDist/);
-    assert.match(vencordInstallMode, /return !state\.customDir && !state\.standalone/);
+    assert.match(vencordInstallMode, /return !state\.customDir \|\| !state\.customGitCheckout/);
+    assert.match(vencordLoader, /Bundled Vencord is not a standalone build/);
     assert.match(vencordLoader, /VENCORD_FILES_DIR_IS_CUSTOM/);
     assert.match(vencordLoader, /shouldInstallBundledVencord/);
     assert.match(mainWindow, /runVencordMain\(\);\s*await installVencordUpdaterBridge\(\);/);

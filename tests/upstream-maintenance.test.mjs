@@ -43,7 +43,14 @@ function writeRuntimeFixture(staticDirectory, { pluginVersion = "0.1.37", vencor
     mkdirSync(vencordDir, { recursive: true });
     mkdirSync(dockviewDir, { recursive: true });
     for (const file of VENCORD_OUTPUT_FILES) {
-        writeFileSync(join(vencordDir, file), file === "vencordDesktopRenderer.js" ? "official Vencord fixture\n" : `fixture:${file}\n`);
+        writeFileSync(
+            join(vencordDir, file),
+            file === "vencordDesktopMain.js"
+                ? "// Vencord fixture\n// Standalone: true\n// Updater Disabled: false\n"
+                : file === "vencordDesktopRenderer.js"
+                  ? "official Vencord fixture\n"
+                  : `fixture:${file}\n`
+        );
     }
     for (const file of DOCKVIEW_OUTPUT_FILES) {
         writeFileSync(
