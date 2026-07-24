@@ -60,6 +60,7 @@ test("DockView update and rollback never alter the separate Vencord runtime", as
     );
 
     const isolated = await import(`${pathToFileURL(join(install, "dockviewMain.js")).href}?fixture=${Date.now()}`);
+    const originalVersion = await isolated.readInstalledVersion(null);
     const releaseBase = "https://github.com/ksia2003/discord-dockview/releases/download/v9.9.9";
     const manifestUrl = `${releaseBase}/manifest.json`;
     let manifest;
@@ -149,7 +150,7 @@ test("DockView update and rollback never alter the separate Vencord runtime", as
     const applied = await isolated.applyUpdate(null, validApproval.manifest, validApproval.baseUrl);
     assert.deepEqual(applied, { ok: true, needsRelaunch: true });
     assert.equal(sha256(await readFile(vencordSentinel)), vencordBefore);
-    assert.match(await isolated.readRollbackVersion(null), /^dockview:0\.1\.48 /);
+    assert.equal(await isolated.readRollbackVersion(null), originalVersion);
     for (const [name, bytes] of Object.entries(targetBytes)) {
         assert.equal(sha256(await readFile(join(install, name))), sha256(bytes), name);
     }
