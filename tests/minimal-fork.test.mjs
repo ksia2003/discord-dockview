@@ -90,6 +90,23 @@ test("the native member list gains dock-scoped responsive columns", () => {
     );
 });
 
+test("tab headers reclaim the outer left inset without crowding tab contents", () => {
+    const css = source("plugin/style.css");
+
+    assert.match(
+        css,
+        /\.dockview-header\s*\{[^}]*padding-left:\s*0;/s
+    );
+    assert.match(
+        css,
+        /\.dockview-header\.dockview-header--tworow \.dockview-header-upper\s*\{[^}]*padding:\s*8px 8px 8px 0;/s
+    );
+    assert.match(
+        css,
+        /\.dockview-tab\s*\{[^}]*padding:\s*0 6px 0 10px;/s
+    );
+});
+
 test("the Vesktop overlay is restricted to the documented DockView seams", () => {
     const allowed = new Set([
         "src/main/dockviewWebview.ts",

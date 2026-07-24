@@ -454,6 +454,10 @@ html.dockview-open .dockview-page-inner {
    flexes/ellipsises and the action buttons (⋯/close) are shrink-protected. */
 .dockview-header {
     flex: 0 0 auto;
+    /* Native Discord headers reserve 16px before their contents. DockView's
+       tabs already own a 10px inner content inset, so start the tab row at the
+       dock edge instead of paying for both insets. */
+    padding-left: 0;
 }
 /* Whenever a SECOND row is present (compose sub-toolbar OR a viewer's relocated
    controls), the header must GROW to fit both rows. Discord's native header
@@ -477,14 +481,15 @@ html.dockview-open .dockview-page-inner {
 .dockview-header.dockview-header--tworow .dockview-header-upper {
     flex: 0 0 auto;
     height: 48px;
-    padding: 8px 8px 8px 16px;
+    padding: 8px 8px 8px 0;
     box-sizing: border-box;
 }
 /* The underline tabs fill the FULL row height and the active underline bar pins to
    the row's bottom edge (flush with the divider to the second row). The tabs layout
    zeroes the upper row's vertical padding so the full-height tab reaches the row
-   bottom (the left inset stays so the first tab aligns where the title used to).
-   The tab strip is ALWAYS present, so this --tabs path is the only top-row layout.
+   bottom. Its outer left inset is zero in both layouts; each tab retains its own
+   10px content inset so the icon and label do not touch the dock edge. The tab
+   strip is ALWAYS present, so this --tabs path is the only top-row layout.
    The full `.dockview-header.dockview-header--tworow` prefix matches the specificity
    of the height/padding rule above so this vertical-padding override actually wins.
    The bare `.dockview-header-upper--tabs` covers the non-tworow case (the active
