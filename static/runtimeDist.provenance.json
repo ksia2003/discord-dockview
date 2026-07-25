@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "sourceCommit": "f6dc19f0c61bc101a467999710139f290939b355",
+  "sourceCommit": "3ae60e0ae943a5201359cd5d93054cc6fcc486ce",
   "vencordRef": "v1.14.16",
   "vencordCommit": "fc5466ebf854a82c8385c41742162c4b66f8a119",
-  "buildIdentity": "f1346633eaf9a91c910f8d456f30280b0789c7de-8b7a4464b89cbbb01dbfd8afe5f383a0c85276e7913fb6434942fc9b9130431f",
+  "buildIdentity": "38f37dee7b97487d0a9946650cc3fae24801ba1c-db3120a273cc1cdce766fa57bf1e50daaa1120b4abe67e4063063c8003c8c64c",
   "files": {
     "vencordDist/vencordDesktopMain.js": "fce3aceefad6dc57c85e96cf3523a92b5bf99bd9a164d109fe2d4cc64a217f89",
     "vencordDist/vencordDesktopPreload.js": "dbad6b49669148beeaf6336ece97a6cfd5eed043eff689118c0a492156065d06",
-    "vencordDist/vencordDesktopRenderer.js": "df455d738bd147766c71130233566c981ed43522a0e13b2b566f1b15b7f141d7",
+    "vencordDist/vencordDesktopRenderer.js": "a4ac0bac40d65be99bc62a5981def4783c01ce0b5ab5e5ca58ef16a78f58a7a8",
     "vencordDist/vencordDesktopRenderer.css": "6fc7c316dd24b8fbd612ae79e3c2da036e0b36983ac6a1293735e6be1b90bb9c",
     "dockviewDist/dockviewMain.js": "72a7782b4abb1da747792a56c38954d1f131a3c54648755546f3856923b1d109",
-    "dockviewDist/dockviewRenderer.js": "0c0227e4642afca209113ccd3b6548d1293658e8ab77d52de26b0ae8521f9ab0",
-    "dockviewDist/chunk-mermaid.js": "c58069db954c9acb7139a82f11332c390669bda95cb8792d2ec03cf884a49d40",
+    "dockviewDist/dockviewRenderer.js": "2a167a566073f8ee9533bcbee6909058f8abf10856ff5460ce45d7280d6b4731",
+    "dockviewDist/chunk-mermaid.js": "5ceae3ced3b0766bf6442f3811b34679377ea706cdd1413ccfcccc89a073ae8b",
     "dockviewDist/chunk-agpsd.js": "f0c10c583d179b182748c35cec6ec5fc65077873a9fb62e3f4bb6930694dd687",
     "dockviewDist/chunk-jxl.js": "bd6db2bac11394d2e9b70a8a93fe429a43f5d1931e48cc7301510bea6b1f2c3e",
     "dockviewDist/chunk-pptx.js": "e2d84842bd42d407130a399c902823d9e7e777250ae53ac30519d8cf1a43fa87",
@@ -21,6 +21,6 @@
     "dockviewDist/chunk-pdfjs.js": "afc9a61963bb4f3899b55836f5d7050cd172fe4f0fd1b7db27403a47bebdd3f6",
     "dockviewDist/chunk-codemirror.js": "20f36684cf5a9154886afa258c02938a5e08b78264e5dec000b4614cdb9ff75f",
     "dockviewDist/chunk-samples.js": "12ab4081a39a15597df08ee1f9cff5a85dc672923d39414bfbaa03f388fc6280",
-    "dockviewDist/version.txt": "c4a97bd8de3d0b232a0e841a6edf089a2c732cc6d89b86ddf852acdb4f8ffe52"
+    "dockviewDist/version.txt": "1a14661b4255cc4e3f4323084f768cb042a117e6931c9e7110ae9ae49aeee890"
   }
 }
