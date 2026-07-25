@@ -15,8 +15,9 @@
  *                          thread tab for payload.channelId (parent = payload.baseChannelId).
  *                          A close (SIDEBAR_CLOSE, or a null channelId) is left alone —
  *                          nothing native ever opened, so there is nothing to close.
- *   CHANNEL_TOGGLE_MEMBERS_SECTION        → focus the context tab (member list in the dock).
+ *   CHANNEL_TOGGLE_MEMBERS_SECTION        → focus CHANNEL (member list/info in the dock).
  *   USER_PROFILE_SIDEBAR_TOGGLE_SECTION   → focus the context tab (profile in the dock).
+ *   CHANNEL_RTC_UPDATE_CHAT_OPEN           → focus the permanent voice CHAT tab.
  *
  * PRIMING PASS-THROUGH: host/slotComponents.ts primes fiber capture by briefly toggling a
  * native section on. Those toggles set the self-flags in host/nativePanels.ts; the wrap
@@ -38,10 +39,10 @@
 import { FluxDispatcher } from "@vencord/types/webpack/common";
 
 import { getCurrentChannelMemId } from "../engine/channelMemory";
-import { isContextActive, isSealBypassed, setContextActive } from "../engine/contextTab";
+import { isSealBypassed, setContextView } from "../engine/contextTab";
 import { requestRender } from "../engine/forceRender";
 import { openThreadTab } from "../engine/threadTab";
-import { isSelfMemberToggle, isSelfProfileToggle } from "./nativePanels";
+import { isSelfMemberToggle, isSelfProfileToggle, isSelfVoiceChatToggle } from "./nativePanels";
 
 /** The captured original FluxDispatcher.dispatch, restored EXACTLY on stop. Null when the
  *  wrap isn't installed. */
@@ -61,7 +62,13 @@ function focusContextTab(): void {
     // The bypass escape hatch: while armed, the user asked for the NATIVE panel, so don't
     // yank focus back to the (broken) context tab — let the pass-through handle it.
     if (isSealBypassed(channelId)) return;
-    if (!isContextActive(channelId)) setContextActive(channelId, true);
+    setContextView(channelId, "channel");
+    requestRender();
+}
+
+/** Focus the voice channel's fixed CHAT view. */
+function focusVoiceChatTab(channelId: string | null): void {
+    setContextView(channelId, "voice-chat");
     requestRender();
 }
 
@@ -99,6 +106,18 @@ function handleDispatch(payload: any): boolean {
             handling = true;
             try { focusContextTab(); } finally { handling = false; }
             return true; // swallow — the store never flips to PROFILE from a user click
+        }
+        case "CHANNEL_RTC_UPDATE_CHAT_OPEN": {
+            // OUR hidden capture must be allowed to briefly mount/unmount the native call
+            // chat so host/voiceChatCapture.ts can acquire its inner component.
+            if (isSelfVoiceChatToggle()) return false;
+            // A close/reset carries chatOpen:false; let Discord settle its own store.
+            if (payload.chatOpen !== true) return false;
+            const target = payload.channelId != null ? String(payload.channelId) : null;
+            if (!target || target !== channelId) return false;
+            handling = true;
+            try { focusVoiceChatTab(target); } finally { handling = false; }
+            return true; // native call-chat sidebar never opens beside DockView
         }
     }
     return false;

@@ -357,8 +357,37 @@ export const STRINGS = {
         untitled: "DockView",
         // The permanent leftmost "context tab" label — the member list (guild) or the
         // user-profile sidebar (DM). It follows the current channel and is never closable.
+        channel: "Channel",
+        chat: "Chat",
         members: "Members",
         profile: "Profile"
+    },
+
+    // --- guild CHANNEL summary ---------------------------------------------
+    channel: {
+        overview: "Channel overview",
+        noTopic: "No channel description",
+        mute: "Mute",
+        muted: "Muted",
+        unmute: "Unmute",
+        notifications: "Notifications",
+        copyLink: "Copy link",
+        more: "More",
+        mute15Minutes: "For 15 Minutes",
+        mute1Hour: "For 1 Hour",
+        mute3Hours: "For 3 Hours",
+        mute8Hours: "For 8 Hours",
+        mute24Hours: "For 24 Hours",
+        muteUntilTurnedBackOn: "Until I turn it back on",
+        notificationDefault: "Use Server Default",
+        notificationAll: "All Messages",
+        notificationMentions: "Only @mentions",
+        notificationNothing: "Nothing"
+    },
+
+    voiceChat: {
+        loading: "Loading voice channel chat…",
+        fail: "Voice channel chat couldn't be loaded into the dock."
     },
 
     // --- context tab (the leftmost singleton "what am I looking at" view) ----

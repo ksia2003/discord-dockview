@@ -608,11 +608,17 @@ html.dockview-open .dockview-page-inner {
     overflow: hidden;
     background: var(--background-base-lower, #1a1a1e);
 }
-/* The captured component (member list) fills the wrapper. Discord's own inner scroller
-   handles overflow, so we let the child own the full box and never impose our own scroll
-   here (a nested scroll would double-bar). The className we hand the member list
-   (dockview-context-native) is a positioning hook only — no colour overrides. */
-.dockview-context-body > * {
+/* The guild CHANNEL summary owns only its natural height; the captured native panel fills
+   the rest. Discord's own member/profile scroller owns overflow, so the slot never adds a
+   second scrollbar. */
+.dockview-context-slot {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.dockview-context-slot > * {
     flex: 1 1 auto;
     min-height: 0;
     height: 100%;
@@ -625,6 +631,108 @@ html.dockview-open .dockview-page-inner {
     /* Let only this dock instance drive the member-list breakpoints. A narrow dock stays
        single-column even when the Vesktop window itself is wide. */
     container: dockview-members / inline-size;
+}
+
+/* Guild CHANNEL overview. Compact enough for the right rail, but information remains
+   readable: the full topic gets its own bounded scroll area instead of being truncated,
+   and the frequent actions wrap into equal-width controls. */
+.dockview-channel-overview {
+    flex: 0 0 auto;
+    padding: 12px 12px 10px;
+    border-bottom: 1px solid var(--border-subtle, var(--background-modifier-accent));
+    background: var(--background-base-low, var(--background-secondary));
+}
+.dockview-channel-heading {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 5px;
+}
+.dockview-channel-hash {
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    font-size: 20px;
+    font-weight: 500;
+    line-height: 1;
+}
+.dockview-channel-name {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    color: var(--text-strong, var(--header-primary, #fff));
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 20px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.dockview-channel-topic {
+    max-height: 74px;
+    margin-top: 7px;
+    padding-right: 3px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    color: var(--text-default, var(--text-normal, #f2f3f5));
+    font-size: 13px;
+    line-height: 18px;
+    overflow-wrap: anywhere;
+    scrollbar-width: thin;
+}
+.dockview-channel-topic--empty {
+    color: var(--text-muted);
+    font-style: italic;
+}
+.dockview-channel-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 10px;
+}
+.dockview-channel-action {
+    min-width: 0;
+    min-height: 40px;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--interactive-text-default, var(--interactive-normal, #b5bac1));
+    background: var(--interactive-background-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.08)));
+    cursor: pointer;
+    text-align: left;
+}
+.dockview-channel-action:hover {
+    color: var(--interactive-text-hover, var(--interactive-hover, #fff));
+    background: var(--interactive-background-selected, var(--background-modifier-selected, rgba(255, 255, 255, 0.12)));
+}
+.dockview-channel-action--active {
+    color: var(--text-feedback-critical, var(--status-danger, var(--text-danger, #f23f42)));
+}
+.dockview-channel-action > svg {
+    flex: 0 0 auto;
+}
+.dockview-channel-action-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+.dockview-channel-action-label,
+.dockview-channel-action-subtext {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.dockview-channel-action-label {
+    color: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 15px;
+}
+.dockview-channel-action-subtext {
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 13px;
 }
 
 /* WIDTH FLUIDITY (member list + profile fill the dock, no dead gutter). Discord's own
@@ -683,6 +791,51 @@ html.dockview-open .dockview-page-inner {
 .dockview-context-body aside [class*="inner_"] {
     width: 100% !important;
     max-width: 100% !important;
+}
+
+/* Hidden native mount used only to acquire the inner voice-chat component. The class is
+   installed before Discord's synchronous action dispatch and removed after capture, so the
+   native call-chat panel never flashes beside DockView. */
+html.dockview-prime-voice-chat div[class*="chatLayerWrapper"]:not(.dockview-wrapper) {
+    display: none !important;
+}
+
+/* Permanent voice CHAT. The backdrop is the positioning target; the real Discord
+   message/composer tree lives in a body-level isolated root above it. */
+.dockview-voice-chat-slot,
+.dockview-voice-chat-backdrop {
+    height: 100%;
+    min-height: 0;
+    position: relative;
+    background: var(--background-gradient-chat, var(--background-base-lower));
+}
+.dockview-voice-chat-status {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    color: var(--text-muted);
+    font-size: 14px;
+    text-align: center;
+}
+.dockview-voice-chat-portal {
+    position: fixed;
+    z-index: 210;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--background-gradient-chat, var(--background-base-lower));
+}
+.dockview-voice-chat-portal-inner,
+.dockview-voice-chat-portal-inner > * {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+    width: 100%;
 }
 
 /* A THREAD tab: Discord's own chat component (captured from the main chat, bound to the

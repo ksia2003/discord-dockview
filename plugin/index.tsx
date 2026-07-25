@@ -40,6 +40,10 @@ import {
 } from "./engine/window";
 import { getCurrentChannelId } from "./host/channel";
 import {
+    captureChannelView, clearChannelView, filterChannelHeaderSubtitle,
+    filterChannelHeaderToolbar
+} from "./host/channelView";
+import {
     getSelfMemberToggle, getSelfProfileToggle, isMemberListShown, isUserProfileSidebarShown
 } from "./host/nativePanels";
 import { interceptionInstalled, startInterception, stopInterception } from "./host/interception";
@@ -52,6 +56,13 @@ import {
     primeProfile, setForceProfileSidebarUnavailable
 } from "./host/slotComponents";
 import { destroyAllThreadPortals, livePortalThreads, portalDebugLog } from "./viewers/thread/threadPortal";
+import {
+    destroyAllVoiceChatPortals, liveVoiceChatPortals
+} from "./viewers/voice/voiceChatPortal";
+import {
+    captureVoiceChat, getVoiceChatProviderStack, getVoiceChatType,
+    invalidateVoiceChatCapture, primeVoiceChat
+} from "./host/voiceChatCapture";
 import { closeThreadTabEverywhere, openThreadTab } from "./engine/threadTab";
 import { onChannelDelete, onThreadDelete, onThreadUpdate } from "./engine/threadEvents";
 import { openExternalLink } from "./external/openExternal";
@@ -153,6 +164,10 @@ function exposeDebug(): void {
         openThreadTab, closeThreadTabEverywhere,
         get livePortalThreads() { return livePortalThreads(); },
         get portalDebug() { return portalDebugLog(); },
+        get liveVoiceChatPortals() { return liveVoiceChatPortals(); },
+        get voiceChatCaptured() { return !!getVoiceChatType(); },
+        get voiceChatProviderStackCaptured() { return !!getVoiceChatProviderStack(); },
+        captureVoiceChat, primeVoiceChat,
 
         // edit-mode (the cross-cutting capability): drive the view↔edit toggle +
         // assert the temporary buffer / re-render loop.
@@ -258,10 +273,26 @@ const dockViewPlugin = {
         {
             find: "maybePreloadChannelCall",
             noWarn: true,
-            replacement: {
-                match: /(this\.renderThreadSidebar\(\))/,
-                replace: "$1,$self.renderDockRail()"
-            }
+            replacement: [
+                {
+                    match: /(this\.renderThreadSidebar\(\))/,
+                    replace: "$1,$self.renderDockRail(this)"
+                },
+                {
+                    // `renderHeaderToolbar()` returns Discord's toolbar container whose
+                    // explicit child key "members" is the guild member-list toggle. Filter
+                    // that one child only; every other toolbar action stays upstream.
+                    match: /toolbar:(this\.renderHeaderToolbar\(\)),mobileToolbar:/,
+                    replace: "toolbar:$self.filterChannelHeaderToolbar($1,this.props.channel),mobileToolbar:"
+                },
+                {
+                    // The final child in renderHeaderBar is Discord's channel subtitle/
+                    // topic helper. Wrap that exact call (immediately before the header
+                    // children close); the helper returns null only for guild channels.
+                    match: /(renderFollowButton:this\.renderFollowButton\}\),\i\?.{0,400}:)(\(0,\i\.\i\)\((\i),\i\))(?=\]\},`header-)/,
+                    replace: "$1$self.filterChannelHeaderSubtitle($2,$3)"
+                }
+            ]
         }
     ],
 
@@ -320,8 +351,17 @@ const dockViewPlugin = {
     // sibling of the whole chat column). Returns a stable placeholder <div> whose ref binds
     // our own React root (host/mount.ts); all dock logic lives there, this is just the
     // reachable-from-$self seam.
-    renderDockRail() {
+    renderDockRail(channelView: any) {
+        captureChannelView(channelView);
         return renderDockRail();
+    },
+
+    filterChannelHeaderToolbar(toolbar: any, channel: any) {
+        return filterChannelHeaderToolbar(toolbar, channel);
+    },
+
+    filterChannelHeaderSubtitle(subtitle: any, channel: any) {
+        return filterChannelHeaderSubtitle(subtitle, channel);
     },
 
     start() {
@@ -442,10 +482,13 @@ const dockViewPlugin = {
         // Tear down every thread-chat portal (their document.body roots + overlay nodes) so
         // no captured chat / ghost overlay survives the stop.
         destroyAllThreadPortals();
+        destroyAllVoiceChatPortals();
         // Clear the context-tab per-channel flags + drop the captured slot component types
         // (a re-start re-primes/re-acquires them lazily).
         resetContextTab();
         invalidateSlotComponents();
+        invalidateVoiceChatCapture();
+        clearChannelView();
         setCurrentChannelMemId(null);
         // 4. Remove the debug handle.
         unexposeDebug();

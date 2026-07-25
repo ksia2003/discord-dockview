@@ -17,7 +17,8 @@
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
 import { snapshotActiveView } from "./viewState";
-import { clearSealBypass, setContextActive } from "./contextTab";
+import { clearSealBypass, seedContextView, setContextActive } from "./contextTab";
+import { isGuildVoiceChannel } from "../host/channel";
 import {
     activeIdFor, focusEmptyShell, getActiveWindow, reconcileActiveFromCache, setActiveWindow,
     setWindowChannelId
@@ -68,6 +69,10 @@ export function onChannelSelect(newId: string | null): void {
         if (reconcileActiveFromCache()) getActiveWindow().content.seq += 1;
     } else {
         focusEmptyShell(newId);
+        // A voice channel's call/screen-share surface stays in the main column; its
+        // permanent dock CHAT is the useful default. Seed only once so a user who later
+        // chooses CHANNEL keeps that choice when returning.
+        seedContextView(newId, isGuildVoiceChannel(newId) ? "voice-chat" : "channel");
         // No file tab here → the context tab is the active view (its default). Only force
         // this when the channel has never recorded a file selection; isContextActive
         // already defaults true for an unseen channel, so a channel the user explicitly

@@ -37,8 +37,9 @@ import { LS_WIDTH, lsSet } from "../engine/persist";
 import { consumePendingScroll } from "../engine/viewState";
 import { getActiveWindow } from "../engine/window";
 import { getCurrentChannelMemId } from "../engine/channelMemory";
-import { isContextActive } from "../engine/contextTab";
+import { getContextView, isContextActive } from "../engine/contextTab";
 import { ContextTabBody } from "./ContextTabBody";
+import { VoiceChatBody } from "../viewers/voice/VoiceChatBody";
 import { applyHostWidth, clampDockDrag } from "../host/layout";
 import { applyOpenState } from "../host/mount";
 import { getViewer } from "../viewers/registry";
@@ -105,7 +106,11 @@ const CLS = {
  *  caller) so a channel switch remounts the captured component with fresh props. */
 function renderBody() {
     const channelId = getCurrentChannelMemId();
-    if (isContextActive(channelId)) {
+    const contextView = getContextView(channelId);
+    if (contextView === "voice-chat") {
+        return React.createElement(VoiceChatBody, { key: `voice-chat-${channelId ?? "none"}` });
+    }
+    if (contextView === "channel") {
         return React.createElement(ContextTabBody, { key: `ctx-${channelId ?? "none"}` });
     }
     const win = getActiveWindow();

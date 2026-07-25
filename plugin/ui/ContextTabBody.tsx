@@ -43,6 +43,7 @@ import {
 } from "../host/slotComponents";
 import type { ContextKind } from "../host/slotComponents";
 import { STRINGS } from "../strings";
+import { ChannelOverview } from "./ChannelOverview";
 
 /** Wrap a captured Discord component in the app's own ThemeContext.Provider so the
  *  components resolve the SAME theme they do natively. The redesigned DM profile reads its
@@ -198,11 +199,29 @@ export function ContextTabBody() {
     }
 
     const body = kind === "profile" ? renderProfile(channel) : renderMembers(channel);
-    if (body) {
-        return React.createElement("div", { className: "dockview-context-body" }, body);
-    }
-    // No captured type yet → loading, then the honest error card if the prime failed.
-    return React.createElement(ContextFallback, { channelId, kind });
+    // Guild CHANNEL is a composed surface: the channel identity/topic/actions remain at
+    // the top even if Discord's member-list acquisition is still loading or drifted.
+    // Group DM/DM retain their old Members/Profile body without the guild overview.
+    const isVoiceChannel = !!channel?.guild_id && channel.type === 2;
+    const slotBody = body ?? (
+        // Discord does not mount its ordinary server member-list surface while a voice
+        // channel is the selected call view. If we captured the generic list earlier in
+        // the session it still renders here; on a direct voice-channel boot, keep CHANNEL
+        // as a clean channel overview instead of claiming signature drift with an error.
+        isVoiceChannel ? null : React.createElement(ContextFallback, { channelId, kind })
+    );
+    return React.createElement(
+        "div",
+        { className: "dockview-context-body" },
+        channel?.guild_id && channelId
+            ? React.createElement(ChannelOverview, { channelId })
+            : null,
+        React.createElement(
+            "div",
+            { className: "dockview-context-slot" },
+            slotBody
+        )
+    );
 }
 
 /** After a prime attempt resolves, decide loading vs error. We give the prime a short

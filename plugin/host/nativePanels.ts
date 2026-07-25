@@ -40,9 +40,11 @@ const EXCLUSIVE_HIDDEN_ATTR = "data-dockview-exclusive-hidden";
 // subscriber/patched-dispatcher runs INSIDE the toggle call and the flag is reliable.
 let selfMemberToggle = false;
 let selfProfileToggle = false;
+let selfVoiceChatToggle = false;
 
 export function isSelfMemberToggle(): boolean { return selfMemberToggle; }
 export function isSelfProfileToggle(): boolean { return selfProfileToggle; }
+export function isSelfVoiceChatToggle(): boolean { return selfVoiceChatToggle; }
 
 // --- store reads ------------------------------------------------------------
 
@@ -103,6 +105,23 @@ export function dispatchUserProfileSidebarToggle(): boolean {
         if (mod && typeof mod.toggleUserProfileSidebarSection === "function") { mod.toggleUserProfileSidebarSection(); return true; }
     } catch { /* ignore */ }
     finally { selfProfileToggle = false; }
+    return false;
+}
+
+/** Open/close Discord's native call-chat surface for a hidden, one-shot capture. The
+ * self flag lets this action pass host/interception.ts; ordinary user opens are swallowed
+ * and focus DockView's permanent CHAT tab instead. */
+export function dispatchVoiceChatOpen(channelId: string, open: boolean): boolean {
+    if (!channelId) return false;
+    selfVoiceChatToggle = true;
+    try {
+        const mod = (findByProps as any)?.("updateChatOpen");
+        if (mod && typeof mod.updateChatOpen === "function") {
+            mod.updateChatOpen(channelId, open);
+            return true;
+        }
+    } catch { /* capture falls back to the honest unavailable state */ }
+    finally { selfVoiceChatToggle = false; }
     return false;
 }
 
@@ -181,3 +200,4 @@ export function restoreHiddenMembers(): void {
 // --- debug accessors (the __dockView surface reads these) -------------------
 export function getSelfMemberToggle(): boolean { return selfMemberToggle; }
 export function getSelfProfileToggle(): boolean { return selfProfileToggle; }
+export function getSelfVoiceChatToggle(): boolean { return selfVoiceChatToggle; }

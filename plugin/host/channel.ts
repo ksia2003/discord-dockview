@@ -22,3 +22,22 @@ export function getCurrentChannelId(): string | null {
     const m = /\/channels\/[^/]+\/(\d+)/.exec(location.pathname);
     return m ? m[1] : null;
 }
+
+/** Resolve a channel without importing the heavier slot-capture module. */
+export function getChannelById(channelId: string | null): any {
+    if (!channelId) return null;
+    try {
+        const store = (findByProps as any)?.("getChannel", "hasChannel");
+        return store?.getChannel?.(channelId) ?? null;
+    } catch {
+        return null;
+    }
+}
+
+/** Regular guild voice channels (Discord channel type 2) own the permanent CHAT view.
+ * Stage channels deliberately stay out until their different audience/composer semantics
+ * are verified independently. */
+export function isGuildVoiceChannel(channelId: string | null): boolean {
+    const channel = getChannelById(channelId);
+    return !!channel?.guild_id && channel.type === 2;
+}

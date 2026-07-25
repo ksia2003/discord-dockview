@@ -47,8 +47,18 @@ function uninstallStyle(): void {
 
 let started = false;
 
-export function renderDockRail(): unknown {
-    return plugin.renderDockRail();
+// Patch replacements resolve `$self` to this standalone bundle's global exports, not to
+// the private plugin object. Keep every patch-call seam explicitly forwarded here.
+export function renderDockRail(channelView: unknown): unknown {
+    return plugin.renderDockRail(channelView);
+}
+
+export function filterChannelHeaderToolbar(toolbar: unknown, channel: unknown): unknown {
+    return plugin.filterChannelHeaderToolbar(toolbar, channel);
+}
+
+export function filterChannelHeaderSubtitle(subtitle: unknown, channel: unknown): unknown {
+    return plugin.filterChannelHeaderSubtitle(subtitle, channel);
 }
 
 export function start(): boolean {

@@ -90,6 +90,47 @@ test("the native member list gains dock-scoped responsive columns", () => {
     );
 });
 
+test("guild Channel and voice Chat are permanent dock surfaces", () => {
+    const plugin = source("plugin/index.tsx");
+    const standalone = source("plugin/standalone.ts");
+    const tabs = source("plugin/ui/DockTabs.tsx");
+    const contextBody = source("plugin/ui/ContextTabBody.tsx");
+    const overview = source("plugin/ui/ChannelOverview.tsx");
+    const interception = source("plugin/host/interception.ts");
+    const capture = source("plugin/host/voiceChatCapture.ts");
+    const portal = source("plugin/viewers/voice/voiceChatPortal.ts");
+    const css = source("plugin/style.css");
+
+    // Guild identity/topic moves to CHANNEL while only the native header's topic +
+    // member toggle are filtered.
+    assert.match(plugin, /filterChannelHeaderToolbar/);
+    assert.match(plugin, /filterChannelHeaderSubtitle/);
+    assert.match(standalone, /plugin\.filterChannelHeaderToolbar\(toolbar, channel\)/);
+    assert.match(standalone, /plugin\.filterChannelHeaderSubtitle\(subtitle, channel\)/);
+    assert.match(standalone, /plugin\.renderDockRail\(channelView\)/);
+    assert.match(contextBody, /ChannelOverview/);
+    assert.match(contextBody, /dockview-context-slot/);
+    assert.match(overview, /Parser\.parseTopic/);
+    assert.match(overview, /updateChannelOverrideSettings/);
+    assert.match(overview, /openNativeChannelMenu/);
+
+    // Regular guild voice owns an additional fixed, non-draggable CHAT tab.
+    assert.match(tabs, /channel\.type === 2/);
+    assert.match(tabs, /voiceChatTabElement/);
+    assert.match(tabs, /setContextView\(channelId, "voice-chat"\)/);
+    assert.match(interception, /CHANNEL_RTC_UPDATE_CHAT_OPEN/);
+    assert.match(interception, /focusVoiceChatTab/);
+
+    // Capture only the inner message/composer component, not the call view, then keep one
+    // isolated portal per voice channel so drafts and scroll survive tab switches.
+    assert.match(capture, /keysAre\(Object\.keys\(props\), \["channel", "guild", "chatInputType"\]\)/);
+    assert.match(capture, /dockview-prime-voice-chat/);
+    assert.match(portal, /const portals = new Map<string, Portal>\(\)/);
+    assert.match(portal, /createRoot\(node\)/);
+    assert.match(css, /html\.dockview-prime-voice-chat/);
+    assert.match(css, /\.dockview-voice-chat-portal\s*\{/);
+});
+
 test("tab headers reclaim the outer left inset without crowding tab contents", () => {
     const css = source("plugin/style.css");
 

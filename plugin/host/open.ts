@@ -8,7 +8,7 @@
  */
 
 import { registerHostActions } from "../engine/hostBridge";
-import { setCurrentChannelMemId } from "../engine/channelMemory";
+import { onChannelSelect } from "../engine/channelMemory";
 import { getCurrentChannelId } from "./channel";
 import { applyHostWidth } from "./layout";
 import { applyOpenState, ensureHost, hideContextBody, startHost, stopHost } from "./mount";
@@ -23,9 +23,10 @@ export function registerHost(): void {
         applyHostWidth,
         hideContextBody
     });
-    // seed the per-channel memory with the channel we boot into (so the first save
-    // targets the right channel, not "null").
-    setCurrentChannelMemId(getCurrentChannelId());
+    // Run the same entry path for the channel we boot into. A direct memory assignment
+    // would skip fixed-view seeding, which made a Vesktop launched directly into a voice
+    // channel select CHANNEL instead of its permanent CHAT default.
+    onChannelSelect(getCurrentChannelId());
 }
 
 // Re-export the host lifecycle so index.tsx imports one host module.

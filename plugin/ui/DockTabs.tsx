@@ -31,10 +31,10 @@ import { ContextMenuApi, React } from "@vencord/types/webpack/common";
 
 import { requestRender } from "../engine/forceRender";
 import { getCurrentChannelMemId } from "../engine/channelMemory";
-import { isContextActive, setContextActive } from "../engine/contextTab";
+import { getContextView, setContextActive, setContextView } from "../engine/contextTab";
 import { closeTab, switchToWindow } from "../engine/tabs";
 import { getActiveWindowId, getWindows, isRealTab, reorderTab } from "../engine/window";
-import { contextKindFor } from "../host/slotComponents";
+import { contextKindFor, getChannelObject } from "../host/slotComponents";
 import { STRINGS } from "../strings";
 import type { ContentType } from "../engine/types";
 import { DockMoreMenu } from "./DockMoreMenu";
@@ -47,6 +47,8 @@ const TAB_CLOSE_PATH = "M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-
 // weight (the same 24-viewBox filled paths as the file-type glyphs).
 const MEMBERS_ICON_PATH = "M14.5 8a3 3 0 1 0-2.99-3.24A5 5 0 0 1 14.5 8Zm2.5 3c-.34 0-.68.02-1 .07 1.2.86 2 2.28 2 3.93v2h4v-2c0-1.66-3.34-4-5-4ZM9 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 2c-2 0-6 1.34-6 4v2h12v-2c0-2.66-4-4-6-4Z";
 const PROFILE_ICON_PATH = "M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-3.33 0-10 1.67-10 5v2a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-2c0-3.33-6.67-5-10-5Z";
+const CHANNEL_ICON_PATH = "M10.3 2h2l-1 5h4.4l1-5h2l-1 5H21v2h-3.7l-1.2 6H20v2h-4.3l-1 5h-2l1-5H9.3l-1 5h-2l1-5H3v-2h4.7l1.2-6H4V7h5.3l1-5Zm.6 7-1.2 6h4.4l1.2-6h-4.4Z";
+const CHAT_ICON_PATH = "M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H9l-5 4v-4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm2 5v2h12V8H6Zm0 4v2h8v-2H6Z";
 
 /** A file-type glyph for a tab. SIZE PARITY with the single-window header's leading
  *  glyph (20px) — a tab must never shrink any element vs the pre-tab header. */
@@ -141,10 +143,20 @@ function runFlip(strip: HTMLElement, prev: Map<string, number>): Map<string, num
 function contextTabElement(channelId: string | null, active: boolean) {
     // Group DM + guild channels show a member list ("Members"); a 1:1 DM shows the
     // profile sidebar ("Profile"). The kind resolver matches native per channel type.
+    const channel = getChannelObject(channelId);
     const kind = contextKindFor(channelId);
     const isProfile = kind === "profile";
-    const label = isProfile ? STRINGS.tabs.profile : STRINGS.tabs.members;
-    const iconPath = isProfile ? PROFILE_ICON_PATH : MEMBERS_ICON_PATH;
+    const isGuild = !!channel?.guild_id;
+    const label = isProfile
+        ? STRINGS.tabs.profile
+        : isGuild
+            ? STRINGS.tabs.channel
+            : STRINGS.tabs.members;
+    const iconPath = isProfile
+        ? PROFILE_ICON_PATH
+        : isGuild
+            ? CHANNEL_ICON_PATH
+            : MEMBERS_ICON_PATH;
     return React.createElement(
         "div",
         {
@@ -157,7 +169,7 @@ function contextTabElement(channelId: string | null, active: boolean) {
             // NOT draggable: a drag must never displace the context tab.
             draggable: false,
             onClick: () => {
-                setContextActive(channelId, true);
+                setContextView(channelId, "channel");
                 requestRender();
             }
         },
@@ -165,6 +177,34 @@ function contextTabElement(channelId: string | null, active: boolean) {
             "svg",
             { key: "glyph", className: "dockview-tab-icon", width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
             React.createElement("path", { fill: "currentColor", d: iconPath })
+        ),
+        React.createElement("span", { key: "name", className: "dockview-tab-name" }, label)
+    );
+}
+
+/** The second permanent tab in a regular guild voice channel. It is deliberately the
+ * same fixed-tab grammar as CHANNEL: non-closable, non-draggable, and before file tabs. */
+function voiceChatTabElement(channelId: string, active: boolean) {
+    const label = STRINGS.tabs.chat;
+    return React.createElement(
+        "div",
+        {
+            key: "__voice-chat__",
+            "data-tab-id": "__voice-chat__",
+            className: "dockview-tab dockview-tab-context" + (active ? " dockview-tab-active" : ""),
+            role: "tab",
+            "aria-selected": active,
+            title: label,
+            draggable: false,
+            onClick: () => {
+                setContextView(channelId, "voice-chat");
+                requestRender();
+            }
+        },
+        React.createElement(
+            "svg",
+            { key: "glyph", className: "dockview-tab-icon", width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+            React.createElement("path", { fill: "currentColor", d: CHAT_ICON_PATH })
         ),
         React.createElement("span", { key: "name", className: "dockview-tab-name" }, label)
     );
@@ -192,15 +232,24 @@ export function DockTabs() {
     });
 
     const channelId = getCurrentChannelMemId();
-    const ctxActive = isContextActive(channelId);
+    const channel = getChannelObject(channelId);
+    const contextView = getContextView(channelId);
+    const ctxActive = contextView != null;
     const activeId = getActiveWindowId();
     // A file tab is "active" only when the context tab is NOT the active view.
     const fileActiveId = ctxActive ? null : activeId;
-    const contextTab = channelId != null ? [contextTabElement(channelId, ctxActive)] : [];
+    const fixedTabs = channelId != null
+        ? [
+            contextTabElement(channelId, contextView === "channel"),
+            ...(channel?.guild_id && channel.type === 2
+                ? [voiceChatTabElement(channelId, contextView === "voice-chat")]
+                : [])
+        ]
+        : [];
     return React.createElement(
         "div",
         { className: "dockview-tabs", role: "tablist", ref: stripRef },
-        ...contextTab,
+        ...fixedTabs,
         ...getWindows().filter(isRealTab).map(w => {
             const isActive = w.id === fileActiveId;
             // An empty window (no file yet) shows the short product name, not the long
