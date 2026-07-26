@@ -114,8 +114,22 @@ test("guild Channel and voice Chat are permanent dock surfaces", () => {
     assert.match(overview, /findCssClasses/);
     assert.match(overview, /Clickable/);
     assert.match(overview, /openNativeChannelMenu/);
+    assert.match(overview, /dockview-channel-heading/);
+    assert.match(overview, /dockview-channel-topic/);
+    assert.doesNotMatch(overview, /memberMod|dockview-channel-native-row|dockview-channel-native-icon/);
     assert.doesNotMatch(overview, /updateChannelOverrideSettings|MenuRadioItem|copyText/);
     assert.doesNotMatch(css, /dockview-channel-actions|dockview-channel-action/);
+    assert.match(css, /\.dockview-channel-overview\s*\{[^}]*border-bottom:/s);
+    assert.doesNotMatch(css, /dockview-channel-native-row|dockview-channel-native-icon/);
+
+    // Detached member/profile roots must restore the exact native provider ancestry so
+    // Discord's own user and bot rows can open their native profile layer.
+    assert.match(contextBody, /getMemberProviderStack/);
+    assert.match(contextBody, /getProfileProviderStack/);
+    assert.match(contextBody, /for \(const provider of stack\)/);
+    assert.match(contextBody, /providerBoundary/);
+    assert.match(source("plugin/host/slotComponents.ts"), /memberProviderStack/);
+    assert.match(source("plugin/host/slotComponents.ts"), /profileProviderStack/);
 
     // Regular guild voice owns an additional fixed, non-draggable CHAT tab.
     assert.match(tabs, /channel\.type === 2/);

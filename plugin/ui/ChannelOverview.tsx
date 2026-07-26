@@ -1,11 +1,10 @@
 /*
  * Guild-channel identity for the permanent CHANNEL tab.
  *
- * This is deliberately not a DockView-designed card or action dashboard. It borrows the
- * exact CSS modules Discord uses for a member-list row and its header icon buttons, so the
- * channel identity reads as part of the member list below it. The only DockView styling
- * left is the small amount needed to let a channel topic wrap beyond a member's one-line
- * status.
+ * This is deliberately not a DockView-designed card or action dashboard. It follows the
+ * grammar of Discord's CHANNEL HEADER: a plain hash + title line, muted topic copy, a
+ * separator, and the native overflow icon treatment. It does NOT impersonate a member row
+ * (no fake avatar/status slot or member hover surface).
  *
  * Clicking the native-looking overflow control (or right-clicking the row) delegates to
  * Channel.handleContextMenu. Mute, notifications, copy link, edit, and every permission-
@@ -31,21 +30,14 @@ function cssMod(...keys: string[]): ClassMap {
     return {};
 }
 
-const memberMod = cssMod(
-    "container", "clickable", "childContainer", "layout", "avatar",
-    "content", "nameAndDecorators", "name", "subText"
+const headerMod = cssMod(
+    "titleWrapper", "title", "channelIcon", "iconWrapper", "clickable", "icon"
 );
-const headerMod = cssMod("iconWrapper", "clickable", "icon");
 
 const CLS = {
-    row: `${memberMod.container || "container__91a9d"} ${memberMod.clickable || "clickable__91a9d"}`,
-    child: memberMod.childContainer || "childContainer__91a9d",
-    layout: memberMod.layout || "layout__91a9d",
-    avatar: memberMod.avatar || "avatar__91a9d",
-    content: memberMod.content || "content__91a9d",
-    nameAndDecorators: memberMod.nameAndDecorators || "nameAndDecorators__91a9d",
-    name: memberMod.name || "name__91a9d text-md/medium__91a9d",
-    subText: memberMod.subText || "subText__91a9d",
+    titleWrapper: headerMod.titleWrapper || "titleWrapper__9293f",
+    title: headerMod.title || "title__9293f",
+    channelIcon: headerMod.channelIcon || "channelIcon__9293f",
     iconWrapper: headerMod.iconWrapper || "iconWrapper__9293f",
     iconClickable: headerMod.clickable || "clickable__9293f",
     icon: headerMod.icon || "icon__9293f"
@@ -86,63 +78,48 @@ export function ChannelOverview({ channelId }: { channelId: string; }) {
         },
         React.createElement(
             "div",
-            { className: `${CLS.row} dockview-channel-native-row` },
+            { className: "dockview-channel-heading" },
             React.createElement(
                 "div",
-                { className: CLS.child },
+                { className: `${CLS.channelIcon} ${CLS.iconWrapper} dockview-channel-hash`, "aria-hidden": true },
+                "#"
+            ),
+            React.createElement(
+                "div",
+                { className: `${CLS.titleWrapper} dockview-channel-title-wrap` },
                 React.createElement(
-                    "div",
-                    { className: `${CLS.layout} dockview-channel-native-layout` },
-                    React.createElement(
-                        "div",
-                        {
-                            className: `${CLS.avatar} dockview-channel-native-icon`,
-                            "aria-hidden": true
-                        },
-                        "#"
-                    ),
-                    React.createElement(
-                        "div",
-                        { className: `${CLS.content} dockview-channel-native-content` },
-                        React.createElement(
-                            "div",
-                            { className: CLS.nameAndDecorators },
-                            React.createElement(
-                                "div",
-                                { className: `${CLS.name} dockview-channel-native-name` },
-                                channel.name
-                            )
-                        ),
-                        topic != null
-                            ? React.createElement(
-                                "div",
-                                { className: `${CLS.subText} dockview-channel-native-topic` },
-                                topic
-                            )
-                            : null
-                    ),
-                    React.createElement(
-                        Clickable,
-                        {
-                            className: `${CLS.iconWrapper} ${CLS.iconClickable} dockview-channel-native-more`,
-                            "aria-label": channel.name,
-                            "aria-haspopup": "menu",
-                            onClick: (event: any) => openMenu(event, channel.id)
-                        },
-                        React.createElement(
-                            "svg",
-                            {
-                                className: CLS.icon,
-                                width: 20,
-                                height: 20,
-                                viewBox: "0 0 24 24",
-                                "aria-hidden": true
-                            },
-                            React.createElement("path", { fill: "currentColor", d: MORE_ICON })
-                        )
-                    )
+                    "h2",
+                    { className: `${CLS.title} dockview-channel-title` },
+                    channel.name
+                )
+            ),
+            React.createElement(
+                Clickable,
+                {
+                    className: `${CLS.iconWrapper} ${CLS.iconClickable} dockview-channel-more`,
+                    "aria-label": channel.name,
+                    "aria-haspopup": "menu",
+                    onClick: (event: any) => openMenu(event, channel.id)
+                },
+                React.createElement(
+                    "svg",
+                    {
+                        className: CLS.icon,
+                        width: 20,
+                        height: 20,
+                        viewBox: "0 0 24 24",
+                        "aria-hidden": true
+                    },
+                    React.createElement("path", { fill: "currentColor", d: MORE_ICON })
                 )
             )
-        )
+        ),
+        topic != null
+            ? React.createElement(
+                "div",
+                { className: "dockview-channel-topic" },
+                topic
+            )
+            : null
     );
 }

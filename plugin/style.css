@@ -633,66 +633,66 @@ html.dockview-open .dockview-page-inner {
     container: dockview-members / inline-size;
 }
 
-/* Guild CHANNEL identity. The component itself carries Discord's current member-row and
-   header-icon CSS-module classes; these scoped rules only adapt that native one-line row
-   to a wrapping channel topic. No separate card surface or DockView button grammar. */
+/* Guild CHANNEL identity. Follow Discord's ordinary channel-header grammar instead of
+   disguising channel metadata as a member row: one compact title line, muted topic, native
+   overflow treatment, and a simple separator before the actual native member list. */
 .dockview-channel-overview {
     flex: 0 0 auto;
-    padding: 8px 8px 4px 0;
+    padding: 10px 8px 10px 16px;
     background: transparent;
+    border-bottom: 1px solid var(--border-subtle, var(--background-modifier-accent));
 }
-.dockview-channel-native-row {
-    width: calc(100% - 8px) !important;
-    height: auto !important;
-    min-height: 42px;
-}
-.dockview-channel-native-layout {
-    height: auto !important;
-    min-height: 40px;
-    align-items: flex-start;
-}
-.dockview-channel-native-icon {
-    width: 32px;
-    height: 32px;
+.dockview-channel-heading {
     display: flex;
     align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-    font-size: 22px;
-    font-weight: 500;
-    line-height: 32px;
+    min-width: 0;
+    height: 24px;
 }
-.dockview-channel-native-content {
+.dockview-channel-hash {
+    flex: 0 0 auto;
+    width: 24px;
+    margin-right: 4px;
+    color: var(--text-muted);
+    font-size: 20px;
+    font-weight: 500;
+    line-height: 24px;
+    text-align: center;
+}
+.dockview-channel-title-wrap {
     flex: 1 1 auto;
     min-width: 0;
-    padding-right: 2px;
 }
-.dockview-channel-native-name {
+.dockview-channel-title {
+    margin: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    color: var(--text-strong, var(--text-default));
+    font-family: var(--font-primary);
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 20px;
 }
-.dockview-channel-native-topic {
-    max-height: 64px;
-    margin-top: 2px;
-    padding-right: 2px;
+.dockview-channel-topic {
+    max-height: 48px;
+    margin: 5px 8px 0 28px;
     overflow-y: auto;
     overflow-x: hidden;
-    color: var(--text-muted) !important;
+    color: var(--text-muted);
     font-size: 12px;
     line-height: 16px;
     overflow-wrap: anywhere;
     white-space: normal;
     scrollbar-width: thin;
 }
-.dockview-channel-native-more {
+.dockview-channel-more {
     flex: 0 0 auto;
-    margin: 4px 4px 0 2px;
+    margin-left: 4px;
     color: var(--text-muted);
     opacity: 0.7;
 }
-.dockview-channel-native-row:hover .dockview-channel-native-more,
-.dockview-channel-native-more:focus-visible {
+.dockview-channel-more:hover,
+.dockview-channel-more:focus-visible {
     color: var(--interactive-text-hover, var(--interactive-hover));
     opacity: 1;
 }

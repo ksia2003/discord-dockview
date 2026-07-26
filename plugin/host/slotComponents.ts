@@ -44,6 +44,14 @@ import { dispatchMemberListToggle, dispatchUserProfileSidebarToggle } from "./na
 // native panel again — we render our own elements of these types.
 let memberListType: any = null;
 let profileType: any = null;
+type ProviderEntry = { type: any; value: any };
+// The member/profile component TYPES are only the inner slot bodies. Discord renders
+// them below app/window/layer context providers; popout-opening paths silently no-op when
+// those providers are missing in DockView's detached root. Capture the exact ancestry for
+// each native slot independently so re-rendering the type preserves its original runtime
+// environment as well as its visual component.
+let memberProviderStack: ProviderEntry[] | null = null;
+let profileProviderStack: ProviderEntry[] | null = null;
 // The chat component TYPE, captured from the MAIN chat's fiber (always rendered — no
 // priming needed). Rendered with a THREAD's channel props to become a dock thread tab.
 let chatType: any = null;
@@ -67,11 +75,16 @@ function fiberOf(el: Element | null): any {
     return null;
 }
 
+// The React fiber tag for a ContextProvider fiber — stable across React 16→19. Matching
+// by TAG (not by the type object's shape) is the authoritative test: shape matching can
+// accidentally admit context consumers, which cannot be re-rendered as providers.
+const CONTEXT_PROVIDER_TAG = 10;
+
 /** Walk a fiber's `return` ancestry, calling `match` on each function-component fiber's
- *  memoizedProps. Returns the first fiber's `type` (the component) that matches, or null
- *  after `maxHops`. Only FUNCTION components are considered (host fibers have a string
- *  `type`, which we skip). */
-function walkForComponent(start: any, match: (propKeys: string[], props: any) => boolean, maxHops = 40): any {
+ *  memoizedProps. Returns the first matching FIBER (not only its type), so callers can
+ *  capture the provider ancestry that begins immediately outside the component. Only
+ *  FUNCTION components are considered (host fibers have a string `type`, which we skip). */
+function walkForComponentFiber(start: any, match: (propKeys: string[], props: any) => boolean, maxHops = 40): any {
     let f = start;
     let hops = 0;
     while (f && hops++ < maxHops) {
@@ -80,12 +93,28 @@ function walkForComponent(start: any, match: (propKeys: string[], props: any) =>
         if (typeof t === "function" && props && typeof props === "object") {
             const keys = Object.keys(props);
             try {
-                if (match(keys, props)) return t;
+                if (match(keys, props)) return f;
             } catch { /* a match predicate throw just skips this fiber */ }
         }
         f = f.return;
     }
     return null;
+}
+
+/** Capture every context provider above `start`, nearest-first. Iteratively wrapping a
+ *  child with this array leaves the root-most provider outermost, matching the native
+ *  nesting order. */
+function providerAncestry(start: any): ProviderEntry[] {
+    const found: ProviderEntry[] = [];
+    let f = start;
+    let hops = 0;
+    while (f && hops++ < 400) {
+        if (f.tag === CONTEXT_PROVIDER_TAG && f.type) {
+            found.push({ type: f.type, value: f.memoizedProps ? f.memoizedProps.value : undefined });
+        }
+        f = f.return;
+    }
+    return found;
 }
 
 /** True when `keys` is EXACTLY `want` (same members, same count) — an order-independent
@@ -102,12 +131,14 @@ function keysAre(keys: string[], want: string[]): boolean {
  *  be hidden (display:none) by our seal, but a hidden node still exists + carries a
  *  fiber, so this resolves during priming. */
 function memberAnchor(): Element | null {
-    return document.querySelector('[class*="membersWrap"]');
+    return Array.from(document.querySelectorAll('[class*="membersWrap"]'))
+        .find(el => !el.closest(`#${HOST_ID}`)) ?? null;
 }
 
 /** The DM user-profile sidebar anchor (its labelled <aside>). */
 function profileAnchor(): Element | null {
-    return document.querySelector('aside[aria-labelledby^="user-profile-sidebar-heading"]');
+    return Array.from(document.querySelectorAll('aside[aria-labelledby^="user-profile-sidebar-heading"]'))
+        .find(el => !el.closest(`#${HOST_ID}`)) ?? null;
 }
 
 /** The MAIN chat DOM anchor (the `chat_`-classed element Discord always renders on a
@@ -144,27 +175,41 @@ function hidePrimedAnchors(): void {
  *  type was captured (or one was already cached and the anchor confirms it's still
  *  present). Caches module-level on success. */
 export function captureMemberList(): boolean {
-    if (memberListType) return true;
     const fiber = fiberOf(memberAnchor());
-    if (!fiber) return false;
-    const type = walkForComponent(fiber, keys => keysAre(keys, ["channel", "className"]));
-    if (type) { memberListType = type; return true; }
-    return false;
+    if (!fiber) return memberListType != null;
+    const component = walkForComponentFiber(fiber, keys => keysAre(keys, ["channel", "className"]));
+    if (!component) return memberListType != null;
+    memberListType = component.type;
+    const providers = providerAncestry(component.return);
+    if (providers.length) memberProviderStack = providers;
+    return true;
 }
 
 /** Try to capture the DM profile-sidebar component from the live tree. */
 export function captureProfile(): boolean {
-    if (profileType) return true;
     if (forceSidebarUnavailable) return false; // test seam: sidebar route forced off
     const fiber = fiberOf(profileAnchor());
-    if (!fiber) return false;
-    const type = walkForComponent(fiber, keys => keysAre(keys, ["channel"]));
-    if (type) { profileType = type; return true; }
-    return false;
+    if (!fiber) return profileType != null;
+    const component = walkForComponentFiber(fiber, keys => keysAre(keys, ["channel"]));
+    if (!component) return profileType != null;
+    profileType = component.type;
+    const providers = providerAncestry(component.return);
+    if (providers.length) profileProviderStack = providers;
+    return true;
 }
 
 export function getMemberListType(): any { return memberListType; }
 export function getProfileType(): any { return profileType; }
+export function getMemberProviderStack(): ProviderEntry[] | null {
+    // Refresh while the hidden native anchor exists so theme/window/layer values follow
+    // Discord state changes. memberAnchor() explicitly excludes our detached dock tree.
+    try { captureMemberList(); } catch { /* keep the last known-good stack */ }
+    return memberProviderStack;
+}
+export function getProfileProviderStack(): ProviderEntry[] | null {
+    try { captureProfile(); } catch { /* keep the last known-good stack */ }
+    return profileProviderStack;
+}
 
 // --- chat capture (thread tabs) ---------------------------------------------
 // The thread chat is Discord's channel-view chat component. It's the SAME component the
@@ -219,13 +264,7 @@ export function getChatType(): any { return chatType; }
 // chat had in place. The values are the app's LIVE objects (layer containers, history,
 // theme...), so popouts mount into the app's own layers (z≈1002), far above the portal
 // overlay by construction. Values are refreshed on every capture pass.
-let providerStack: Array<{ type: any; value: any }> | null = null;
-
-// The React fiber tag for a ContextProvider fiber — stable across React 16→19. Matching
-// by TAG (not by the type object's shape) is the authoritative test: a shape test that
-// admits react.context objects catches CONSUMERS too, and re-rendering a consumer as an
-// element type crashes the portal render (rig-proven: the whole portal root unmounted).
-const CONTEXT_PROVIDER_TAG = 10;
+let providerStack: ProviderEntry[] | null = null;
 
 /** Capture the provider ancestry above the main chat (nearest-first). Cached; refreshed
  *  per pass so the values stay current. Only fibers whose TAG says ContextProvider are
@@ -233,22 +272,14 @@ const CONTEXT_PROVIDER_TAG = 10;
 export function captureProviderStack(): boolean {
     const fiber = fiberOf(chatAnchor());
     if (!fiber) return providerStack != null;
-    const found: Array<{ type: any; value: any }> = [];
-    let f = fiber.return;
-    let hops = 0;
-    while (f && hops++ < 400) {
-        if (f.tag === CONTEXT_PROVIDER_TAG && f.type) {
-            found.push({ type: f.type, value: f.memoizedProps ? f.memoizedProps.value : undefined });
-        }
-        f = f.return;
-    }
+    const found = providerAncestry(fiber.return);
     if (found.length) { providerStack = found; return true; }
     return providerStack != null;
 }
 
 /** The captured provider stack, NEAREST-first (wrap iteratively to put the root-most
  *  provider outermost), or null before capture. */
-export function getProviderStack(): Array<{ type: any; value: any }> | null {
+export function getProviderStack(): ProviderEntry[] | null {
     return providerStack;
 }
 
@@ -372,6 +403,8 @@ export function loadThreadMessages(threadId: string | null): void {
 export function invalidateSlotComponents(): void {
     memberListType = null;
     profileType = null;
+    memberProviderStack = null;
+    profileProviderStack = null;
     chatType = null;
     chatBaseProps = null;
     providerStack = null;

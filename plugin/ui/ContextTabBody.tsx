@@ -38,8 +38,8 @@ import {
 } from "../host/nativePanels";
 import {
     captureMemberList, captureProfile, contextKindFor, getChannelObject, getMemberListType,
-    getProfileType, getThemeContextType, getThemeContextValue, isProfileSectionUnavailable,
-    primeMemberList, primeProfile
+    getMemberProviderStack, getProfileProviderStack, getProfileType, getThemeContextType,
+    getThemeContextValue, isProfileSectionUnavailable, primeMemberList, primeProfile
 } from "../host/slotComponents";
 import type { ContextKind } from "../host/slotComponents";
 import { STRINGS } from "../strings";
@@ -61,20 +61,55 @@ function withAppTheme(el: any) {
     return React.createElement(ctx.Provider, { value }, el);
 }
 
+// A captured Discord provider can drift after an upstream update. Without a boundary, one
+// broken entry would unmount the whole Channel/Profile body. Degrade to the already-safe
+// theme-only render instead: the list remains visible while the full interaction context
+// waits for the next capture.
+let BoundaryClass: any = null;
+function providerBoundary(): any {
+    if (BoundaryClass) return BoundaryClass;
+    class ContextProviderBoundary extends (React.Component as any) {
+        declare props: any;
+        state = { failed: false };
+        static getDerivedStateFromError() { return { failed: true }; }
+        componentDidCatch() { /* the fallback below is the recovery */ }
+        render() {
+            return this.state.failed ? (this.props.fallback ?? null) : this.props.children;
+        }
+    }
+    BoundaryClass = ContextProviderBoundary;
+    return BoundaryClass;
+}
+
+/** Restore the exact app/window/layer provider ancestry the native slot had. The stack is
+ *  nearest-first; wrapping in iteration order leaves the root-most provider outermost.
+ *  This is what lets Discord's own user/bot rows route their popouts into the app layer. */
+function withCapturedProviders(bare: any, stack: Array<{ type: any; value: any }> | null) {
+    const fallback = withAppTheme(bare);
+    if (!stack?.length) return fallback;
+    let tree = bare;
+    for (const provider of stack) {
+        tree = React.createElement(provider.type, { value: provider.value }, tree);
+    }
+    return React.createElement(providerBoundary(), { fallback }, tree);
+}
+
 /** Render the guild member list for `channel` from the captured type, or null if the
  *  type isn't acquired yet (the caller falls to loading/error). */
 function renderMembers(channel: any) {
     const type = getMemberListType();
     if (!type || !channel) return null;
     // Our own wrapper class so the container (not the native parent) supplies styling.
-    return withAppTheme(React.createElement(type, { channel, className: "dockview-context-native" }));
+    const bare = React.createElement(type, { channel, className: "dockview-context-native" });
+    return withCapturedProviders(bare, getMemberProviderStack());
 }
 
 /** Render the DM profile sidebar for `channel` from the captured type, or null. */
 function renderProfile(channel: any) {
     const type = getProfileType();
     if (!type || !channel) return null;
-    return withAppTheme(React.createElement(type, { channel }));
+    const bare = React.createElement(type, { channel });
+    return withCapturedProviders(bare, getProfileProviderStack());
 }
 
 /** The honest failure card (acquisition drifted). Mirrors StateCards' centred glyph/
