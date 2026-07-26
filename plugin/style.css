@@ -633,106 +633,68 @@ html.dockview-open .dockview-page-inner {
     container: dockview-members / inline-size;
 }
 
-/* Guild CHANNEL overview. Compact enough for the right rail, but information remains
-   readable: the full topic gets its own bounded scroll area instead of being truncated,
-   and the frequent actions wrap into equal-width controls. */
+/* Guild CHANNEL identity. The component itself carries Discord's current member-row and
+   header-icon CSS-module classes; these scoped rules only adapt that native one-line row
+   to a wrapping channel topic. No separate card surface or DockView button grammar. */
 .dockview-channel-overview {
     flex: 0 0 auto;
-    padding: 12px 12px 10px;
-    border-bottom: 1px solid var(--border-subtle, var(--background-modifier-accent));
-    background: var(--background-base-low, var(--background-secondary));
+    padding: 8px 8px 4px 0;
+    background: transparent;
 }
-.dockview-channel-heading {
+.dockview-channel-native-row {
+    width: calc(100% - 8px) !important;
+    height: auto !important;
+    min-height: 42px;
+}
+.dockview-channel-native-layout {
+    height: auto !important;
+    min-height: 40px;
+    align-items: flex-start;
+}
+.dockview-channel-native-icon {
+    width: 32px;
+    height: 32px;
     display: flex;
     align-items: center;
-    min-width: 0;
-    gap: 5px;
-}
-.dockview-channel-hash {
-    flex: 0 0 auto;
+    justify-content: center;
     color: var(--text-muted);
-    font-size: 20px;
+    font-size: 22px;
     font-weight: 500;
-    line-height: 1;
+    line-height: 32px;
 }
-.dockview-channel-name {
+.dockview-channel-native-content {
+    flex: 1 1 auto;
     min-width: 0;
-    margin: 0;
+    padding-right: 2px;
+}
+.dockview-channel-native-name {
     overflow: hidden;
-    color: var(--text-strong, var(--header-primary, #fff));
-    font-size: 16px;
-    font-weight: 600;
-    line-height: 20px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.dockview-channel-topic {
-    max-height: 74px;
-    margin-top: 7px;
-    padding-right: 3px;
+.dockview-channel-native-topic {
+    max-height: 64px;
+    margin-top: 2px;
+    padding-right: 2px;
     overflow-y: auto;
     overflow-x: hidden;
-    color: var(--text-default, var(--text-normal, #f2f3f5));
-    font-size: 13px;
-    line-height: 18px;
+    color: var(--text-muted) !important;
+    font-size: 12px;
+    line-height: 16px;
     overflow-wrap: anywhere;
+    white-space: normal;
     scrollbar-width: thin;
 }
-.dockview-channel-topic--empty {
-    color: var(--text-muted);
-    font-style: italic;
-}
-.dockview-channel-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
-    margin-top: 10px;
-}
-.dockview-channel-action {
-    min-width: 0;
-    min-height: 40px;
-    padding: 5px 8px;
-    border: 0;
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    color: var(--interactive-text-default, var(--interactive-normal, #b5bac1));
-    background: var(--interactive-background-hover, var(--background-modifier-hover, rgba(255, 255, 255, 0.08)));
-    cursor: pointer;
-    text-align: left;
-}
-.dockview-channel-action:hover {
-    color: var(--interactive-text-hover, var(--interactive-hover, #fff));
-    background: var(--interactive-background-selected, var(--background-modifier-selected, rgba(255, 255, 255, 0.12)));
-}
-.dockview-channel-action--active {
-    color: var(--text-feedback-critical, var(--status-danger, var(--text-danger, #f23f42)));
-}
-.dockview-channel-action > svg {
+.dockview-channel-native-more {
     flex: 0 0 auto;
-}
-.dockview-channel-action-copy {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-}
-.dockview-channel-action-label,
-.dockview-channel-action-subtext {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.dockview-channel-action-label {
-    color: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 15px;
-}
-.dockview-channel-action-subtext {
+    margin: 4px 4px 0 2px;
     color: var(--text-muted);
-    font-size: 10px;
-    line-height: 13px;
+    opacity: 0.7;
+}
+.dockview-channel-native-row:hover .dockview-channel-native-more,
+.dockview-channel-native-more:focus-visible {
+    color: var(--interactive-text-hover, var(--interactive-hover));
+    opacity: 1;
 }
 
 /* WIDTH FLUIDITY (member list + profile fill the dock, no dead gutter). Discord's own

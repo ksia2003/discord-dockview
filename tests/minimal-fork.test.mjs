@@ -111,8 +111,11 @@ test("guild Channel and voice Chat are permanent dock surfaces", () => {
     assert.match(contextBody, /ChannelOverview/);
     assert.match(contextBody, /dockview-context-slot/);
     assert.match(overview, /Parser\.parseTopic/);
-    assert.match(overview, /updateChannelOverrideSettings/);
+    assert.match(overview, /findCssClasses/);
+    assert.match(overview, /Clickable/);
     assert.match(overview, /openNativeChannelMenu/);
+    assert.doesNotMatch(overview, /updateChannelOverrideSettings|MenuRadioItem|copyText/);
+    assert.doesNotMatch(css, /dockview-channel-actions|dockview-channel-action/);
 
     // Regular guild voice owns an additional fixed, non-draggable CHAT tab.
     assert.match(tabs, /channel\.type === 2/);
