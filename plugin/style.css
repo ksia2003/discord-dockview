@@ -644,11 +644,6 @@ html.dockview-open .dockview-page-inner {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    /* This wrapper is owned by DockView and always fills the rail. Query it instead of
-       the captured native root: Discord experiments place the supplied className at
-       different depths, and a fixed-width native root made some accounts stay 1-column
-       even inside a wide dock. */
-    container: dockview-members / inline-size;
 }
 .dockview-context-slot > * {
     flex: 1 1 auto;
@@ -762,49 +757,12 @@ html.dockview-open .dockview-page-inner {
     max-width: 100% !important;
 }
 
-/* RESPONSIVE MEMBER COLUMNS. Discord's native row was designed for its narrow right rail;
-   stretching one row across a wide dock leaves most of it empty. Keep the native headings,
-   rows, hover states, popouts, and scroller, but arrange complete native-sized rows into a
-   compact directory when the dock has room. Role/status headings and virtualization spacers
-   span the grid, so each section still starts on its own line. DOM and keyboard order remain
-   unchanged: left-to-right, then down. */
-@container dockview-members (min-width: 520px) {
-    :is(
-        .dockview-context-native[class*="members_"][class*="scrollerBase"],
-        .dockview-context-native [class*="members_"][class*="scrollerBase"]
-    ) > [class*="content_"]:has(> [class*="member_"]) {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        align-content: start;
-    }
-
-    :is(
-        .dockview-context-native[class*="members_"][class*="scrollerBase"],
-        .dockview-context-native [class*="members_"][class*="scrollerBase"]
-    ) > [class*="content_"]:has(> [class*="member_"])
-        > [class*="member_"] {
-        width: auto !important;
-        min-width: 0;
-        max-width: none !important;
-    }
-
-    :is(
-        .dockview-context-native[class*="members_"][class*="scrollerBase"],
-        .dockview-context-native [class*="members_"][class*="scrollerBase"]
-    ) > [class*="content_"]:has(> [class*="member_"])
-        > :not([class*="member_"]) {
-        grid-column: 1 / -1;
-    }
-}
-
-@container dockview-members (min-width: 800px) {
-    :is(
-        .dockview-context-native[class*="members_"][class*="scrollerBase"],
-        .dockview-context-native [class*="members_"][class*="scrollerBase"]
-    ) > [class*="content_"]:has(> [class*="member_"]) {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-}
+/* Keep Discord's member rows in their native single column at every dock width.
+   The list virtualizer calculates its spacer, scroll height, and mounted range in
+   one-dimensional row units. Reflowing only the mounted DOM into CSS columns
+   compresses those rows without updating the virtualizer, leaving blank bands and
+   making members appear only after another scroll. A future multi-column directory
+   must own a column-aware virtualizer rather than restyle this native list. */
 .dockview-context-body aside [class*="outer_"],
 .dockview-context-body aside [class*="inner_"] {
     width: 100% !important;

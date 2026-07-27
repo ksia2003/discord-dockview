@@ -117,17 +117,13 @@ test("F9 can switch width or temporarily hide until an explicit tab opens", () =
     );
 });
 
-test("the native member list gains dock-scoped responsive columns", () => {
+test("the native member list stays fluid without breaking its one-column virtualizer", () => {
     const css = source("plugin/style.css");
     const layout = source("plugin/host/layout.ts");
     const nativePanels = source("plugin/host/nativePanels.ts");
     const panel = source("plugin/ui/DockPanel.tsx");
 
     assert.match(layout, /const dockMinWidth = getCompactDockWidth\(\)/);
-    assert.match(
-        css,
-        /\.dockview-context-slot\s*\{[^}]*container:\s*dockview-members\s*\/\s*inline-size;/s
-    );
     assert.match(panel, /channelContextActive \? " dockview-body--context" : ""/);
     assert.match(
         css,
@@ -139,22 +135,9 @@ test("the native member list gains dock-scoped responsive columns", () => {
         css,
         /\.dockview-card\s*\{[^}]*flex:\s*1 1 0 !important;[^}]*width:\s*auto !important;[^}]*max-width:\s*100% !important;/s
     );
-    assert.match(
-        css,
-        /@container dockview-members \(min-width: 520px\)\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/
-    );
-    assert.match(
-        css,
-        /@container dockview-members \(min-width: 800px\)\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/
-    );
-    assert.match(
-        css,
-        /> \[class\*="content_"\]:has\(> \[class\*="member_"\]\)[\s\S]*?> \[class\*="member_"\]\s*\{[^}]*width:\s*auto !important;[^}]*min-width:\s*0;[^}]*max-width:\s*none !important;/
-    );
-    assert.match(
-        css,
-        /> :not\(\[class\*="member_"\]\)\s*\{[^}]*grid-column:\s*1 \/ -1;/s
-    );
+    assert.doesNotMatch(css, /@container dockview-members/);
+    assert.doesNotMatch(css, /:has\(>\s*\[class\*="member_"\]\)/);
+    assert.match(css, /A future multi-column directory\s*\n?\s*\*?\s*must own a column-aware virtualizer/);
     assert.match(nativePanels, /function exclusiveLayoutRoot\(/);
     assert.match(nativePanels, /parent\.children\.length !== 1/);
     assert.match(nativePanels, /mark\(el, true\)/);
