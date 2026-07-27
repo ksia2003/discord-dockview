@@ -13,7 +13,11 @@
 
 import { React } from "@vencord/types/webpack/common";
 
+import { requestRender } from "../engine/forceRender";
+
 let channelView: any = null;
+let channelHeaderSubtitle: { channelId: string; element: any; } | null = null;
+let subtitleRenderQueued = false;
 
 export function captureChannelView(instance: any): void {
     if (instance && typeof instance === "object") channelView = instance;
@@ -21,10 +25,41 @@ export function captureChannelView(instance: any): void {
 
 export function clearChannelView(): void {
     channelView = null;
+    channelHeaderSubtitle = null;
 }
 
 export function filterChannelHeaderSubtitle(subtitle: any, channel: any): any {
-    return channel?.guild_id ? null : subtitle;
+    if (!channel?.guild_id) return subtitle;
+
+    const channelId = typeof channel.id === "string" ? channel.id : null;
+    if (channelId) {
+        const changedChannel = channelHeaderSubtitle?.channelId !== channelId;
+        channelHeaderSubtitle = { channelId, element: subtitle };
+
+        // The Dock is a separate React root. On the first header render for a newly
+        // selected channel, its native topic element is captured here after the Dock
+        // may already have painted its parsed fallback. Repaint once in a microtask
+        // (never synchronously during Discord's render) so the Dock adopts the exact
+        // native element and its click/popout behaviour.
+        if (changedChannel && !subtitleRenderQueued) {
+            subtitleRenderQueued = true;
+            queueMicrotask(() => {
+                subtitleRenderQueued = false;
+                requestRender();
+            });
+        }
+    }
+
+    return null;
+}
+
+/** The exact topic/subtitle element Discord created for its channel header. DockView
+ * removes it from the main header, then renders this same element in Channel instead
+ * of recreating Discord's click/popout interaction. */
+export function getNativeChannelHeaderSubtitle(channelId: string): any {
+    return channelHeaderSubtitle?.channelId === channelId
+        ? channelHeaderSubtitle.element
+        : null;
 }
 
 export function filterChannelHeaderToolbar(toolbar: any, channel: any): any {

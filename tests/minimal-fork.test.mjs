@@ -158,8 +158,19 @@ test("guild Channel and voice Chat are permanent dock surfaces", () => {
     assert.match(overview, /findCssClasses/);
     assert.match(overview, /Clickable/);
     assert.match(overview, /openNativeChannelMenu/);
+    assert.match(overview, /getNativeChannelHeaderSubtitle/);
+    assert.match(overview, /nativeTopicBoundary/);
     assert.match(overview, /dockview-channel-heading/);
     assert.match(overview, /dockview-channel-topic/);
+    assert.match(
+        source("plugin/host/channelView.ts"),
+        /channelHeaderSubtitle = \{ channelId, element: subtitle \}/
+    );
+    assert.match(
+        css,
+        /\.dockview-channel-topic--native > \[class\*="topic_"\]\s*\{[^}]*max-height:\s*none;[^}]*overflow:\s*visible;/s
+    );
+    assert.match(css, /\.dockview-channel-topic--native > \[class\*="dot_"\]\s*\{[^}]*display:\s*none;/s);
     assert.doesNotMatch(overview, /memberMod|dockview-channel-native-row|dockview-channel-native-icon/);
     assert.doesNotMatch(overview, /updateChannelOverrideSettings|MenuRadioItem|copyText/);
     assert.doesNotMatch(css, /dockview-channel-actions|dockview-channel-action/);

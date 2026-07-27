@@ -697,16 +697,32 @@ html.dockview-open .dockview-page-inner {
     line-height: 20px;
 }
 .dockview-channel-topic {
-    max-height: 54px;
     margin: 5px 8px 0 28px;
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: visible;
     color: var(--text-muted);
     font-size: 14px;
     line-height: 18px;
     overflow-wrap: anywhere;
     white-space: normal;
-    scrollbar-width: thin;
+}
+/* Discord's own channel-header topic element is moved here intact so its native
+   click-to-show-full-topic popout remains available. Remove only the one-line header
+   truncation constraints; links, mentions, focus semantics, and popout behaviour remain
+   owned by the native component. */
+.dockview-channel-topic--native > [class*="dot_"] {
+    display: none;
+}
+.dockview-channel-topic--native > [class*="topic_"] {
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    white-space: normal;
+    text-overflow: clip;
+}
+.dockview-channel-topic--native > [class*="topic_"] span {
+    white-space: normal;
 }
 .dockview-channel-more {
     flex: 0 0 auto;

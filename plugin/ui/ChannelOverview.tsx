@@ -16,7 +16,9 @@ import {
     ChannelStore, Clickable, Parser, React, useStateFromStores
 } from "@vencord/types/webpack/common";
 
-import { openNativeChannelMenu } from "../host/channelView";
+import {
+    getNativeChannelHeaderSubtitle, openNativeChannelMenu
+} from "../host/channelView";
 
 type ClassMap = Record<string, string>;
 
@@ -45,6 +47,22 @@ const CLS = {
 
 const MORE_ICON = "M5 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm7 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm7 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z";
 
+let NativeTopicBoundaryClass: any = null;
+function nativeTopicBoundary(): any {
+    if (NativeTopicBoundaryClass) return NativeTopicBoundaryClass;
+    class NativeTopicBoundary extends (React.Component as any) {
+        declare props: any;
+        state = { failed: false };
+        static getDerivedStateFromError() { return { failed: true }; }
+        componentDidCatch() { /* parsed fallback below remains interactive content */ }
+        render() {
+            return this.state.failed ? this.props.fallback : this.props.children;
+        }
+    }
+    NativeTopicBoundaryClass = NativeTopicBoundary;
+    return NativeTopicBoundaryClass;
+}
+
 function openMenu(event: any, channelId: string): void {
     event?.preventDefault?.();
     event?.stopPropagation?.();
@@ -68,6 +86,19 @@ export function ChannelOverview({ channelId }: { channelId: string; }) {
             topic = channel.topic;
         }
     }
+    // Discord still returns an empty subtitle fragment for some topic-less channels.
+    // Gate on the real channel topic so Channel does not keep a zero-height clickable
+    // wrapper after switching away from a channel that had one.
+    const nativeTopic = topic != null
+        ? getNativeChannelHeaderSubtitle(channel.id)
+        : null;
+    const topicContent = nativeTopic != null
+        ? React.createElement(
+            nativeTopicBoundary(),
+            { fallback: topic },
+            nativeTopic
+        )
+        : topic;
 
     return React.createElement(
         "section",
@@ -114,11 +145,14 @@ export function ChannelOverview({ channelId }: { channelId: string; }) {
                 )
             )
         ),
-        topic != null
+        topicContent != null
             ? React.createElement(
                 "div",
-                { className: "dockview-channel-topic" },
-                topic
+                {
+                    className: "dockview-channel-topic"
+                        + (nativeTopic != null ? " dockview-channel-topic--native" : "")
+                },
+                topicContent
             )
             : null
     );
