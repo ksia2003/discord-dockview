@@ -212,6 +212,11 @@ export function applyDockLayout(): void {
     const want = getActiveWindow().state.width; // the user's intended (persisted) width
     const dockMinWidth = getCompactDockWidth();
 
+    // Compact is a fixed native-member-width mode, not a narrow resizable mode.
+    // CSS uses this marker to remove the 8px resize handle entirely so the native
+    // 264px member rail receives the full 264px instead of being squeezed to 256px.
+    host.classList.toggle("dockview-host--compact", isCompactDockWidth());
+
     // Floating ⟺ even the dock's minimum can't sit beside the chat's minimum.
     const floating = avail > 0 && (avail - dockMinWidth) < CHAT_MIN_WIDTH;
 

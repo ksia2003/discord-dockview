@@ -64,6 +64,8 @@ test("ordinary link clicks stay upstream while right-click offers Open in DockVi
 test("F9 switches a compact rail to a remembered expanded width", () => {
     const plugin = source("plugin/index.tsx");
     const layout = source("plugin/host/layout.ts");
+    const panel = source("plugin/ui/DockPanel.tsx");
+    const css = source("plugin/style.css");
     const strings = source("plugin/strings.ts");
 
     assert.match(layout, /export const COMPACT_WIDTH_FALLBACK = 264;/);
@@ -75,6 +77,12 @@ test("F9 switches a compact rail to a remembered expanded width", () => {
     assert.match(layout, /dockWidth = expandedDockWidth/);
     assert.match(layout, /compactWidthMode = false/);
     assert.match(layout, /dockWidth = compactWidth/);
+    assert.match(layout, /classList\.toggle\("dockview-host--compact", isCompactDockWidth\(\)\)/);
+    assert.match(panel, /if \(isCompactDockWidth\(\)\) return;/);
+    assert.match(
+        css,
+        /#dockview-root\.dockview-host--compact \.dockview-resize\s*\{[^}]*display:\s*none;/s
+    );
     assert.match(plugin, /e\.key !== "F9" && e\.code !== "F9"/);
     assert.match(plugin, /toggleDockWidthMode\(\)/);
     assert.match(plugin, /window\.addEventListener\("keydown", onKeyDown\)/);
@@ -87,11 +95,17 @@ test("the native member list gains dock-scoped responsive columns", () => {
     const css = source("plugin/style.css");
     const layout = source("plugin/host/layout.ts");
     const nativePanels = source("plugin/host/nativePanels.ts");
+    const panel = source("plugin/ui/DockPanel.tsx");
 
     assert.match(layout, /const dockMinWidth = getCompactDockWidth\(\)/);
     assert.match(
         css,
         /\.dockview-context-slot\s*\{[^}]*container:\s*dockview-members\s*\/\s*inline-size;/s
+    );
+    assert.match(panel, /channelContextActive \? " dockview-body--context" : ""/);
+    assert.match(
+        css,
+        /\.dockview-body--context\s*\{[^}]*overflow:\s*hidden;[^}]*scrollbar-gutter:\s*auto;/s
     );
     assert.match(css, /\.dockview-context-native\s*\{[^}]*width:\s*100% !important;/s);
     assert.match(css, /\.dockview-context-native\[class\*="membersWrap"\]/);

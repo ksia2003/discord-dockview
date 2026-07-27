@@ -40,7 +40,9 @@ import { getCurrentChannelMemId } from "../engine/channelMemory";
 import { getContextView, isContextActive } from "../engine/contextTab";
 import { ContextTabBody } from "./ContextTabBody";
 import { VoiceChatBody } from "../viewers/voice/VoiceChatBody";
-import { applyHostWidth, clampDockDrag, getCompactDockWidth } from "../host/layout";
+import {
+    applyHostWidth, clampDockDrag, getCompactDockWidth, isCompactDockWidth
+} from "../host/layout";
 import { applyOpenState } from "../host/mount";
 import { getViewer } from "../viewers/registry";
 import type { ViewerContext } from "../engine/types";
@@ -158,6 +160,10 @@ export function DockPanel() {
 
     const onResizeStart = useCallback((e: any) => {
         if (e.button != null && e.button !== 0) return;
+        // Compact is the fixed native member-rail mode. Its handle is hidden in CSS,
+        // but keep the event boundary fail-closed in case Discord forwards a stale
+        // pointer event while F9 is switching modes.
+        if (isCompactDockWidth()) return;
         e.preventDefault();
         resizing.current = true;
         const startX = e.clientX;
@@ -237,7 +243,9 @@ export function DockPanel() {
     }, []);
 
     const win = getActiveWindow();
-    const ctxActive = isContextActive(getCurrentChannelMemId());
+    const channelId = getCurrentChannelMemId();
+    const ctxActive = isContextActive(channelId);
+    const channelContextActive = getContextView(channelId) === "channel";
     const hasContent = win.content.name != null && !ctxActive;
 
     // The header grows to TWO rows for the second-row strip: the attach filename bar
@@ -306,6 +314,7 @@ export function DockPanel() {
                         {
                             className: "dockview-body"
                                 + (hasContent && win.content.type === "pdf" ? " dockview-body-pdf" : "")
+                                + (channelContextActive ? " dockview-body--context" : "")
                         },
                         renderBody()
                     ),
