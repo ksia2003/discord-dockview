@@ -40,6 +40,13 @@
 #dockview-root.dockview-open {
     display: block !important;
 }
+/* Thread and voice-chat bodies live in body-level React portals. Hide those in the same
+   frame as the host when F9 temporarily removes DockView; their position loops retain
+   the active portal and resume it at the preserved dock rect when the class returns. */
+html:not(.dockview-open) .dockview-thread-portal,
+html:not(.dockview-open) .dockview-voice-chat-portal {
+    display: none !important;
+}
 
 /* TWO-MODE width (mirrors Discord's native thread panel). DOCKED (default, no
    class): the host is the in-flow flex spacer above — its inline flex/width push

@@ -22,6 +22,9 @@ export interface HostActions {
     applyOpenState(): void;
     /** Apply the persisted/active dock width to the host node. */
     applyHostWidth(): void;
+    /** Reveal a dock hidden by the optional F9 temporary-hide mode. Explicit new-tab
+     *  actions call this; passive channel/layout updates deliberately do not. */
+    revealDock(): void;
     /** Synchronously hide the mounted context body (member list / profile). The DockPanel
      *  swaps the body via a React re-render, which lands on a later commit; when the active
      *  view flips from the context tab to a heavier view (a thread portal), that commit can
@@ -38,6 +41,7 @@ let host: HostActions = {
     ensureHost: noop,
     applyOpenState: noop,
     applyHostWidth: noop,
+    revealDock: noop,
     hideContextBody: noop
 };
 

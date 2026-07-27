@@ -45,6 +45,9 @@ let mode: Mode = "pending";
 
 let root: Root | null = null; // React root
 let rootHost: HTMLElement | null = null; // the node `root` is bound to
+// F9 temporary-hide is session-only. The React root and every tab stay mounted; only
+// the host's layout class is removed, so showing it restores the exact previous view.
+let temporarilyHidden = false;
 // Set true between start() and stop(). A heartbeat/observer callback already in
 // flight when stop() ran must NOT re-inject the host afterwards.
 let active = false;
@@ -93,6 +96,10 @@ export function setActive(v: boolean): void { active = v; }
  *  `getElementById` can return the OTHER, stale placeholder. */
 export function liveHost(): HTMLElement | null {
     return rootHost;
+}
+
+export function isDockTemporarilyHidden(): boolean {
+    return temporarilyHidden;
 }
 
 /** Bind (or rebind) our React root onto `host` and render the dock. Idempotent: no-op
@@ -260,23 +267,36 @@ export function ensureHost(): boolean {
     return false;
 }
 
-/** Reflect the dock into the DOM. The dock is ALWAYS open in the rewrite, so the
- *  `dockview-open` class (display:block !important — Discord's layout code
- *  intermittently resets our sibling's inline display to none, but never beats the
- *  class rule) is applied unconditionally. Geometry (docked push + clamp / floating
- *  overlay) is owned by applyDockLayout; the native right-slot (member list / profile /
- *  thread sidebar) is kept collapsed via the targeted data attribute set by
- *  hideExclusiveRightSlot. */
+/** Reflect the dock into the DOM. Normally the `dockview-open` class wins over
+ *  Discord's intermittent inline display reset. F9's optional temporary-hide mode
+ *  deliberately removes that class while leaving the React root and tab state mounted.
+ *  Geometry (docked push + clamp / floating overlay) is owned by applyDockLayout; the
+ *  native right-slot remains collapsed while DockView is hidden. */
 export function applyOpenState(): void {
     const host = document.getElementById(HOST_ID);
     const inner = findPageInner();
     // A harmless debug/compat marker; the hide path no longer depends on this class.
     if (inner) inner.classList.add("dockview-page-inner");
 
-    if (host) host.classList.add("dockview-open");
-    document.documentElement.classList.add("dockview-open");
-    applyDockLayout();
+    const visible = !temporarilyHidden;
+    host?.classList.toggle("dockview-open", visible);
+    document.documentElement.classList.toggle("dockview-open", visible);
+    if (visible) applyDockLayout();
     hideExclusiveRightSlot(inner);
+}
+
+/** Show a temporarily hidden dock without changing its compact/expanded width. This is
+ *  the explicit-new-tab path: files, websites, new files, and visible thread opens. */
+export function revealDock(): void {
+    temporarilyHidden = false;
+    applyOpenState();
+}
+
+/** F9 hide-mode toggle. Returns true when the dock is visible after the toggle. */
+export function toggleDockTemporaryVisibility(): boolean {
+    temporarilyHidden = !temporarilyHidden;
+    applyOpenState();
+    return !temporarilyHidden;
 }
 
 /** Hide the mounted context body (member list / profile) in the SAME synchronous turn a
@@ -372,6 +392,7 @@ let patchCheck: any = null;
  *  host never appears (patch anchor drifted). The keybind / Flux / persist wiring is
  *  index.tsx's. */
 export function startHost(): void {
+    temporarilyHidden = false;
     active = true;
     mode = "pending";
     // The patch may already have committed the placeholder before start() runs.
@@ -399,6 +420,7 @@ export function startHost(): void {
 export function stopHost(): void {
     const wasFallback = mode === "fallback";
     active = false;
+    temporarilyHidden = false;
     mode = "pending";
     if (patchCheck != null) { clearTimeout(patchCheck); patchCheck = null; }
     if (heartbeat != null) { clearInterval(heartbeat); heartbeat = null; }

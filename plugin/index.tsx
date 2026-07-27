@@ -2,12 +2,13 @@
  * DockView — Vencord userplugin (modular rewrite entry).
  * ---------------------------------------------------------------------------
  * The manifest + lifecycle + Flux wiring for the from-scratch modular DockView.
- * It mounts the host (the always-on right rail), registers the host with the engine
+ * It mounts the host (the right rail), registers the host with the engine
  * bridge, restores the persisted width, and exposes window.__dockView for console /
  * CDP driving.
  *
- * The dock is ALWAYS visible (it IS the right rail) — F9 changes its width instead of
- * hiding it. Chip-click loading is wired via embed.ts, which intercepts a dock-handled
+ * By default F9 changes the dock width; an optional setting makes F9 hide it temporarily
+ * instead. Explicit new-tab actions reveal a temporarily hidden dock. Chip-click loading
+ * is wired via embed.ts, which intercepts a dock-handled
  * attachment chip / inline image and routes it through the engine's load(); a handled
  * type whose viewer isn't built yet lands on the unsupported card, and an empty channel
  * shows the empty-state body.
@@ -51,7 +52,10 @@ import {
     applyHostWidth, getExpandedDockWidth, isCompactDockWidth,
     setExpandedDockWidth, toggleDockWidthMode
 } from "./host/layout";
-import { applyOpenState, ensureHost, liveHost, mountDebugLog, mountStats, renderDockRail } from "./host/mount";
+import {
+    applyOpenState, ensureHost, isDockTemporarilyHidden, liveHost, mountDebugLog,
+    mountStats, renderDockRail, revealDock, toggleDockTemporaryVisibility
+} from "./host/mount";
 import { registerHost, startHost, stopHost } from "./host/open";
 import {
     captureChat, getChatType, getMemberListType, getProfileType, getProviderStack,
@@ -95,6 +99,16 @@ async function applyPersisted(): Promise<void> {
     if (typeof widthStr === "string") {
         setExpandedDockWidth(parseInt(widthStr, 10) || getExpandedDockWidth());
     }
+    // Vencord hydrates persisted plugin settings during the same startup turn. Yield once
+    // before reading f9Behavior so a saved hide mode does not momentarily look like the
+    // schema default and strand the rail in compact mode until the next key press.
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    // In hide mode F9 replaces (rather than supplements) the compact destination.
+    // Start at the remembered expanded width so the visible state and width slider stay
+    // meaningful across restarts.
+    if (settings.store.f9Behavior === "hide" && isCompactDockWidth()) {
+        toggleDockWidthMode();
+    }
     applyHostWidth();
     requestRender();
 }
@@ -110,9 +124,12 @@ function exposeDebug(): void {
         get content() { return getActiveWindow().content; },
         get activeCacheKey() { return getActiveWindow().activeCacheKey; },
 
-        // Host mount. The dock is always open; F9 only switches compact/expanded width.
+        // Host mount + the optional session-only F9 hidden state.
         ensureHost, applyOpenState,
-        get dockOpen() { return true; },
+        get dockOpen() { return !isDockTemporarilyHidden(); },
+        get temporarilyHidden() { return isDockTemporarilyHidden(); },
+        get f9Behavior() { return settings.store.f9Behavior === "hide" ? "hide" : "width"; },
+        revealDock, toggleDockTemporaryVisibility,
         toggleDockWidthMode,
         get compactMode() { return isCompactDockWidth(); },
         get expandedWidth() { return getExpandedDockWidth(); },
@@ -233,7 +250,7 @@ function addOpenInDockViewItem(children: any[], props: any): void {
 
 const dockViewPlugin = {
     name: "DockView",
-    description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images. The dock is always the right rail; F9 switches between compact and expanded widths.",
+    description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images. F9 can switch its width or temporarily hide it.",
     authors: [{ name: "seonin", id: 0n }],
     target: "DESKTOP",
 
@@ -376,16 +393,24 @@ const dockViewPlugin = {
         //     open actions and converts them to dock actions, so Discord never enters
         //     "sidebar open" state. Our own priming toggles pass through (self-flagged).
         startInterception();
-        // 2. restore persisted width/open from DataStore (async; applies on resolve).
+        // 2. restore the persisted expanded-width preset (async; applies on resolve).
         applyPersisted();
 
-        // 3. F9 keeps the rail mounted and switches only its width. Ignore key-repeat so
-        //    holding the function key cannot flicker rapidly between both widths.
+        // 3. F9 uses the selected behavior: compact↔expanded (the backwards-compatible
+        //    default), or a session-only temporary hide that preserves every mounted tab.
+        //    Ignore key-repeat so holding the function key cannot flicker rapidly.
         onKeyDown = (e: KeyboardEvent) => {
             if ((e.key !== "F9" && e.code !== "F9") || e.repeat) return;
             e.preventDefault();
-            toggleDockWidthMode();
-            applyHostWidth();
+            if (settings.store.f9Behavior === "hide") {
+                toggleDockTemporaryVisibility();
+            } else {
+                // A stale hidden state can only arise if a setting is changed outside the
+                // General page. Fail visible before applying the width action.
+                revealDock();
+                toggleDockWidthMode();
+                applyHostWidth();
+            }
         };
         window.addEventListener("keydown", onKeyDown);
 

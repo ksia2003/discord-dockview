@@ -4,8 +4,8 @@
  * The tab strip is the current channel's flat STRIP (that channel's tabs). These
  * actions mutate the window store (via window.ts's remove primitive) + the active
  * binding and ask the host to reflect the resulting layout into the DOM (via the host
- * bridge). The dock is always open, so closing the last tab shows the empty-state body
- * (no auto-hide).
+ * bridge). Closing the last tab never changes the F9 visibility state; when shown, the
+ * dock falls back to its permanent context body.
  *
  * Split out of window.ts to match the design tree; window.ts owns the collection
  * primitives (makeWindow / setActiveWindow / remove / openTab), this owns the
@@ -48,9 +48,9 @@ export function switchToWindow(id: string): void {
 /** Close a tab (the ✕ on a tab acts on THAT window). The window is removed from its
  *  channel list. If the CLOSED tab was active, the RIGHT neighbour is activated (the
  *  tab that shifted left into this slot), else the left neighbour (it was rightmost).
- *  Closing the LAST tab in the current strip leaves the dock OPEN showing the empty-
- *  state body (the dock can no longer be closed) — a fresh content-less scratch window
- *  backs that empty card. */
+ *  Closing the LAST tab in the current strip leaves the current F9 visibility state
+ *  unchanged and activates the permanent context body — a fresh content-less scratch
+ *  window backs that view. */
 export function closeTab(id: string): void {
     const strip = getWindows();
     const idx = strip.findIndex(w => w.id === id);

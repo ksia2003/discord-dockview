@@ -73,15 +73,14 @@ export function loadInPlace(next: { name: string; url: string; type?: ContentTyp
     if (result !== "noop") requestRender();
 }
 
-/** The shared "make sure the dock is mounted" side-effect, run by load() (chip click) and
- *  onNewFile() (P8). The dock is always visible, so this just ensures the host is mounted
- *  and reflects the layout. There is no native right slot to collapse — host/interception
- *  swallows the actions that would open one. Does NOT render — the caller decides if the
- *  body changed. */
+/** The shared explicit-open side-effect, run by load() (chip click) and onNewFile().
+ *  Ensure the host is mounted and reveal it if F9 temporarily hid it. There is no native
+ *  right slot to collapse — host/interception swallows the actions that would open one.
+ *  Does NOT render — the caller decides if the body changed. */
 export function openPanelChrome(): void {
     const host = hostActions();
     host.ensureHost();
-    host.applyOpenState();
+    host.revealDock();
 }
 
 /** Re-fetch the file currently shown, bypassing both the in-memory content cache

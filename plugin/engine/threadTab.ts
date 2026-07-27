@@ -74,7 +74,10 @@ export function openThreadTab(threadId: string, parentId?: string | null): void 
     // ensured Discord never opened one — so this is just ensure-host + apply-layout.
     const host = hostActions();
     host.ensureHost();
-    host.applyOpenState();
+    // A thread opened into the visible/current channel is an explicit new Dock tab and
+    // therefore reveals an F9-hidden dock. A background-channel reconciliation must not.
+    if (takesOverView) host.revealDock();
+    else host.applyOpenState();
     // When this thread takes over the view, hide the outgoing context body NOW so React's
     // (later) body swap can't flash the stale member list in the dock as the portal opens.
     if (takesOverView) host.hideContextBody();

@@ -419,12 +419,20 @@ export const STRINGS = {
     },
 
     // --- General settings page ----------------------------------------------
-    // The dock's behaviour preferences: width + media autoplay. Each row is a native-style
-    // switch (or the width slider) with a one-line note under it. Changes apply live.
+    // The dock's behaviour preferences: F9 action, width, and media autoplay. Each row is
+    // a native-style control with a one-line note under it. Changes apply live.
     general: {
+        // F9 action Select.
+        f9Title: "F9 shortcut",
+        f9Note:
+            "Choose whether F9 switches the dock width or temporarily hides it. " +
+            "Opening a new DockView tab always reveals a hidden dock.",
+        f9Width: "Switch dock width",
+        f9Hide: "Temporarily hide dock",
         // Width slider group.
         widthTitle: "Expanded dock width",
         widthNote: "Press F9 to switch between the compact rail and this width.",
+        widthNoteHide: "This is the width restored when F9 shows the dock.",
         // {px} -> the current width in pixels.
         widthValue: (px: number) => `${px}px`,
         // Media autoplay switch.

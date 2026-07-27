@@ -21,11 +21,12 @@
  * the plugin). No import cycle: this imports ../settings (store-only) + host/layout.
  */
 
-import { Forms, React, Slider, Switch } from "@vencord/types/webpack/common";
+import { Forms, React, Select, Slider, Switch } from "@vencord/types/webpack/common";
 
+import { hostActions } from "../engine/hostBridge";
 import {
-    DEFAULT_EXPANDED_WIDTH, getCompactDockWidth, getExpandedDockWidth,
-    MAX_WIDTH_FRAC, setDockWidthPersisted
+    DEFAULT_EXPANDED_WIDTH, getCompactDockWidth, getExpandedDockWidth, isCompactDockWidth,
+    MAX_WIDTH_FRAC, setDockWidthPersisted, toggleDockWidthMode
 } from "../host/layout";
 import { settings } from "../settings";
 import { STRINGS } from "../strings";
@@ -33,6 +34,12 @@ import { STRINGS } from "../strings";
 const h = (...args: any[]) => (React.createElement as any)(...args);
 
 const G = STRINGS.general;
+type F9Behavior = "width" | "hide";
+
+const F9_OPTIONS: Array<{ value: F9Behavior; label: string; }> = [
+    { value: "width", label: G.f9Width },
+    { value: "hide", label: G.f9Hide }
+];
 
 /** One switch row bound to a settings-store boolean. `store` is the live proxied store
  *  from settings.use(); writing store[key] persists + fires listeners. */
@@ -49,9 +56,45 @@ function switchRow(store: any, key: string, title: string, note: string) {
     );
 }
 
+function F9BehaviorSelect({ store }: { store: any; }) {
+    const current: F9Behavior = store.f9Behavior === "hide" ? "hide" : "width";
+    const select = (value: F9Behavior) => {
+        store.f9Behavior = value;
+        // Hide mode replaces the compact destination, so enter it at the remembered
+        // expanded width. That keeps the adjacent width slider useful and gives F9 an
+        // unambiguous shown ↔ hidden pair. Switching either way also reveals a dock that
+        // may currently be hidden.
+        if (value === "hide" && isCompactDockWidth()) toggleDockWidthMode();
+        hostActions().revealDock();
+    };
+
+    return h(
+        "div",
+        null,
+        h(Forms.FormTitle, { tag: "h3" }, G.f9Title),
+        h(
+            Forms.FormText,
+            { style: { marginBottom: "12px", color: "var(--text-muted)" } },
+            G.f9Note
+        ),
+        h(
+            "div",
+            { style: { maxWidth: "320px" } },
+            h(Select, {
+                options: F9_OPTIONS,
+                isSelected: (value: F9Behavior) => value === current,
+                select,
+                serialize: String,
+                closeOnSelect: true,
+                "aria-label": G.f9Title
+            })
+        )
+    );
+}
+
 /** The expanded-width preset. Compact width follows Discord's native member rail; this
  *  slider changes the width F9 expands to. When already expanded the change stays live. */
-function WidthSlider() {
+function WidthSlider({ f9Behavior }: { f9Behavior: F9Behavior; }) {
     const { useState, useMemo } = React;
     const [width, setWidth] = useState(() => getExpandedDockWidth());
     const compactWidth = useMemo(() => getCompactDockWidth(), []);
@@ -75,7 +118,7 @@ function WidthSlider() {
         h(
             Forms.FormText,
             { style: { marginBottom: "12px", color: "var(--text-muted)" } },
-            G.widthNote
+            f9Behavior === "hide" ? G.widthNoteHide : G.widthNote
         ),
         h(Slider, {
             initialValue: width,
@@ -95,6 +138,7 @@ export function GeneralPanel() {
     // Subscribe to the behaviour keys; `use()` returns the live proxied store, so
     // assignments below persist AND fire the option listeners, and a change re-renders.
     const store = settings.use([
+        "f9Behavior",
         "dockMediaAutoplay"
     ]);
 
@@ -102,8 +146,15 @@ export function GeneralPanel() {
         "div",
         null,
 
+        // --- F9 action -----------------------------------------------------
+        h(F9BehaviorSelect, { store }),
+
+        h(Forms.FormDivider, { style: { margin: "20px 0" } }),
+
         // --- Dock width ----------------------------------------------------
-        h(WidthSlider),
+        h(WidthSlider, {
+            f9Behavior: store.f9Behavior === "hide" ? "hide" : "width"
+        }),
 
         h(Forms.FormDivider, { style: { margin: "20px 0" } }),
 

@@ -35,6 +35,15 @@ const enum OptionType {
 
 export const settings = definePluginSettings({
     // --- General page -------------------------------------------------------
+    // What the global F9 shortcut does. "width" preserves the existing compact ↔
+    // expanded switch. "hide" temporarily removes the dock from layout; an explicit
+    // new-tab action reveals it again. Kept as a string so the custom General page can
+    // present the two behaviours through Discord's native Select component.
+    f9Behavior: {
+        type: OptionType.STRING,
+        description: "F9 shortcut behavior",
+        default: "width"
+    },
     // Autoplay audio/video when a media file opens in the dock. OFF (default) = the
     // element mounts paused with controls; the user presses play. ON = the media body
     // requests autoplay (muted-fallback if the browser blocks unmuted autoplay).

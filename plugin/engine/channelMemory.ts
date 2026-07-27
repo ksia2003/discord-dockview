@@ -2,11 +2,10 @@
  * Per-channel dock lifecycle (in-memory only).
  *
  * In the browser-like tab model the tab COLLECTION itself lives in engine/window.ts
- * (a per-channel list). This module owns only the channel-switch reaction: the dock is
- * ALWAYS visible (there is no show/hide state any more — the dock IS the right rail), so
- * a channel switch is purely NON-DESTRUCTIVE re-pointing — leaving a channel does
- * nothing to any tab list; entering one derives its strip, restores its last-active tab
- * (or leaves the empty-state body for an empty channel), and reseals the native panels.
+ * (a per-channel list). This module owns only the channel-switch reaction. A channel
+ * switch is purely NON-DESTRUCTIVE re-pointing — it neither reveals nor hides the dock;
+ * leaving a channel does nothing to any tab list, while entering one derives its strip,
+ * restores its last-active tab, and reseals the native panels.
  *
  * There is NO per-channel descriptor save/restore — a channel's whole tab set persists
  * in window.ts's channelTabs map for the session, so a return re-points the active
@@ -35,8 +34,8 @@ export function setCurrentChannelMemId(id: string | null): void {
 /**
  * React to a Discord channel switch. NON-DESTRUCTIVE: leaving a channel does NOTHING
  * to any tab list (a tab lives in exactly one channel's list and stays there for the
- * session). The dock is always visible, so this only: snapshots the outgoing tab's
- * view, switches the current channel, re-points the active window to the entering
+ * session). This only snapshots the outgoing tab's view, switches the current channel,
+ * re-points the active window to the entering
  * channel's last-active tab (or a fresh empty-state shell for an empty channel), and
  * reseals the native member list / profile sidebar (they stay collapsed — the dock
  * holds the right slot permanently until Batch D does proper action interception).
@@ -87,11 +86,10 @@ export function onChannelSelect(newId: string | null): void {
         return;
     }
 
-    // 4. The dock is always open here: mount + reflect the layout. There is no native
-    //    right slot to collapse any more — host/interception.ts swallows the actions that
-    //    would open it, so Discord's state never becomes "sidebar open". applyOpenState
-    //    still hide-marks any native member list Discord renders by DEFAULT (a fresh
-    //    client), which the seal bypass leaves visible for the one escaped channel.
+    // 4. Mount + reflect the existing visible/temporarily-hidden state. A passive channel
+    //    switch must not reveal a dock the user hid with F9. applyOpenState still
+    //    hide-marks any native member list Discord renders by default, except for the
+    //    one-shot native-panel escape.
     host.ensureHost();
     host.applyOpenState();
     requestRender();

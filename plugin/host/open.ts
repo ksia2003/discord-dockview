@@ -1,17 +1,19 @@
 /*
  * The host registration seam.
  *
- * In the always-on rewrite the dock is the right rail itself — it has no show/hide
- * state, so the old open/close verbs (toggle / closePanel / closeForExclusiveTakeover)
- * are gone. This module now only wires the host into the engine bridge so the engine's
- * open/channel/tab paths drive the real DOM, and seeds the channel-memory id.
+ * The dock is the right rail itself. It has no destructive open/close lifecycle; the
+ * optional F9 hide mode only removes it from layout temporarily while its root and tabs
+ * stay mounted. This module wires that host into the engine bridge and seeds the
+ * channel-memory id.
  */
 
 import { registerHostActions } from "../engine/hostBridge";
 import { onChannelSelect } from "../engine/channelMemory";
 import { getCurrentChannelId } from "./channel";
 import { applyHostWidth } from "./layout";
-import { applyOpenState, ensureHost, hideContextBody, startHost, stopHost } from "./mount";
+import {
+    applyOpenState, ensureHost, hideContextBody, revealDock, startHost, stopHost
+} from "./mount";
 
 /** Register the host with the engine bridge + seed the channel-memory id. Called once
  *  from index.tsx start() after the host starts. After this the engine's open/channel/
@@ -21,6 +23,7 @@ export function registerHost(): void {
         ensureHost,
         applyOpenState,
         applyHostWidth,
+        revealDock,
         hideContextBody
     });
     // Run the same entry path for the channel we boot into. A direct memory assignment

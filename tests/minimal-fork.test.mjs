@@ -61,9 +61,16 @@ test("ordinary link clicks stay upstream while right-click offers Open in DockVi
     assert.equal(isExternalWebUrl("https://cdn.discordapp.com/file/page.html"), false);
 });
 
-test("F9 switches a compact rail to a remembered expanded width", () => {
+test("F9 can switch width or temporarily hide until an explicit tab opens", () => {
     const plugin = source("plugin/index.tsx");
     const layout = source("plugin/host/layout.ts");
+    const mount = source("plugin/host/mount.ts");
+    const hostBridge = source("plugin/engine/hostBridge.ts");
+    const load = source("plugin/engine/load.ts");
+    const threadTab = source("plugin/engine/threadTab.ts");
+    const channelMemory = source("plugin/engine/channelMemory.ts");
+    const settings = source("plugin/settings.ts");
+    const general = source("plugin/ui/GeneralPanel.tsx");
     const panel = source("plugin/ui/DockPanel.tsx");
     const css = source("plugin/style.css");
     const strings = source("plugin/strings.ts");
@@ -84,11 +91,30 @@ test("F9 switches a compact rail to a remembered expanded width", () => {
         /#dockview-root\.dockview-host--compact \.dockview-resize\s*\{[^}]*display:\s*none;/s
     );
     assert.match(plugin, /e\.key !== "F9" && e\.code !== "F9"/);
+    assert.match(plugin, /settings\.store\.f9Behavior === "hide"/);
+    assert.match(plugin, /toggleDockTemporaryVisibility\(\)/);
     assert.match(plugin, /toggleDockWidthMode\(\)/);
     assert.match(plugin, /window\.addEventListener\("keydown", onKeyDown\)/);
     assert.match(plugin, /window\.removeEventListener\("keydown", onKeyDown\)/);
     assert.match(plugin, /onResize = \(\) => \{\s*applyHostWidth\(\);\s*\}/);
     assert.match(strings, /widthTitle: "Expanded dock width"/);
+    assert.match(strings, /f9Hide: "Temporarily hide dock"/);
+    assert.match(settings, /f9Behavior:\s*\{[^}]*default: "width"/s);
+    assert.match(general, /F9BehaviorSelect/);
+    assert.match(general, /value: "width"/);
+    assert.match(general, /value: "hide"/);
+    assert.match(general, /value === "hide" && isCompactDockWidth\(\)/);
+    assert.match(mount, /let temporarilyHidden = false;/);
+    assert.match(mount, /export function toggleDockTemporaryVisibility\(\)/);
+    assert.match(mount, /classList\.toggle\("dockview-open", visible\)/);
+    assert.match(hostBridge, /revealDock\(\): void;/);
+    assert.match(load, /host\.revealDock\(\)/);
+    assert.match(threadTab, /if \(takesOverView\) host\.revealDock\(\)/);
+    assert.doesNotMatch(channelMemory, /revealDock/);
+    assert.match(
+        css,
+        /html:not\(\.dockview-open\) \.dockview-thread-portal,[\s\S]*\.dockview-voice-chat-portal\s*\{[^}]*display:\s*none !important;/s
+    );
 });
 
 test("the native member list gains dock-scoped responsive columns", () => {
