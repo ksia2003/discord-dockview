@@ -112,8 +112,16 @@ html.dockview-open .dockview-page-inner {
 .dockview-card {
     display: flex;
     flex-direction: column;
-    flex: 1 1 auto;
-    min-width: 0;
+    /* Discord's native thread card currently carries a fixed 400px flex width.
+       DockView's outer host is user-sized, so that native width must not spill left
+       over chat when compact or leave unused space when expanded. Keep the native
+       visual classes, but make their card fill only the host remainder beside the
+       8px resize handle. !important is required because Discord may inject its
+       CSS-module rule after the independent DockView stylesheet. */
+    flex: 1 1 0 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
     min-height: 0;
     height: 100%;
     box-sizing: border-box;
@@ -617,6 +625,11 @@ html.dockview-open .dockview-page-inner {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    /* This wrapper is owned by DockView and always fills the rail. Query it instead of
+       the captured native root: Discord experiments place the supplied className at
+       different depths, and a fixed-width native root made some accounts stay 1-column
+       even inside a wide dock. */
+    container: dockview-members / inline-size;
 }
 .dockview-context-slot > * {
     flex: 1 1 auto;
@@ -627,10 +640,8 @@ html.dockview-open .dockview-page-inner {
 .dockview-context-native {
     height: 100%;
     min-height: 0;
-    width: 100%;
-    /* Let only this dock instance drive the member-list breakpoints. A narrow dock stays
-       single-column even when the Vesktop window itself is wide. */
-    container: dockview-members / inline-size;
+    width: 100% !important;
+    max-width: 100% !important;
 }
 
 /* Guild CHANNEL identity. Follow Discord's ordinary channel-header grammar instead of
@@ -674,13 +685,13 @@ html.dockview-open .dockview-page-inner {
     line-height: 20px;
 }
 .dockview-channel-topic {
-    max-height: 48px;
+    max-height: 54px;
     margin: 5px 8px 0 28px;
     overflow-y: auto;
     overflow-x: hidden;
     color: var(--text-muted);
-    font-size: 12px;
-    line-height: 16px;
+    font-size: 14px;
+    line-height: 18px;
     overflow-wrap: anywhere;
     white-space: normal;
     scrollbar-width: thin;
@@ -707,6 +718,8 @@ html.dockview-open .dockview-page-inner {
    hash-suffixed class names are matched by prefix so a Discord build bump can't unpin them.
    The inner layouts are already fluid (verified on the rig: rows, banner, mutuals, and the
    View-Full-Profile button all reflow, no horizontal scrollbar, no clipped content). */
+.dockview-context-native[class*="membersWrap"],
+.dockview-context-native[class*="members_"],
 .dockview-context-native > [class*="membersWrap"],
 .dockview-context-native [class*="members_"][class*="scrollerBase"],
 .dockview-context-native [class*="members_"] {
@@ -721,31 +734,39 @@ html.dockview-open .dockview-page-inner {
    span the grid, so each section still starts on its own line. DOM and keyboard order remain
    unchanged: left-to-right, then down. */
 @container dockview-members (min-width: 520px) {
-    .dockview-context-native [class*="members_"][class*="scrollerBase"]
-        > [class*="content_"]:has(> [class*="membersGroup"]) {
+    :is(
+        .dockview-context-native[class*="members_"][class*="scrollerBase"],
+        .dockview-context-native [class*="members_"][class*="scrollerBase"]
+    ) > [class*="content_"]:has(> [class*="member_"]) {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         align-content: start;
     }
 
-    .dockview-context-native [class*="members_"][class*="scrollerBase"]
-        > [class*="content_"]:has(> [class*="membersGroup"])
+    :is(
+        .dockview-context-native[class*="members_"][class*="scrollerBase"],
+        .dockview-context-native [class*="members_"][class*="scrollerBase"]
+    ) > [class*="content_"]:has(> [class*="member_"])
         > [class*="member_"] {
         width: auto !important;
         min-width: 0;
         max-width: none !important;
     }
 
-    .dockview-context-native [class*="members_"][class*="scrollerBase"]
-        > [class*="content_"]:has(> [class*="membersGroup"])
+    :is(
+        .dockview-context-native[class*="members_"][class*="scrollerBase"],
+        .dockview-context-native [class*="members_"][class*="scrollerBase"]
+    ) > [class*="content_"]:has(> [class*="member_"])
         > :not([class*="member_"]) {
         grid-column: 1 / -1;
     }
 }
 
 @container dockview-members (min-width: 800px) {
-    .dockview-context-native [class*="members_"][class*="scrollerBase"]
-        > [class*="content_"]:has(> [class*="membersGroup"]) {
+    :is(
+        .dockview-context-native[class*="members_"][class*="scrollerBase"],
+        .dockview-context-native [class*="members_"][class*="scrollerBase"]
+    ) > [class*="content_"]:has(> [class*="member_"]) {
         grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 }

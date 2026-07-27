@@ -6,11 +6,11 @@
  * bridge, restores the persisted width, and exposes window.__dockView for console /
  * CDP driving.
  *
- * The dock is ALWAYS visible (it IS the right rail) — there is no toggle. Chip-click
- * loading is wired via embed.ts, which intercepts a dock-handled attachment chip /
- * inline image and routes it through the engine's load(); a handled type whose viewer
- * isn't built yet lands on the unsupported card, and an empty channel shows the
- * empty-state body.
+ * The dock is ALWAYS visible (it IS the right rail) — F9 changes its width instead of
+ * hiding it. Chip-click loading is wired via embed.ts, which intercepts a dock-handled
+ * attachment chip / inline image and routes it through the engine's load(); a handled
+ * type whose viewer isn't built yet lands on the unsupported card, and an empty channel
+ * shows the empty-state body.
  *
  * target DESKTOP: the eventual artifact/PDF/markdown renderers rely on the CSP
  * nonce trick + main-thread pdf worker that only hold under the desktop client.
@@ -47,7 +47,10 @@ import {
     getSelfMemberToggle, getSelfProfileToggle, isMemberListShown, isUserProfileSidebarShown
 } from "./host/nativePanels";
 import { interceptionInstalled, startInterception, stopInterception } from "./host/interception";
-import { applyHostWidth, clampWidth } from "./host/layout";
+import {
+    applyHostWidth, getExpandedDockWidth, isCompactDockWidth,
+    setExpandedDockWidth, toggleDockWidthMode
+} from "./host/layout";
 import { applyOpenState, ensureHost, liveHost, mountDebugLog, mountStats, renderDockRail } from "./host/mount";
 import { registerHost, startHost, stopHost } from "./host/open";
 import {
@@ -81,22 +84,18 @@ import { scheduleAutoCheck } from "./ui/autoCheck";
 import { installDockViewSection, uninstallDockViewSection } from "./ui/settingsSection";
 
 // --- window handlers (lifecycle-scoped, removed on stop) --------------------
+let onKeyDown: ((e: KeyboardEvent) => void) | null = null;
 let onResize: (() => void) | null = null;
 let onMessage: ((e: MessageEvent) => void) | null = null;
 
-/** Apply the persisted width/open state once DataStore resolves. Width is applied
- *  to the active window + the host geometry; `open` is only ever forced TRUE from
- *  storage (a channel switch during the async gap must not be slammed shut). */
+/** Load the remembered expanded-width preset once DataStore resolves. Startup stays
+ * compact; F9 is the explicit action that applies the preset. */
 async function applyPersisted(): Promise<void> {
     const { widthStr } = await loadPersistedState();
     if (typeof widthStr === "string") {
-        const w = clampWidth(parseInt(widthStr, 10) || getActiveWindow().state.width);
-        if (w !== getActiveWindow().state.width) getActiveWindow().state.width = w;
+        setExpandedDockWidth(parseInt(widthStr, 10) || getExpandedDockWidth());
     }
-    // Only the width persists (LS_WIDTH) — the dock is always open, there is no
-    // visibility state to restore. Re-render with the restored width. The DockPanel
-    // keeps `width` in local React state (write-only, drives persistence on a user
-    // drag); a bump never reseeds it, so this can't clobber the restored width.
+    applyHostWidth();
     requestRender();
 }
 
@@ -111,9 +110,12 @@ function exposeDebug(): void {
         get content() { return getActiveWindow().content; },
         get activeCacheKey() { return getActiveWindow().activeCacheKey; },
 
-        // host mount. The dock is always open — no toggle/close (dockOpen is always true).
+        // Host mount. The dock is always open; F9 only switches compact/expanded width.
         ensureHost, applyOpenState,
         get dockOpen() { return true; },
+        toggleDockWidthMode,
+        get compactMode() { return isCompactDockWidth(); },
+        get expandedWidth() { return getExpandedDockWidth(); },
         // E3 repaint canary: the mount lifecycle counters + whether a live renderer is
         // published + whether the bound host node is still in the document.
         // rendererLive=false or rootBound=false while a dock is on screen == the "frozen
@@ -231,7 +233,7 @@ function addOpenInDockViewItem(children: any[], props: any): void {
 
 const dockViewPlugin = {
     name: "DockView",
-    description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images. The dock is always the right rail (channel-bound tabs; the member list / profile / threads become dock tabs; PDF refits on resize).",
+    description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images. The dock is always the right rail; F9 switches between compact and expanded widths.",
     authors: [{ name: "seonin", id: 0n }],
     target: "DESKTOP",
 
@@ -377,14 +379,20 @@ const dockViewPlugin = {
         // 2. restore persisted width/open from DataStore (async; applies on resolve).
         applyPersisted();
 
-        // 3. On window resize: re-clamp the persisted width to the window bound and
-        //    re-evaluate the docked/floating geometry (a narrowing window must flip a
-        //    wide dock to floating even if the intended width doesn't change). The dock
-        //    is always open, so this always runs. (The old F9 toggle is gone — the dock
-        //    can no longer be hidden; the empty channel shows the empty-state body.)
+        // 3. F9 keeps the rail mounted and switches only its width. Ignore key-repeat so
+        //    holding the function key cannot flicker rapidly between both widths.
+        onKeyDown = (e: KeyboardEvent) => {
+            if ((e.key !== "F9" && e.code !== "F9") || e.repeat) return;
+            e.preventDefault();
+            toggleDockWidthMode();
+            applyHostWidth();
+        };
+        window.addEventListener("keydown", onKeyDown);
+
+        // 4. On window resize, preserve the configured width and only recompute its
+        //    painted docked/floating geometry. A temporarily small laptop window must
+        //    not silently overwrite the width F9 should restore when space returns.
         onResize = () => {
-            const w = clampWidth(getActiveWindow().state.width);
-            if (w !== getActiveWindow().state.width) getActiveWindow().state.width = w;
             applyHostWidth();
         };
         window.addEventListener("resize", onResize);
@@ -464,6 +472,7 @@ const dockViewPlugin = {
 
     stop() {
         // 1. window listeners + chip-click delegation.
+        if (onKeyDown) { window.removeEventListener("keydown", onKeyDown); onKeyDown = null; }
         if (onResize) { window.removeEventListener("resize", onResize); onResize = null; }
         if (onMessage) { window.removeEventListener("message", onMessage); onMessage = null; }
         stopEmbed();

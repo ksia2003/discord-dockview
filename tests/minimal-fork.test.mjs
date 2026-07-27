@@ -61,16 +61,43 @@ test("ordinary link clicks stay upstream while right-click offers Open in DockVi
     assert.equal(isExternalWebUrl("https://cdn.discordapp.com/file/page.html"), false);
 });
 
+test("F9 switches a compact rail to a remembered expanded width", () => {
+    const plugin = source("plugin/index.tsx");
+    const layout = source("plugin/host/layout.ts");
+    const strings = source("plugin/strings.ts");
+
+    assert.match(layout, /export const COMPACT_WIDTH_FALLBACK = 264;/);
+    assert.match(layout, /COMPACT_WIDTH_PROPERTY = "--custom-member-list-width"/);
+    assert.match(layout, /export function getCompactDockWidth\(\)/);
+    assert.match(layout, /getPropertyValue\(COMPACT_WIDTH_PROPERTY\)/);
+    assert.match(layout, /export const DEFAULT_EXPANDED_WIDTH = 560;/);
+    assert.match(layout, /export function toggleDockWidthMode\(\)/);
+    assert.match(layout, /dockWidth = expandedDockWidth/);
+    assert.match(layout, /compactWidthMode = false/);
+    assert.match(layout, /dockWidth = compactWidth/);
+    assert.match(plugin, /e\.key !== "F9" && e\.code !== "F9"/);
+    assert.match(plugin, /toggleDockWidthMode\(\)/);
+    assert.match(plugin, /window\.addEventListener\("keydown", onKeyDown\)/);
+    assert.match(plugin, /window\.removeEventListener\("keydown", onKeyDown\)/);
+    assert.match(plugin, /onResize = \(\) => \{\s*applyHostWidth\(\);\s*\}/);
+    assert.match(strings, /widthTitle: "Expanded dock width"/);
+});
+
 test("the native member list gains dock-scoped responsive columns", () => {
     const css = source("plugin/style.css");
     const layout = source("plugin/host/layout.ts");
+    const nativePanels = source("plugin/host/nativePanels.ts");
 
-    assert.match(layout, /export const MIN_WIDTH = 560;/);
-    assert.match(layout, /export const DEFAULT_WIDTH = MIN_WIDTH;/);
-    assert.match(layout, /export const DOCK_MIN_WIDTH = MIN_WIDTH;/);
+    assert.match(layout, /const dockMinWidth = getCompactDockWidth\(\)/);
     assert.match(
         css,
-        /\.dockview-context-native\s*\{[^}]*container:\s*dockview-members\s*\/\s*inline-size;/s
+        /\.dockview-context-slot\s*\{[^}]*container:\s*dockview-members\s*\/\s*inline-size;/s
+    );
+    assert.match(css, /\.dockview-context-native\s*\{[^}]*width:\s*100% !important;/s);
+    assert.match(css, /\.dockview-context-native\[class\*="membersWrap"\]/);
+    assert.match(
+        css,
+        /\.dockview-card\s*\{[^}]*flex:\s*1 1 0 !important;[^}]*width:\s*auto !important;[^}]*max-width:\s*100% !important;/s
     );
     assert.match(
         css,
@@ -82,12 +109,15 @@ test("the native member list gains dock-scoped responsive columns", () => {
     );
     assert.match(
         css,
-        /> \[class\*="content_"\]:has\(> \[class\*="membersGroup"\]\)[\s\S]*?> \[class\*="member_"\]\s*\{[^}]*width:\s*auto !important;[^}]*min-width:\s*0;[^}]*max-width:\s*none !important;/
+        /> \[class\*="content_"\]:has\(> \[class\*="member_"\]\)[\s\S]*?> \[class\*="member_"\]\s*\{[^}]*width:\s*auto !important;[^}]*min-width:\s*0;[^}]*max-width:\s*none !important;/
     );
     assert.match(
         css,
         /> :not\(\[class\*="member_"\]\)\s*\{[^}]*grid-column:\s*1 \/ -1;/s
     );
+    assert.match(nativePanels, /function exclusiveLayoutRoot\(/);
+    assert.match(nativePanels, /parent\.children\.length !== 1/);
+    assert.match(nativePanels, /mark\(el, true\)/);
 });
 
 test("guild Channel and voice Chat are permanent dock surfaces", () => {

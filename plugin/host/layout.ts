@@ -19,12 +19,29 @@ import { getActiveWindow } from "../engine/window";
 
 const HOST_ID = "dockview-root";
 
-// Two native member rows need about 520px together. Keep an extra 40px for the dock's
-// resize affordance, scrollbar gutter, and card chrome so the minimum layout reliably
-// reaches the two-column Members breakpoint instead of oscillating around it.
-export const MIN_WIDTH = 560;
-export const DEFAULT_WIDTH = MIN_WIDTH;
+// Follow Discord's live native member-list width instead of freezing today's value.
+// The current client resolves this custom property to 264px, but Discord can change it
+// by build or experiment. The fallback is used only before/without that property.
+export const COMPACT_WIDTH_FALLBACK = 264;
+const COMPACT_WIDTH_PROPERTY = "--custom-member-list-width";
+export const DEFAULT_EXPANDED_WIDTH = 560;
 export const MAX_WIDTH_FRAC = 0.6; // of window width
+
+/** Read the native member rail in CSS pixels. Keep a bounded fallback because a missing,
+ * non-pixel, or experimental garbage value must not collapse/consume the whole page. */
+export function getCompactDockWidth(): number {
+    try {
+        const raw = getComputedStyle(document.documentElement)
+            .getPropertyValue(COMPACT_WIDTH_PROPERTY)
+            .trim();
+        const match = raw.match(/^(\d+(?:\.\d+)?)px$/);
+        const width = match ? Number(match[1]) : NaN;
+        if (Number.isFinite(width) && width >= 200 && width <= 480) return Math.round(width);
+    } catch {
+        // DOM/CSS unavailable during an early bootstrap: use the current Discord fallback.
+    }
+    return COMPACT_WIDTH_FALLBACK;
+}
 
 // ---------------------------------------------------------------------------
 // TWO-MODE width behaviour (mirrors Discord's native thread panel). The dock has
@@ -34,19 +51,56 @@ export const MAX_WIDTH_FRAC = 0.6; // of window width
 //
 //   - CHAT_MIN_WIDTH: the chat's protected minimum. The docked dock is never
 //     applied wider than (content − this), so the message area keeps its min;
-//     when even DOCK_MIN_WIDTH can't fit beside it, the dock goes floating.
-//   - DOCK_MIN_WIDTH: the dock's own minimum while docked (the smallest push).
+//     when even the native compact width can't fit beside it, the dock goes floating.
+//   - Native compact width: the dock's own minimum while docked (the smallest push).
 //   - FLOAT_CHAT_SLIVER: while floating, leave at least this much chat visible/
 //     clickable behind the overlay (native floats a panel that doesn't quite
 //     cover the chat). The float width is capped to (content − this).
 // All tune-able: change here, nothing else.
 export const CHAT_MIN_WIDTH = 420;
-export const DOCK_MIN_WIDTH = MIN_WIDTH;
 export const FLOAT_CHAT_SLIVER = 48;
 
-let dockWidth = DEFAULT_WIDTH;
-export function getDockWidth(): number { return dockWidth; }
-export function setDockWidth(w: number): void { dockWidth = w; }
+let dockWidth = COMPACT_WIDTH_FALLBACK;
+let expandedDockWidth = DEFAULT_EXPANDED_WIDTH;
+let compactWidthMode = true;
+export function getDockWidth(): number {
+    return compactWidthMode ? getCompactDockWidth() : dockWidth;
+}
+export function getExpandedDockWidth(): number { return expandedDockWidth; }
+export function isCompactDockWidth(): boolean { return compactWidthMode; }
+export function setDockWidth(w: number): void {
+    const compactWidth = getCompactDockWidth();
+    dockWidth = clampWidthRaw(w);
+    compactWidthMode = dockWidth <= compactWidth;
+    if (!compactWidthMode) expandedDockWidth = dockWidth;
+}
+
+/** Remember the wide-side preset without forcing a compact rail open. The General
+ * settings slider uses this so "Expanded dock width" remains a preset, not a second
+ * live-width state that unexpectedly widens the current channel. */
+export function setExpandedDockWidth(w: number): number {
+    expandedDockWidth = clampWidthRaw(w);
+    if (!compactWidthMode) dockWidth = expandedDockWidth;
+    return expandedDockWidth;
+}
+
+/** F9 width switch. The dock itself never hides and every tab/view remains mounted;
+ * only the one global rail width changes between compact and the remembered preset. */
+export function toggleDockWidthMode(): number {
+    if (compactWidthMode) {
+        // Keep the configured intent intact when the window is temporarily narrow.
+        // applyDockLayout() clamps only the painted width and restores the full preset
+        // automatically once there is room again.
+        dockWidth = expandedDockWidth;
+        compactWidthMode = false;
+    } else {
+        const compactWidth = getCompactDockWidth();
+        if (dockWidth > compactWidth) expandedDockWidth = dockWidth;
+        dockWidth = compactWidth;
+        compactWidthMode = true;
+    }
+    return dockWidth;
+}
 
 // `seeded` makes the LS read happen exactly once (the first makeWindow call), so a
 // later makeWindow (a new tab) doesn't re-clobber a width the user has since set.
@@ -54,13 +108,18 @@ let dockWidthSeeded = false;
 export function seedDockWidthFromLS(): void {
     if (dockWidthSeeded) return;
     dockWidthSeeded = true;
-    dockWidth = clampWidthRaw(parseInt(lsGet(LS_WIDTH) || "", 10) || DEFAULT_WIDTH);
+    expandedDockWidth = clampWidthRaw(
+        parseInt(lsGet(LS_WIDTH) || "", 10) || DEFAULT_EXPANDED_WIDTH
+    );
+    dockWidth = getCompactDockWidth();
+    compactWidthMode = true;
 }
 
-/** Clamp a width to [MIN_WIDTH, MAX_WIDTH_FRAC·windowWidth]. The public clamp. */
+/** Clamp a width to [native member width, MAX_WIDTH_FRAC·windowWidth]. */
 export function clampWidthRaw(w: number): number {
-    const max = Math.max(MIN_WIDTH, Math.floor((window.innerWidth || 1280) * MAX_WIDTH_FRAC));
-    return Math.min(max, Math.max(MIN_WIDTH, w));
+    const min = getCompactDockWidth();
+    const max = Math.max(min, Math.floor((window.innerWidth || 1280) * MAX_WIDTH_FRAC));
+    return Math.min(max, Math.max(min, w));
 }
 
 /** Alias kept for the call sites that used the public name `clampWidth`. */
@@ -115,9 +174,10 @@ export function clampDockDrag(w: number): number {
     let v = clampWidthRaw(w);
     const inner = findPageInner();
     const avail = availableContentWidth(inner);
+    const dockMinWidth = getCompactDockWidth();
     if (avail > 0) {
         const maxDocked = avail - CHAT_MIN_WIDTH;
-        if (maxDocked >= DOCK_MIN_WIDTH) v = Math.min(v, maxDocked);
+        if (maxDocked >= dockMinWidth) v = Math.min(v, maxDocked);
     }
     return v;
 }
@@ -134,10 +194,10 @@ export function clampDockDrag(w: number): number {
  *  Native parity:
  *   - DOCKED: the host stays an in-flow flex spacer that pushes the chat. The
  *     APPLIED width is clamped to keep the chat ≥ CHAT_MIN_WIDTH (and the dock ≥
- *     DOCK_MIN_WIDTH) — we never overwrite the user's intended `dockWidth`, only
+ *     native compact width) — we never overwrite the user's intended `dockWidth`, only
  *     what is painted, so the dock restores its full width when the window grows
  *     again (exactly like native).
- *   - FLOATING: triggered only when even DOCK_MIN_WIDTH can't fit beside
+ *   - FLOATING: triggered only when even the native compact width can't fit beside
  *     CHAT_MIN_WIDTH (the WINDOW is too narrow). The host is taken out of flow
  *     (position:absolute via .dockview-host--floating) so the chat reclaims FULL
  *     width underneath; the card overlays from the content's right edge at a width
@@ -150,14 +210,15 @@ export function applyDockLayout(): void {
     const inner = findPageInner();
     const avail = availableContentWidth(inner);
     const want = getActiveWindow().state.width; // the user's intended (persisted) width
+    const dockMinWidth = getCompactDockWidth();
 
     // Floating ⟺ even the dock's minimum can't sit beside the chat's minimum.
-    const floating = avail > 0 && (avail - DOCK_MIN_WIDTH) < CHAT_MIN_WIDTH;
+    const floating = avail > 0 && (avail - dockMinWidth) < CHAT_MIN_WIDTH;
 
     if (floating) {
         // Overlay: width fits the content and leaves a chat sliver clickable.
-        const maxFloat = Math.max(DOCK_MIN_WIDTH, avail - FLOAT_CHAT_SLIVER);
-        const applied = Math.max(DOCK_MIN_WIDTH, Math.min(want, maxFloat));
+        const maxFloat = Math.max(dockMinWidth, avail - FLOAT_CHAT_SLIVER);
+        const applied = Math.max(dockMinWidth, Math.min(want, maxFloat));
         host.classList.add("dockview-host--floating");
         // position:absolute (from the class) takes the host out of the flex row;
         // width is the overlay width. flex is reset so it contributes nothing.
@@ -171,7 +232,7 @@ export function applyDockLayout(): void {
         if (avail > 0) {
             const maxDocked = avail - CHAT_MIN_WIDTH;
             applied = Math.min(want, maxDocked);
-            applied = Math.max(applied, DOCK_MIN_WIDTH);
+            applied = Math.max(applied, dockMinWidth);
         }
         host.style.flex = `0 0 ${applied}px`;
         host.style.width = `${applied}px`;
@@ -186,15 +247,10 @@ export function applyHostWidth(): void {
     applyDockLayout();
 }
 
-/** Set the dock width through the SAME store the drag-resize writes: clamp, write it to
- *  the one global width (state.width proxies onto dockWidth), repaint the host geometry,
- *  and persist to LS_WIDTH. The General page's width slider calls this so it reflects
- *  and drives the live dock width with no second "default width" concept — dragging the
- *  slider resizes the dock exactly like dragging its edge. Returns the clamped width so
- *  the slider can sync its own state to what actually applied. */
+/** Set the remembered EXPANDED width, repaint it only when the rail is already expanded,
+ *  and persist it. The compact width follows Discord; F9 switches between the two. */
 export function setDockWidthPersisted(w: number): number {
-    const clamped = clampWidthRaw(w);
-    getActiveWindow().state.width = clamped;
+    const clamped = setExpandedDockWidth(w);
     applyHostWidth();
     lsSet(LS_WIDTH, String(Math.round(clamped)));
     return clamped;

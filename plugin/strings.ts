@@ -423,8 +423,8 @@ export const STRINGS = {
     // switch (or the width slider) with a one-line note under it. Changes apply live.
     general: {
         // Width slider group.
-        widthTitle: "Dock width",
-        widthNote: "How wide the dock opens. Drag the dock's edge for the same effect.",
+        widthTitle: "Expanded dock width",
+        widthNote: "Press F9 to switch between the compact rail and this width.",
         // {px} -> the current width in pixels.
         widthValue: (px: number) => `${px}px`,
         // Media autoplay switch.

@@ -138,6 +138,24 @@ function clearExclusiveRightSlotHidden(root: ParentNode = document): void {
         .forEach(el => el.removeAttribute(EXCLUSIVE_HIDDEN_ATTR));
 }
 
+/** Discord account experiments sometimes wrap membersWrap in another fixed-width flex
+ *  item. Hiding only membersWrap then removes the rows but leaves a blank native-sidebar
+ *  column beside DockView. Walk outward through the branch that contains ONLY the native
+ *  slot, stopping before the shared chat/page container, and collapse that layout root. */
+function exclusiveLayoutRoot(el: HTMLElement, inner: HTMLElement): HTMLElement {
+    let root = el;
+    while (root.parentElement && root.parentElement !== inner) {
+        const parent = root.parentElement;
+        if (parent.id === HOST_ID || parent.closest(`#${HOST_ID}`)) break;
+        // Climb only through wrapper-only branches. The first parent with another child
+        // is the shared content row (normally main chat + native sidebar); hiding it
+        // would remove the conversation as well.
+        if (parent.children.length !== 1) break;
+        root = parent;
+    }
+    return root;
+}
+
 /** Mark any native right-slot node (member list / profile aside / thread sidebar) hidden
  *  so style.css display:none-s it. Two callers: applyOpenState on every channel entry (in
  *  case a fresh client renders the member list by default) and priming (to hide a section
@@ -153,14 +171,18 @@ export function hideExclusiveRightSlot(inner: HTMLElement | null = findPageInner
     // briefly hold TWO #dockview-root placeholders during a channel-view instance overlap
     // (E3), and the member list the context tab renders INSIDE the second dock must never
     // be hide-marked. closest() covers a node inside ANY dock host.
-    const mark = (el: Element | null) => {
+    const mark = (el: Element | null, collapseBranch = false) => {
         if (!(el instanceof HTMLElement)) return;
         if (el.id === HOST_ID || el.closest(`#${HOST_ID}`)) return;
-        el.setAttribute(EXCLUSIVE_HIDDEN_ATTR, "true");
+        const target = collapseBranch && inner.contains(el)
+            ? exclusiveLayoutRoot(el, inner)
+            : el;
+        target.setAttribute(EXCLUSIVE_HIDDEN_ATTR, "true");
     };
 
-    // The member list anchor + the DM profile aside (wherever they sit in the tree).
-    document.querySelectorAll<HTMLElement>('[class*="membersWrap"]').forEach(mark);
+    // The member list anchor + any account-experiment wrapper that reserves its width.
+    document.querySelectorAll<HTMLElement>('[class*="membersWrap"]')
+        .forEach(el => mark(el, true));
     inner.querySelectorAll<HTMLElement>('aside[aria-labelledby^="user-profile-sidebar-heading"]')
         .forEach(mark);
 

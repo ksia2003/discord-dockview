@@ -24,7 +24,8 @@
 import { Forms, React, Slider, Switch } from "@vencord/types/webpack/common";
 
 import {
-    DEFAULT_WIDTH, getDockWidth, MAX_WIDTH_FRAC, MIN_WIDTH, setDockWidthPersisted
+    DEFAULT_EXPANDED_WIDTH, getCompactDockWidth, getExpandedDockWidth,
+    MAX_WIDTH_FRAC, setDockWidthPersisted
 } from "../host/layout";
 import { settings } from "../settings";
 import { STRINGS } from "../strings";
@@ -48,20 +49,18 @@ function switchRow(store: any, key: string, title: string, note: string) {
     );
 }
 
-/** The dock-width slider. Bound to the LIVE dock width (getDockWidth) — the one global
- *  width the edge-drag also drives — not to a settings-store copy. The slider's local
- *  state seeds from the current width; dragging it calls setDockWidthPersisted (clamp +
- *  live host resize + persist) and syncs back the clamped value. `asValueChanges` drives
- *  the live resize continuously through the drag; `onValueChange` commits the release. */
+/** The expanded-width preset. Compact width follows Discord's native member rail; this
+ *  slider changes the width F9 expands to. When already expanded the change stays live. */
 function WidthSlider() {
     const { useState, useMemo } = React;
-    const [width, setWidth] = useState(() => getDockWidth());
+    const [width, setWidth] = useState(() => getExpandedDockWidth());
+    const compactWidth = useMemo(() => getCompactDockWidth(), []);
 
     // The slider's max = MAX_WIDTH_FRAC of the current window width (the same ceiling
-    // clampWidthRaw enforces), floored at MIN_WIDTH so a tiny window still gives a range.
+    // clampWidthRaw enforces), floored above the live native member width.
     const maxWidth = useMemo(
-        () => Math.max(MIN_WIDTH + 60, Math.floor((window.innerWidth || 1280) * MAX_WIDTH_FRAC)),
-        []
+        () => Math.max(compactWidth + 60, Math.floor((window.innerWidth || 1280) * MAX_WIDTH_FRAC)),
+        [compactWidth]
     );
 
     const apply = (v: number) => {
@@ -80,10 +79,10 @@ function WidthSlider() {
         ),
         h(Slider, {
             initialValue: width,
-            minValue: MIN_WIDTH,
+            minValue: compactWidth,
             maxValue: maxWidth,
             keyboardStep: 10,
-            markers: [MIN_WIDTH, DEFAULT_WIDTH, maxWidth],
+            markers: [compactWidth, DEFAULT_EXPANDED_WIDTH, maxWidth],
             stickToMarkers: false,
             onValueRender: (v: number) => G.widthValue(Math.round(v)),
             asValueChanges: (v: number) => apply(v),

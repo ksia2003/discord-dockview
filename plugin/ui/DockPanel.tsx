@@ -40,7 +40,7 @@ import { getCurrentChannelMemId } from "../engine/channelMemory";
 import { getContextView, isContextActive } from "../engine/contextTab";
 import { ContextTabBody } from "./ContextTabBody";
 import { VoiceChatBody } from "../viewers/voice/VoiceChatBody";
-import { applyHostWidth, clampDockDrag } from "../host/layout";
+import { applyHostWidth, clampDockDrag, getCompactDockWidth } from "../host/layout";
 import { applyOpenState } from "../host/mount";
 import { getViewer } from "../viewers/registry";
 import type { ViewerContext } from "../engine/types";
@@ -142,7 +142,9 @@ export function DockPanel() {
 
     useEffect(() => {
         getActiveWindow().state.width = width;
-        lsSet(LS_WIDTH, String(Math.round(width)));
+        // The persisted value is the F9 expanded preset. Reaching the native compact
+        // width by drag must not erase the wider value F9 should return to.
+        if (width > getCompactDockWidth()) lsSet(LS_WIDTH, String(Math.round(width)));
         applyOpenState();
     }, [width]);
 
