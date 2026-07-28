@@ -21,7 +21,7 @@
  */
 
 import { findGroupChildrenByChildId } from "@vencord/types/api/ContextMenu";
-import { Menu, React } from "@vencord/types/webpack/common";
+import { Menu, React, ReactDOM } from "@vencord/types/webpack/common";
 
 import managedStyle from "./style.css?managed";
 
@@ -49,7 +49,7 @@ import {
 } from "./host/nativePanels";
 import { interceptionInstalled, startInterception, stopInterception } from "./host/interception";
 import {
-    applyHostWidth, getExpandedDockWidth, isCompactDockWidth,
+    applyHostWidth, getCompactDockWidth, getExpandedDockWidth, isCompactDockWidth,
     setExpandedDockWidth, toggleDockWidthMode
 } from "./host/layout";
 import {
@@ -63,8 +63,8 @@ import {
     primeProfile, setForceProfileSidebarUnavailable
 } from "./host/slotComponents";
 import {
-    memberListScrollerType, memberVirtualizerStats, setMemberVirtualizerActive, setMemberVirtualizerReact,
-    setMemberVirtualizerSettingReader
+    commitMembersSlotWidth, memberListScrollerType, memberVirtualizerStats, setMemberVirtualizerActive,
+    setMemberVirtualizerReact, setMemberVirtualizerSettingReader
 } from "./host/memberListVirtualizer";
 import { destroyAllThreadPortals, livePortalThreads, portalDebugLog } from "./viewers/thread/threadPortal";
 import {
@@ -115,6 +115,19 @@ async function applyPersisted(): Promise<void> {
     }
     applyHostWidth();
     requestRender();
+}
+
+/** After F9 paints the new host geometry, synchronously measure the live Members slot and
+ *  commit any changed keyed subtree before this keyboard event can yield to a paint.
+ *  ResizeObserver remains the backstop for every non-F9 layout change. */
+function commitF9MemberColumnsBeforePaint(): void {
+    const host = liveHost();
+    const slot = host?.querySelector<HTMLElement>(".dockview-member-virtualizer-scope");
+    if (!slot) return;
+    const width = slot.getBoundingClientRect().width || slot.clientWidth;
+    commitMembersSlotWidth(width, getCompactDockWidth(), () => {
+        ReactDOM.flushSync(requestRender);
+    });
 }
 
 /** The neutral console / CDP handle. Ported from the old exposeDebug surface so the
@@ -436,6 +449,7 @@ const dockViewPlugin = {
                 revealDock();
                 toggleDockWidthMode();
                 applyHostWidth();
+                commitF9MemberColumnsBeforePaint();
             }
         };
         window.addEventListener("keydown", onKeyDown);

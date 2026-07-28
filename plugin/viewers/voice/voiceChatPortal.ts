@@ -11,6 +11,7 @@ import { createRoot, React } from "@vencord/types/webpack/common";
 import type { Root } from "react-dom/client";
 
 import { liveHost } from "../../host/mount";
+import { registerOwnedPortal, unregisterOwnedPortal } from "../../host/ownedPortalVisibility";
 import {
     buildVoiceChatProps, getVoiceChatProviderStack, getVoiceChatType
 } from "../../host/voiceChatCapture";
@@ -105,14 +106,20 @@ export function ensureVoiceChatPortal(channelId: string): void {
     try { loadThreadMessages(channelId); } catch { /* messages can load later */ }
     let portal = portals.get(channelId);
     if (!portal) {
+        let node: HTMLElement | null = null;
         try {
-            const node = document.createElement("div");
+            node = document.createElement("div");
             node.className = "dockview-voice-chat-portal";
             node.style.display = "none";
             document.body.appendChild(node);
+            registerOwnedPortal(node);
             portal = { channelId, node, root: createRoot(node) };
             portals.set(channelId, portal);
         } catch {
+            if (node) {
+                unregisterOwnedPortal(node);
+                node.remove();
+            }
             return;
         }
     }
@@ -151,6 +158,7 @@ export function destroyAllVoiceChatPortals(): void {
     visibleChannel = null;
     stopSync();
     for (const { root, node } of all) {
+        unregisterOwnedPortal(node);
         Promise.resolve().then(() => {
             try { root.unmount(); } catch { /* ignore */ }
             try { node.remove(); } catch { /* ignore */ }

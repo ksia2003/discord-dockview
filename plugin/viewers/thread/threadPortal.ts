@@ -29,6 +29,7 @@ import { createRoot, React } from "@vencord/types/webpack/common";
 import type { Root } from "react-dom/client";
 
 import { liveHost } from "../../host/mount";
+import { registerOwnedPortal, unregisterOwnedPortal } from "../../host/ownedPortalVisibility";
 import { buildThreadProps, getChatType, getProviderStack, loadThreadMessages } from "../../host/slotComponents";
 
 interface Portal {
@@ -143,14 +144,22 @@ export function ensureThreadPortal(threadId: string): void {
     try { loadThreadMessages(threadId); } catch { /* messages fill when reachable */ }
     let p = portals.get(threadId);
     if (!p) {
+        let node: HTMLElement | null = null;
         try {
-            const node = document.createElement("div");
+            node = document.createElement("div");
             node.className = OVERLAY_CLASS;
             node.style.display = "none";
             document.body.appendChild(node);
+            registerOwnedPortal(node);
             p = { node, root: createRoot(node), threadId };
             portals.set(threadId, p);
-        } catch { return; /* couldn't create the isolated root — dock stays intact */ }
+        } catch {
+            if (node) {
+                unregisterOwnedPortal(node);
+                node.remove();
+            }
+            return; /* couldn't create the isolated root — dock stays intact */
+        }
     }
     renderPortal(p);
 }
@@ -223,6 +232,7 @@ export function destroyThreadPortal(threadId: string): void {
     portals.delete(threadId);
     if (visibleThread === threadId) { visibleThread = null; stopSync(); }
     const { root, node } = p;
+    unregisterOwnedPortal(node);
     // Unmount async — React forbids a synchronous unmount while a parent tree renders.
     Promise.resolve().then(() => { try { root.unmount(); } catch { /* ignore */ } try { node.remove(); } catch { /* ignore */ } });
 }

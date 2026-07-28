@@ -5,8 +5,10 @@ import test from "node:test";
 import {
     adaptMemberListScrollerProps,
     columnsForMemberWidth,
+    commitMembersSlotWidth,
     createMemberListRefProxy,
     getMembersSlotWidth,
+    memberColumns,
     memberListScrollerType,
     projectMemberSections,
     projectedGlobalRowIndex,
@@ -200,6 +202,48 @@ test("F9 width observations retain the last real width and use native thresholds
     setMembersSlotWidth(792);
     setMembersSlotWidth(0);
     assert.equal(getMembersSlotWidth(), 792);
+});
+
+test("F9 width commits the new column decision synchronously before its render callback", () => {
+    setMemberVirtualizerSettingReader(() => true);
+    setMemberCellWidth(264);
+    setMembersSlotWidth(264);
+
+    const decisions = [];
+    assert.equal(commitMembersSlotWidth(560, 264, columns => {
+        decisions.push({ columns, width: getMembersSlotWidth(), current: memberColumns() });
+    }), 2);
+    assert.deepEqual(decisions, [{ columns: 2, width: 560, current: 2 }]);
+
+    assert.equal(commitMembersSlotWidth(840, 264, columns => {
+        decisions.push({ columns, width: getMembersSlotWidth(), current: memberColumns() });
+    }), 3);
+    assert.deepEqual(decisions.at(-1), { columns: 3, width: 840, current: 3 });
+
+    assert.equal(commitMembersSlotWidth(264, 264, columns => {
+        decisions.push({ columns, width: getMembersSlotWidth(), current: memberColumns() });
+    }), 1);
+    assert.deepEqual(decisions.at(-1), { columns: 1, width: 264, current: 1 });
+
+    setMemberVirtualizerSettingReader(() => false);
+    const beforeOff = decisions.length;
+    assert.equal(commitMembersSlotWidth(840, 264, () => decisions.push("unexpected")), 1);
+    assert.equal(decisions.length, beforeOff, "setting OFF keeps the exact native one-column decision");
+});
+
+test("F9 measures and flushes member columns after applying the new live host width", () => {
+    const source = readFileSync(new URL("../plugin/index.tsx", import.meta.url), "utf8");
+    const contextBody = readFileSync(new URL("../plugin/ui/ContextTabBody.tsx", import.meta.url), "utf8");
+
+    assert.match(
+        source,
+        /toggleDockWidthMode\(\);\s*applyHostWidth\(\);\s*commitF9MemberColumnsBeforePaint\(\);/
+    );
+    assert.match(
+        source,
+        /commitF9MemberColumnsBeforePaint[\s\S]*?getBoundingClientRect\(\)\.width[\s\S]*?commitMembersSlotWidth[\s\S]*?ReactDOM\.flushSync\(requestRender\)/
+    );
+    assert.match(contextBody, /new ResizeObserverType\(measure\)/);
 });
 
 test("source patch is anchored to the proven module and only replaces the ListScroller operand", () => {

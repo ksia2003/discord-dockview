@@ -45,7 +45,7 @@ import type { ContextKind } from "../host/slotComponents";
 import { STRINGS } from "../strings";
 import { ChannelOverview } from "./ChannelOverview";
 import {
-    memberColumns, setMemberCellWidth, setMembersSlotWidth
+    commitMembersSlotWidth, memberColumns, setMemberCellWidth
 } from "../host/memberListVirtualizer";
 import { getCompactDockWidth } from "../host/layout";
 
@@ -107,12 +107,12 @@ function MembersVirtualizerScope({ children }: { children: any }) {
     useLayoutEffect(() => {
         const slot = slotRef.current;
         if (!slot) return;
-        setMemberCellWidth(getCompactDockWidth());
         const measure = () => {
-            const before = memberColumns();
-            setMembersSlotWidth(slot.getBoundingClientRect().width || slot.clientWidth);
-            const after = memberColumns();
-            if (before !== after) requestRender();
+            commitMembersSlotWidth(
+                slot.getBoundingClientRect().width || slot.clientWidth,
+                getCompactDockWidth(),
+                requestRender
+            );
         };
         measure();
         const ResizeObserverType = (globalThis as any).ResizeObserver;

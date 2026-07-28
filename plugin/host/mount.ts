@@ -34,6 +34,7 @@ import {
     hideExclusiveRightSlot, nodeMayContainExclusiveRightSlot, restoreHiddenMembers
 } from "./nativePanels";
 import { applyDockLayout, findChat, findPageInner } from "./layout";
+import { setOwnedPortalsTemporarilyHidden } from "./ownedPortalVisibility";
 
 const HOST_ID = "dockview-root";
 
@@ -281,6 +282,7 @@ export function applyOpenState(): void {
     const visible = !temporarilyHidden;
     host?.classList.toggle("dockview-open", visible);
     document.documentElement.classList.toggle("dockview-open", visible);
+    setOwnedPortalsTemporarilyHidden(temporarilyHidden);
     if (visible) applyDockLayout();
     hideExclusiveRightSlot(inner);
 }

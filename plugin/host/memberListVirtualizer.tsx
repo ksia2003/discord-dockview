@@ -64,6 +64,24 @@ export function memberColumns(): number {
     }
 }
 
+/**
+ * Commit a measured live slot width and its column decision in one synchronous call.
+ * F9 supplies a flushSync callback so a changed keyed Members subtree reaches the DOM
+ * before the browser can paint; ResizeObserver supplies the ordinary repaint backstop.
+ */
+export function commitMembersSlotWidth(
+    width: number,
+    cellWidth: number,
+    commitColumnsChanged: (columns: number) => void
+): number {
+    const before = memberColumns();
+    setMemberCellWidth(cellWidth);
+    setMembersSlotWidth(width);
+    const after = memberColumns();
+    if (before !== after) commitColumnsChanged(after);
+    return after;
+}
+
 export function setMemberVirtualizerActive(active: boolean): void {
     memberVirtualizerActive = active;
 }

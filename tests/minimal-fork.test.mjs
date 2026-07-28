@@ -113,8 +113,9 @@ test("F9 can switch width or temporarily hide until an explicit tab opens", () =
     assert.doesNotMatch(channelMemory, /revealDock/);
     assert.match(
         css,
-        /html:not\(\.dockview-open\) \.dockview-thread-portal,[\s\S]*\.dockview-voice-chat-portal\s*\{[^}]*display:\s*none !important;/s
+        /\[data-dockview-temporarily-hidden="true"\]\s*\{[^}]*display:\s*none !important;/s
     );
+    assert.doesNotMatch(css, /html:not\(\.dockview-open\) \.dockview-(?:thread|voice-chat)-portal/);
 });
 
 test("the native member list stays fluid without breaking its one-column virtualizer", () => {
