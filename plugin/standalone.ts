@@ -61,6 +61,14 @@ export function filterChannelHeaderSubtitle(subtitle: unknown, channel: unknown)
     return plugin.filterChannelHeaderSubtitle(subtitle, channel);
 }
 
+export function memberVirtualizerStats(): unknown {
+    return plugin.memberVirtualizerStats();
+}
+
+export function memberListScrollerType(originalType: unknown, ownerProps: unknown): unknown {
+    return plugin.memberListScrollerType(originalType, ownerProps);
+}
+
 export function start(): boolean {
     if (started) return true;
     initialiseSettings();

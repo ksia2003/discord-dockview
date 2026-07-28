@@ -439,7 +439,11 @@ export const STRINGS = {
         autoplayTitle: "Autoplay media when opened",
         autoplayNote:
             "Start playback when an audio or video file opens. Autoplaying media starts " +
-            "muted — unmute it with the player controls."
+            "muted — unmute it with the player controls.",
+        membersColumnsTitle: "Use multiple member columns",
+        membersColumnsNote:
+            "Show two or three native-width member columns when the DockView rail is wide " +
+            "enough. Turn this off to keep Discord's one-column list."
     },
 
     // --- Viewers settings page ----------------------------------------------

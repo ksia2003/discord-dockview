@@ -44,6 +44,13 @@ export const settings = definePluginSettings({
         description: "F9 shortcut behavior",
         default: "width"
     },
+    // ON (default) projects the captured guild Members ListScroller into two or three
+    // native-width cells as the DockView rail grows. OFF returns the exact native props.
+    membersMultiColumn: {
+        type: OptionType.BOOLEAN,
+        description: "Use multiple member columns when space allows",
+        default: true
+    },
     // Autoplay audio/video when a media file opens in the dock. OFF (default) = the
     // element mounts paused with controls; the user presses play. ON = the media body
     // requests autoplay (muted-fallback if the browser blocks unmuted autoplay).

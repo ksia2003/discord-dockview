@@ -44,6 +44,10 @@ import {
 import type { ContextKind } from "../host/slotComponents";
 import { STRINGS } from "../strings";
 import { ChannelOverview } from "./ChannelOverview";
+import {
+    memberColumns, setMemberCellWidth, setMembersSlotWidth
+} from "../host/memberListVirtualizer";
+import { getCompactDockWidth } from "../host/layout";
 
 /** Wrap a captured Discord component in the app's own ThemeContext.Provider so the
  *  components resolve the SAME theme they do natively. The redesigned DM profile reads its
@@ -94,14 +98,56 @@ function withCapturedProviders(bare: any, stack: Array<{ type: any; value: any }
     return React.createElement(providerBoundary(), { fallback }, tree);
 }
 
+/** Measure this context body's own slot. ResizeObserver reports zero while F9 hides the
+ * rail; the adapter intentionally ignores that observation and retains its last real
+ * width. A repaint is needed only when the number of columns changes. */
+function MembersVirtualizerScope({ children }: { children: any }) {
+    const { useLayoutEffect, useRef } = React;
+    const slotRef = useRef<HTMLElement>(null);
+    useLayoutEffect(() => {
+        const slot = slotRef.current;
+        if (!slot) return;
+        setMemberCellWidth(getCompactDockWidth());
+        const measure = () => {
+            const before = memberColumns();
+            setMembersSlotWidth(slot.getBoundingClientRect().width || slot.clientWidth);
+            const after = memberColumns();
+            if (before !== after) requestRender();
+        };
+        measure();
+        const ResizeObserverType = (globalThis as any).ResizeObserver;
+        if (typeof ResizeObserverType !== "function") return;
+        const observer = new ResizeObserverType(measure);
+        observer.observe(slot);
+        return () => observer.disconnect();
+    }, []);
+    return React.createElement(
+        "div",
+        { ref: slotRef, className: "dockview-member-virtualizer-scope" },
+        children
+    );
+}
+
 /** Render the guild member list for `channel` from the captured type, or null if the
  *  type isn't acquired yet (the caller falls to loading/error). */
 function renderMembers(channel: any) {
     const type = getMemberListType();
     if (!type || !channel) return null;
+    setMemberCellWidth(getCompactDockWidth());
+    const columns = memberColumns();
     // Our own wrapper class so the container (not the native parent) supplies styling.
-    const bare = React.createElement(type, { channel, className: "dockview-context-native" });
-    return withCapturedProviders(bare, getMemberProviderStack());
+    // The captured Members/PureComponent can otherwise retain its previous ListScroller
+    // element when only the global dock width changes. Remount only at a derived column
+    // boundary so F9 hide/resize within one threshold keeps the native subtree stable.
+    const bare = React.createElement(type, {
+        key: `members-${columns}`,
+        channel,
+        className: "dockview-context-native"
+    });
+    return withCapturedProviders(
+        React.createElement(MembersVirtualizerScope, { children: bare }),
+        getMemberProviderStack()
+    );
 }
 
 /** Render the DM profile sidebar for `channel` from the captured type, or null. */

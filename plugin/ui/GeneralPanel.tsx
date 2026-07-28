@@ -7,6 +7,7 @@
  *     dock live and writes through the same DataStore persistence; there is no second
  *     "default width" concept.
  *   - Autoplay media when opened.
+ *   - Multi-column Members layout (native ListScroller adapter).
  * The switch binds to the reactive settings store (settings.use) so a flip persists and
  * re-renders; each behaviour reads the same store live at the moment it runs, so a toggle
  * applies with no reload.
@@ -24,6 +25,7 @@
 import { Forms, React, Select, Slider, Switch } from "@vencord/types/webpack/common";
 
 import { hostActions } from "../engine/hostBridge";
+import { requestRender } from "../engine/forceRender";
 import {
     DEFAULT_EXPANDED_WIDTH, getCompactDockWidth, getExpandedDockWidth, isCompactDockWidth,
     MAX_WIDTH_FRAC, setDockWidthPersisted, toggleDockWidthMode
@@ -43,14 +45,14 @@ const F9_OPTIONS: Array<{ value: F9Behavior; label: string; }> = [
 
 /** One switch row bound to a settings-store boolean. `store` is the live proxied store
  *  from settings.use(); writing store[key] persists + fires listeners. */
-function switchRow(store: any, key: string, title: string, note: string) {
+function switchRow(store: any, key: string, title: string, note: string, afterChange?: () => void) {
     return h(
         Switch,
         {
             value: store[key] !== false,
             note,
             hideBorder: false,
-            onChange: (v: boolean) => { store[key] = v; }
+            onChange: (v: boolean) => { store[key] = v; afterChange?.(); }
         },
         title
     );
@@ -139,7 +141,8 @@ export function GeneralPanel() {
     // assignments below persist AND fire the option listeners, and a change re-renders.
     const store = settings.use([
         "f9Behavior",
-        "dockMediaAutoplay"
+        "dockMediaAutoplay",
+        "membersMultiColumn"
     ]);
 
     return h(
@@ -159,6 +162,10 @@ export function GeneralPanel() {
         h(Forms.FormDivider, { style: { margin: "20px 0" } }),
 
         // --- Behaviour switches --------------------------------------------
-        switchRow(store, "dockMediaAutoplay", G.autoplayTitle, G.autoplayNote)
+        switchRow(store, "dockMediaAutoplay", G.autoplayTitle, G.autoplayNote),
+
+        h(Forms.FormDivider, { style: { margin: "20px 0" } }),
+
+        switchRow(store, "membersMultiColumn", G.membersColumnsTitle, G.membersColumnsNote, requestRender)
     );
 }

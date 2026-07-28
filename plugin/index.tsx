@@ -62,6 +62,10 @@ import {
     invalidateSlotComponents, isProfileSectionUnavailable, primeDebugLog, primeMemberList,
     primeProfile, setForceProfileSidebarUnavailable
 } from "./host/slotComponents";
+import {
+    memberListScrollerType, memberVirtualizerStats, setMemberVirtualizerActive, setMemberVirtualizerReact,
+    setMemberVirtualizerSettingReader
+} from "./host/memberListVirtualizer";
 import { destroyAllThreadPortals, livePortalThreads, portalDebugLog } from "./viewers/thread/threadPortal";
 import {
     destroyAllVoiceChatPortals, liveVoiceChatPortals
@@ -172,6 +176,7 @@ function exposeDebug(): void {
         get providerStackCaptured() { return !!getProviderStack(); },
         get profileSectionUnavailable() { return isProfileSectionUnavailable(); },
         get primeLog() { return primeDebugLog(); },
+        get memberVirtualizerStats() { return memberVirtualizerStats(); },
         captureChat, primeMemberList, primeProfile, invalidateSlotComponents,
         // TEST SEAM (rig only): force the DM sidebar route off to prove the cached generic
         // profile type still renders a real profile through a simulated off-window.
@@ -312,6 +317,16 @@ const dockViewPlugin = {
                     replace: "$1$self.filterChannelHeaderSubtitle($2,$3)"
                 }
             ]
+        },
+        {
+            // Proven Members ListScroller module anchor. Keep this fail-closed: if the
+            // exact render call drifts, Discord keeps its native one-column component.
+            find: "content-inventory-hidden-entry",
+            noWarn: true,
+            replacement: {
+                match: /(\(0,\i\.\i\)\()([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)(?=,\{role:[^,]+,"aria-label":[\s\S]*?,ref:[\s\S]*?,className:[\s\S]*?,paddingTop:0,sectionHeight:[^,]+,rowHeight:this\.getRowHeightComputer\(\),renderSection:this\.renderSection,renderRow:this\.renderRow,sections:[^,]+\.map\([A-Za-z_$][\w$]*=>[A-Za-z_$][\w$]*\.count\),onScroll:this\.handleScroll,fade:!0)/,
+                replace: "$1$self.memberListScrollerType($2,this.props)"
+            }
         }
     ],
 
@@ -383,7 +398,18 @@ const dockViewPlugin = {
         return filterChannelHeaderSubtitle(subtitle, channel);
     },
 
+    memberVirtualizerStats() {
+        return memberVirtualizerStats();
+    },
+
+    memberListScrollerType(originalType: any, ownerProps: any) {
+        return memberListScrollerType(originalType, ownerProps);
+    },
+
     start() {
+        setMemberVirtualizerActive(true);
+        setMemberVirtualizerReact(React);
+        setMemberVirtualizerSettingReader(() => settings.store.membersMultiColumn !== false);
         // 1. mount the host + register it with the engine bridge (so the engine's
         //    open/close/channel/tab paths drive real DOM) + seed the channel mem.
         startHost();
@@ -496,6 +522,9 @@ const dockViewPlugin = {
     },
 
     stop() {
+        setMemberVirtualizerActive(false);
+        setMemberVirtualizerReact(null);
+        setMemberVirtualizerSettingReader(null);
         // 1. window listeners + chip-click delegation.
         if (onKeyDown) { window.removeEventListener("keydown", onKeyDown); onKeyDown = null; }
         if (onResize) { window.removeEventListener("resize", onResize); onResize = null; }

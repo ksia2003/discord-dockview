@@ -757,12 +757,33 @@ html.dockview-open .dockview-page-inner {
     max-width: 100% !important;
 }
 
-/* Keep Discord's member rows in their native single column at every dock width.
-   The list virtualizer calculates its spacer, scroll height, and mounted range in
-   one-dimensional row units. Reflowing only the mounted DOM into CSS columns
-   compresses those rows without updating the virtualizer, leaving blank bands and
-   making members appear only after another scroll. A future multi-column directory
-   must own a column-aware virtualizer rather than restyle this native list. */
+/* The column adapter creates these wrappers as virtualized rows. Only those wrappers
+   become horizontal; Discord's already-virtualized content container is never a grid.
+   Native member elements keep their own interaction handlers and compact cell target.
+   A future multi-column directory must own a column-aware virtualizer. */
+.dockview-member-virtual-row {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+}
+.dockview-member-virtualizer-scope {
+    display: flex;
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+}
+.dockview-member-virtual-row > .dockview-member-virtual-cell {
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: none !important;
+}
+.dockview-member-virtual-cell > * {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
 .dockview-context-body aside [class*="outer_"],
 .dockview-context-body aside [class*="inner_"] {
     width: 100% !important;
