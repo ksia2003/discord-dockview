@@ -18,11 +18,15 @@
 import { detectType } from "./detectType";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
-import { setContextActive } from "./contextTab";
+import { getContextView, setContextActive } from "./contextTab";
+import { selectThreadPortal } from "../viewers/thread/threadPortal";
 import { showContent } from "./showContent";
+import { bump } from "./loadToken";
 import { snapshotActiveView } from "./viewState";
-import { getActiveWindow, getWindowChannelId, openTab } from "./window";
-import type { ContentType } from "./types";
+import { getActiveWindow, getActiveWindowId, getWindowChannelId, openTab } from "./window";
+import type { ContentType, SourceImageContext } from "./types";
+import { holdPendingMediaOpen, isPendingMediaOpen } from "../viewers/media/mediaError";
+import { cancelMediaProbe, startMediaProbe } from "../viewers/media/mediaProbe";
 
 export interface LoadOptsPublic {
     name: string;
@@ -31,6 +35,8 @@ export interface LoadOptsPublic {
     type?: ContentType;
     noCache?: boolean;
     id?: string | null;
+    sourceMessage?: { channelId: string; messageId: string; } | null;
+    sourceImageContext?: SourceImageContext | null;
 }
 
 /** CONTENT-TYPE ROUTER front door. Load anything into the dock panel BODY and
@@ -44,22 +50,44 @@ export function load(opts: LoadOptsPublic): void {
     // overwritten. The dedup identity is url + routing type (matching the descriptor
     // showContent writes). Inline html (no url) can't dedup, so it always appends.
     const type = detectType(opts);
-    openTab(opts.url ?? null, type);
+    const channelId = getWindowChannelId();
+    const host = hostActions();
+    const previousWindowId = getActiveWindowId();
+    const previousContextView = getContextView(channelId);
+    const previousSearch = host.isSearchViewActive();
+    const { win, created } = openTab(opts.url ?? null, type);
+    if (created) {
+        win.openRollback = { previousWindowId, previousContextView, previousSearch };
+    }
+    if (opts.sourceMessage !== undefined) win.sourceMessage = opts.sourceMessage;
+    if (opts.sourceImageContext !== undefined) win.sourceImageContext = opts.sourceImageContext;
+    host.deactivateSearchView();
     // Opening a file makes that file the active VIEW — the context tab (member list /
     // profile) yields to it for this channel until the user picks the context tab again.
     setContextActive(getWindowChannelId(), false);
     // Viewing a real file ends any new-file session (the empty editable surface),
     // so the loaded file gets a fresh original baseline + the merge diff.
     getActiveWindow().isNewFile = false;
-    const result = showContent({
+    selectThreadPortal(null);
+    showContent({
         name: opts.name, html: opts.html, url: opts.url,
         type, noCache: opts.noCache, id: opts.id
     });
+    if (isPendingMediaOpen(win) && opts.url != null && (type === "audio" || type === "video")) {
+        holdPendingMediaOpen(win);
+        if (opts.noCache) cancelMediaProbe(win);
+        startMediaProbe(win, type, opts.url);
+    }
 
     // Open FIRST, then persist — so the saved per-channel state records open:true.
     openPanelChrome();
-    // A no-op didn't change the body; everything else needs a render.
-    if (result !== "noop") requestRender();
+    // Always repaint. `openTab` can focus an existing window while `showContent`
+    // correctly reports `noop` for that window's already-mounted cache key. Skipping
+    // the repaint in that case left the engine bound to the requested tab while the
+    // DOM still showed the previously active tab until an unrelated event rendered.
+    // An explicit open also leaves the permanent context/search surface, which needs
+    // the same repaint even when the file body itself did not change.
+    requestRender();
 }
 
 /** The gallery's in-place advance: replace the ACTIVE window's content with the
@@ -68,7 +96,9 @@ export function load(opts: LoadOptsPublic): void {
  *  open during gallery nav, so we only render (no openPanelChrome). The image gallery
  *  (P4) calls this; exposed here as the engine primitive. */
 export function loadInPlace(next: { name: string; url: string; type?: ContentType }): void {
-    getActiveWindow().isNewFile = false;
+    const win = getActiveWindow();
+    cancelMediaProbe(win);
+    win.isNewFile = false;
     const result = showContent({ name: next.name, url: next.url, type: next.type ?? "image" });
     if (result !== "noop") requestRender();
 }
@@ -98,6 +128,8 @@ export function retryActiveLoad(): void {
 export function clearArtifact(): void {
     const win = getActiveWindow();
     snapshotActiveView(win);
+    cancelMediaProbe(win);
+    bump(win); // detach invalidates any late completion for this window
     closeLightbox(win); // the body is going empty — drop the lightbox
     win.content.name = null;
     win.content.type = "html";
@@ -115,6 +147,7 @@ export function clearArtifact(): void {
     win.editView.mode = "view";
     win.editView.editBuffer = null;
     win.activeCacheKey = null;
+    win.activeCacheEntry = null;
     win.activeDescriptor = null;
     requestRender();
 }

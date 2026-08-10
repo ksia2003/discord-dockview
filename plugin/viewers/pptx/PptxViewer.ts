@@ -38,7 +38,8 @@
  * PptxBody — that re-loads the renderer at Vencord init and undoes the lazy-lib batch.
  */
 
-import { getCacheEntry } from "../../engine/cache";
+import { isCacheEntryLive } from "../../engine/cache";
+import { settleDetachedEntry } from "../../engine/cacheOwnership";
 import { withLibLoading } from "../../engine/lazyLib";
 import { STRINGS } from "../../strings";
 import type {
@@ -94,8 +95,17 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             // its key (a rapid re-click could have replaced it); otherwise the entry is
             // detached and storing the model there would be pointless. No teardown is
             // needed (plain decoded data), so there's no leak to guard against.
-            const live = entry != null && getCacheEntry(entry.key) === entry;
-            if (live) { entry!.pptxPresentation = presentation; entry!.loading = false; entry!.error = null; }
+            const live = entry != null && isCacheEntryLive(entry);
+            if (!live) {
+                if (entry) {
+                    entry.pptxPresentation = null;
+                    settleDetachedEntry(entry, "Presentation load completed after its cache entry was detached");
+                }
+                return;
+            }
+            entry!.pptxPresentation = presentation;
+            entry!.loading = false;
+            entry!.error = null;
 
             if (!token.isCurrent()) return; // superseded — don't touch content
             ctx.content.pptx.presentation = presentation;

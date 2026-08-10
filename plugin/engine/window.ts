@@ -31,9 +31,16 @@
  */
 
 import { allViewers } from "../viewers/registry";
+import { cancelAllMediaProbes, cancelMediaProbe } from "../viewers/media/mediaProbe";
 import { getDockWidth, seedDockWidthFromLS, setDockWidth } from "../host/layout";
-import { cacheTouch, getCacheEntry, mountFromCache, registerWindowRegistry } from "./cache";
+import {
+    cacheTouch, collectRetiredEntries, getActiveCacheEntry, getCacheEntry, mountFromCache,
+    registerWindowRegistry, windowCacheEntry
+} from "./cache";
+import { contentIdentity } from "./contentIdentity";
+import { bump as bumpLoadToken } from "./loadToken";
 import { snapshotActiveView } from "./viewState";
+import { shouldBindThreadToCurrentChannel } from "./threadBinding";
 import type { DockWindow } from "./types";
 
 let windowSeq = 0;
@@ -97,8 +104,13 @@ export function makeWindow(opts: { ownerChannelId: string | null }): DockWindow 
         },
         isNewFile: false,
         newFileChannel: null,
+        sourceMessage: null,
+        sourceImageContext: null,
+        openRollback: null,
         activeDescriptor: null,
-        activeCacheKey: null
+        activeCacheKey: null,
+        activeCacheEntry: null,
+        cacheStates: new Map()
     };
 }
 
@@ -138,8 +150,7 @@ export function stripFor(channelId: string | null): DockWindow[] {
  *  snapshot all read. Returns the live list for the current channel. */
 export function getWindows(): DockWindow[] { return stripFor(currentChannelId); }
 
-/** A channel's tab list (live reference, created lazily). Drag-reorder writes back
- *  into this. */
+/** A channel's tab list (live reference, created lazily). */
 export function getChannelTabs(channelId: string | null): DockWindow[] {
     return channelId != null ? ownTabs(channelId) : [];
 }
@@ -151,7 +162,7 @@ export function getActiveWindowId(): string { ensureActive(); return activeWindo
 // this module (which imports the cache) — closes that loop one-way. getWindows here
 // returns the current strip, which is enough for the cache's live-key protection
 // (it protects the strip that is actually mounted).
-registerWindowRegistry({ getWindows: allLiveWindows, getActiveWindow });
+registerWindowRegistry({ getWindows, getActiveWindow, getAllWindows: allLiveWindows });
 
 /** EVERY live window across all channels' lists. The cache's live-key protection must
  *  see them ALL — a background channel's tab still owns its pdf.js doc even though it
@@ -206,29 +217,14 @@ export function setActiveWindow(w: DockWindow | string): void {
     if (currentChannelId != null) activeByChannel.set(currentChannelId, win.id);
 }
 
-/** A url's STABLE identity for the dedup match: origin + path, dropping the query
- *  string. Discord attachment/media urls carry rotating signed params (ex/is/hm) that
- *  change every time the same file is fetched, so an exact-string compare misses the
- *  re-open; the attachment path (/attachments/<ch>/<id>/<name>) is unique per file, so
- *  origin+path identifies it stably. Non-url inputs fall back to the raw string. */
-function fileIdentity(url: string): string {
-    try {
-        const u = new URL(url, location.href);
-        return u.origin + u.pathname;
-    } catch {
-        return url;
-    }
-}
-
 /** Find an existing tab in the CURRENT strip whose file matches `url`+`type`
- *  (dedup-on-open). Matched on the url's stable identity (origin+path) so the same
- *  file re-opened under a freshly-signed url still hits its existing tab. */
+ *  (dedup-on-open). Uses the same routing-aware identity as the content cache. */
 function findTabByFile(url: string | null, type: string): DockWindow | null {
     if (url == null) return null;
-    const id = fileIdentity(url);
+    const id = contentIdentity(url, type);
     for (const w of stripFor(currentChannelId)) {
         const d = w.activeDescriptor;
-        if (d && d.type === type && fileIdentity(d.url) === id) return w;
+        if (d && contentIdentity(d.url, d.type) === id) return w;
     }
     return null;
 }
@@ -242,18 +238,18 @@ function findTabByFile(url: string | null, type: string): DockWindow | null {
  *
  *  `url`/`type` are the file identity for the dedup check (the routing type, matching
  *  the descriptor). A null url (inline html) can't dedup, so it always appends. */
-export function openTab(url: string | null, type: string): DockWindow {
+export function openTab(url: string | null, type: string): { win: DockWindow; created: boolean; } {
     const existing = findTabByFile(url, type);
     if (existing) {
         if (activeWindow !== existing) snapshotActiveView(activeWindow);
         setActiveWindow(existing);
-        return existing;
+        return { win: existing, created: false };
     }
     const w = makeWindow({ ownerChannelId: currentChannelId });
     ownTabs(currentChannelId).push(w);
     if (activeWindow) snapshotActiveView(activeWindow);
     setActiveWindow(w);
-    return w;
+    return { win: w, created: true };
 }
 
 /** Find an existing THREAD tab (content.type "thread") for `threadId` in `channelId`'s
@@ -273,19 +269,25 @@ export function findThreadTab(channelId: string | null, threadId: string): DockW
  *  thread opened from anywhere lands in the right strip. The caller fills the returned
  *  window's thread content; the outgoing active view is snapshotted before the bind swap. */
 export function openThreadWindow(parentChannelId: string | null, threadId: string): DockWindow {
+    const takesOverView = shouldBindThreadToCurrentChannel(parentChannelId, currentChannelId);
     const existing = findThreadTab(parentChannelId, threadId);
     if (existing) {
-        if (activeWindow !== existing) snapshotActiveView(activeWindow);
-        setActiveWindow(existing);
+        // A background-channel reopen must only update that strip. Snapshotting the
+        // current window or rebinding activeWindow here would corrupt the visible
+        // channel's activeByChannel record.
+        if (takesOverView) {
+            if (activeWindow !== existing) snapshotActiveView(activeWindow);
+            setActiveWindow(existing);
+        }
         return existing;
     }
     const w = makeWindow({ ownerChannelId: parentChannelId });
     ownTabs(parentChannelId).push(w);
-    if (activeWindow) snapshotActiveView(activeWindow);
+    if (takesOverView && activeWindow) snapshotActiveView(activeWindow);
     // Bind active only when the parent channel is the current one — opening a thread whose
     // parent isn't the current channel still records the tab in the parent's strip (it
     // shows when the user returns there), but must not hijack the current view.
-    if (parentChannelId === currentChannelId) setActiveWindow(w);
+    if (takesOverView) setActiveWindow(w);
     return w;
 }
 
@@ -304,38 +306,18 @@ export function focusEmptyShell(channelId: string | null): DockWindow {
 /** Remove a window from whatever channel list holds it. Returns true if found +
  *  removed. Also drops it as any channel's active pointer. */
 export function removeWindowEverywhere(w: DockWindow): boolean {
+    // A removed tab may still have async viewer work holding its window context.
+    // Invalidate before detaching it so a late completion cannot write closed content.
+    cancelMediaProbe(w);
+    bumpLoadToken(w);
     let found = false;
     for (const list of channelTabs.values()) {
         const i = list.indexOf(w);
         if (i >= 0) { list.splice(i, 1); found = true; }
     }
     for (const [cid, id] of activeByChannel) if (id === w.id) activeByChannel.delete(cid);
+    collectRetiredEntries();
     return found;
-}
-
-/** Drag-reorder: move the tab `dragId` to sit at the strip position of `beforeId`
- *  (drop BEFORE that tab), writing the new order back into the current channel's list.
- *  A single flat list, so a drop anywhere in the strip is a straight reorder within
- *  it. Returns true if anything moved. */
-export function reorderTab(dragId: string, beforeId: string | null): boolean {
-    const list = ownTabs(currentChannelId);
-    const drag = list.find(w => w.id === dragId);
-    if (!drag) return false;
-    const from = list.indexOf(drag);
-    if (from < 0) return false;
-
-    let to: number;
-    if (beforeId == null) {
-        to = list.length; // dropped at the far end of the strip
-    } else {
-        const before = list.find(w => w.id === beforeId);
-        to = before ? list.indexOf(before) : list.length;
-    }
-    list.splice(from, 1);
-    if (to > from) to -= 1; // account for the removed element shifting indices
-    to = Math.max(0, Math.min(to, list.length));
-    list.splice(to, 0, drag);
-    return list.indexOf(drag) !== from || to !== from;
 }
 
 /** The id of the tab that should be active when entering `channelId` — its remembered
@@ -352,6 +334,8 @@ export function activeIdFor(channelId: string | null): string | null {
 /** Clear both stores + the active binding (plugin stop / restart). No disk
  *  serialization — the collection is session-only by design. */
 export function resetCollection(): void {
+    cancelAllMediaProbes();
+    for (const win of allLiveWindows()) bumpLoadToken(win);
     channelTabs.clear();
     activeByChannel.clear();
     currentChannelId = null;
@@ -369,11 +353,11 @@ export function reconcileActiveFromCache(): boolean {
     const key = activeWindow?.activeCacheKey;
     if (key == null) return false;
     if (!activeWindow.content.loading && activeWindow.content.error == null) return false;
-    const e = getCacheEntry(key);
+    const e = getActiveCacheEntry(activeWindow) ?? getCacheEntry(key);
     if (!e || e.loading || e.error != null) return false;
     mountFromCache(activeWindow, e);
     return true;
 }
 
 // Re-export so callers that touch a window's cache entry don't reach past here.
-export { cacheTouch, getCacheEntry, mountFromCache };
+export { cacheTouch, getCacheEntry, mountFromCache, windowCacheEntry };

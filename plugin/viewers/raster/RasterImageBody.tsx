@@ -22,7 +22,7 @@
 import { React } from "@vencord/types/webpack/common";
 
 import { dockHasFocus, isTextEntryFocused } from "../../engine/dockKeyboard";
-import { getCacheEntry } from "../../engine/cache";
+import { getActiveCacheEntry, getWindowCacheState } from "../../engine/cache";
 import { clearLiveController, getLiveController, requestRender, setLiveController } from "../../engine/forceRender";
 import { dvFetch } from "../../engine/fetch";
 import { getActiveWindow } from "../../engine/window";
@@ -81,19 +81,20 @@ function goToPage(n: number): void {
     const total = vs.total || 1;
     const target = Math.min(Math.max(1, n), total);
     if (target === vs.page) return;
-    const entry = win.activeCacheKey ? getCacheEntry(win.activeCacheKey) : null;
+    const entry = getActiveCacheEntry(win) ?? null;
     if (!entry || !entry.rasterTiff) return;
     blobForTiffPage(entry, pageCtx(win), target - 1)
         .then(url => {
             // Guard against a file switch mid-decode: only apply if still this TIFF.
             const w = getActiveWindow();
-            if (w.content.type !== "rasterimage" || w.activeCacheKey == null) return;
-            const e = getCacheEntry(w.activeCacheKey);
-            if (e !== entry) return;
+            if (w.content.type !== "rasterimage" || w.activeCacheEntry !== entry) return;
+            const e = w.activeCacheEntry;
+            if (!e) return;
             const v = rasterState(w);
+            const state = getWindowCacheState(w, e.key)!;
             v.page = target;
+            state.renderUrl = url;
             w.content.url = url;
-            e.url = url; // a snapshot/restore re-points the <img> at the current page
             resetImgView(w); // a fresh page opens at fit (a new picture, like switching files)
             w.content.seq += 1; // remount the <img> so it re-derives natW/natH for the new page
             requestRender();

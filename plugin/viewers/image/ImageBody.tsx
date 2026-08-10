@@ -24,7 +24,7 @@
  * React proxy is only invoked inside the component bodies below.
  */
 
-import { React } from "@vencord/types/webpack/common";
+import { ContextMenuApi, React } from "@vencord/types/webpack/common";
 
 import { dockHasFocus } from "../../engine/dockKeyboard";
 import { clearLiveController, getLiveController, requestRender, setLiveController } from "../../engine/forceRender";
@@ -32,6 +32,7 @@ import { getActiveWindow } from "../../engine/window";
 import type { DockWindow, ImgViewState } from "../../engine/types";
 import { galleryCanStep, galleryStep } from "./gallery";
 import { ImageLightbox } from "./ImageLightbox";
+import { ImageContextMenu } from "./ImageContextMenu";
 
 // The live-controller slot name (the old `imgControls` module singleton).
 export const IMAGE_CONTROLLER = "image";
@@ -339,6 +340,24 @@ export function ImageBody() {
                 ref: wrapRef,
                 className: "dockview-img-wrap" + (zoomed ? " dockview-img-zoomed" : ""),
                 tabIndex: 0,
+                onContextMenu: (event: any) => {
+                    const url = win.content.url;
+                    if (!url) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    // If this image still has a mounted Discord source message, ask that
+                    // exact React surface to open its permission-aware native menu at the
+                    // Dock click position. A removed/virtualized source returns false and
+                    // falls through to the honest Copy/Save-only menu below.
+                    if (win.sourceImageContext?.({
+                        clientX: event.clientX,
+                        clientY: event.clientY
+                    })) return;
+                    ContextMenuApi.openContextMenu(event, () => React.createElement(ImageContextMenu, {
+                        url,
+                        name: win.content.name
+                    }));
+                },
                 ...wrapProps
             },
             React.createElement("img", {

@@ -48,62 +48,88 @@ export const EDIT_PENCIL_PATH = "M19.3 8.9 15.1 4.7l1.4-1.4a2 2 0 0 1 2.8 0l1.4 
  *       fetch the url and attach the blob.
  *  `nameOverride` (from the attach filename input) renames the staged file; blank →
  *  the file's own name. Best-effort: any failure is a silent no-op. */
-export function attachActiveFile(nameOverride?: string | null, w: DockWindow = getActiveWindow()): void {
-    // A non-active tab's ⋯ attaches THAT window's file. Resolve the target channel
-    // from the window's own new-file target (if any) before falling back to the
-    // current channel, so a pinned tab attaches to where you are now.
-    const channel = w.newFileChannel || getCurrentChannel() || ChannelStore.getChannel(SelectedChannelStore.getChannelId());
-    if (!channel) return;
+export type FileVersion = "current" | "original";
+
+/** Resolve exact bytes for menu Download/Attach. "current" uses the in-memory edit;
+ * "original" never does. URL-backed originals are fetched unchanged. */
+export async function fileForWindow(
+    w: DockWindow,
+    version: FileVersion = "current",
+    nameOverride?: string | null
+): Promise<File | null> {
     const baseName = (w.content.name as string | null) || "file";
     const name = (nameOverride && nameOverride.trim()) ? nameOverride.trim() : baseName;
-
-    const stage = (file: File) => {
-        try { UploadHandler.promptToUpload([file], channel, DraftType.ChannelMessage); } catch { /* ignore */ }
-        // a new-file session ends once attached (the editor was for that file).
-        if (w.isNewFile) { w.isNewFile = false; w.newFileChannel = null; }
-    };
-
-    const hasEdits = w.editView.editBuffer != null;
+    const useEdits = version === "current" && w.editView.editBuffer != null;
+    if (version === "original" && w.isNewFile) return null;
 
     // 1) Editable text family — attach the EDITED buffer (or the original text if
     //    unedited). Covers code / csv / structured / unknown-as-text (content.code)
     //    AND a NEW file (empty content.code, the buffer holds the written text).
     if (w.content.code != null && (w.content.type === "code" || w.content.type === "csv" || w.content.type === "structured" || w.content.type === "unknown")) {
-        const text = hasEdits ? editBufferText(w) : w.content.code;
-        stage(new File([text], name, { type: "text/plain" }));
-        return;
+        const text = useEdits ? editBufferText(w) : w.content.code;
+        return new File([text], name, { type: "text/plain" });
     }
     // 2) Markdown — the raw md source lives in content.code; attach the edited buffer
     //    when edited, else the original source. (A new markdown file also lands here:
     //    content.code = "" + the buffer holds the written markdown.)
     if (w.content.type === "markdown" && w.content.code != null) {
-        const text = hasEdits ? editBufferText(w) : w.content.code;
-        stage(new File([text], name, { type: "text/markdown" }));
-        return;
+        const text = useEdits ? editBufferText(w) : w.content.code;
+        return new File([text], name, { type: "text/markdown" });
     }
     // 3) Inline artifact (no url) — the html source is in memory; attach the edited
     //    buffer when edited, else the original html.
     if (w.content.type === "html" && w.content.html != null && !w.content.url) {
-        const text = hasEdits ? editBufferText(w) : w.content.html;
+        const text = useEdits ? editBufferText(w) : w.content.html;
         const base = /\.html?$/i.test(name) ? name : name + ".html";
-        stage(new File([text], base, { type: "text/html" }));
-        return;
+        return new File([text], base, { type: "text/html" });
     }
     // 4) Has a url (pdf / image / markdown-from-url / artifact-from-url): if the text
     //    family was edited (markdown/html have a buffer), attach the buffer; else
     //    attach the source blob from the file's OWN url.
-    if (hasEdits && (w.content.type === "markdown" || w.content.type === "html")) {
+    if (useEdits && (w.content.type === "markdown" || w.content.type === "html")) {
         const mime = w.content.type === "markdown" ? "text/markdown" : "text/html";
-        stage(new File([editBufferText(w)], name, { type: mime }));
-        return;
+        return new File([editBufferText(w)], name, { type: mime });
     }
     if (w.content.url) {
         const reqUrl = w.content.url;
-        dvFetch(reqUrl)
-            .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.blob(); })
-            .then(blob => { stage(new File([blob], name, { type: blob.type || "application/octet-stream" })); })
-            .catch(() => { /* fetch blocked / failed — silent no-op */ });
+        const response = await dvFetch(reqUrl);
+        if (!response.ok) throw new Error(String(response.status));
+        const blob = await response.blob();
+        return new File([blob], name, { type: blob.type || "application/octet-stream" });
     }
+    return null;
+}
+
+export function downloadWindowFile(w: DockWindow, version: FileVersion = "current"): void {
+    fileForWindow(w, version)
+        .then(file => {
+            if (!file) return;
+            const url = URL.createObjectURL(file);
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = file.name;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 30_000);
+        })
+        .catch(() => { /* best effort */ });
+}
+
+export function attachActiveFile(
+    nameOverride?: string | null,
+    w: DockWindow = getActiveWindow(),
+    version: FileVersion = "current"
+): void {
+    const channel = w.newFileChannel || getCurrentChannel() || ChannelStore.getChannel(SelectedChannelStore.getChannelId());
+    if (!channel) return;
+    fileForWindow(w, version, nameOverride)
+        .then(file => {
+            if (!file) return;
+            try { UploadHandler.promptToUpload([file], channel, DraftType.ChannelMessage); } catch { return; }
+            if (w.isNewFile) { w.isNewFile = false; w.newFileChannel = null; }
+        })
+        .catch(() => { /* fetch blocked / failed — silent no-op */ });
 }
 
 // --- the attach filename bar (the deferred AttachBar, second header row) -----

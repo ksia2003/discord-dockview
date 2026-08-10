@@ -186,6 +186,16 @@ export function hideExclusiveRightSlot(inner: HTMLElement | null = findPageInner
     inner.querySelectorAll<HTMLElement>('aside[aria-labelledby^="user-profile-sidebar-heading"]')
         .forEach(mark);
 
+    // A direct `/channels/<guild>/<thread>/<message>` navigation (not the ordinary
+    // SIDEBAR_VIEW_CHANNEL action intercepted above) nests the native thread card one
+    // level inside the chat content row. Looking only at page-inner children misses it
+    // and lets that sidebar reserve its full width beside DockView, crushing the main
+    // chat to a 1px sliver. Collapse the card's wrapper-only branch; `mark` excludes any
+    // card rendered inside our own Dock host, and `exclusiveLayoutRoot` stops before the
+    // shared row that also owns the primary chat.
+    inner.querySelectorAll<HTMLElement>('div[class*="chatLayerWrapper"]')
+        .forEach(el => mark(el, true));
+
     // A native thread/channel sidebar card among the page-inner's flex children (skip our
     // own dock host, which shares the chatLayerWrapper class).
     for (const child of Array.from(inner.children) as HTMLElement[]) {
@@ -215,7 +225,9 @@ export function nodeMayContainExclusiveRightSlot(node: Node): boolean {
  *  section, so the store is exactly as the user/Discord left it. */
 export function restoreHiddenMembers(): void {
     document.documentElement.classList.remove("dockview-open");
-    document.querySelectorAll(".dockview-page-inner").forEach(el => el.classList.remove("dockview-page-inner"));
+    document.querySelectorAll(".dockview-page-inner").forEach(el => {
+        el.classList.remove("dockview-page-inner", "dockview-unified-layout");
+    });
     clearExclusiveRightSlotHidden();
 }
 

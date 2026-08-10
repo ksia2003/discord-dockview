@@ -41,6 +41,7 @@ import { FluxDispatcher } from "@vencord/types/webpack/common";
 import { getCurrentChannelMemId } from "../engine/channelMemory";
 import { isSealBypassed, setContextView } from "../engine/contextTab";
 import { requestRender } from "../engine/forceRender";
+import { hostActions } from "../engine/hostBridge";
 import { openThreadTab } from "../engine/threadTab";
 import { isSelfMemberToggle, isSelfProfileToggle, isSelfVoiceChatToggle } from "./nativePanels";
 
@@ -62,12 +63,14 @@ function focusContextTab(): void {
     // The bypass escape hatch: while armed, the user asked for the NATIVE panel, so don't
     // yank focus back to the (broken) context tab — let the pass-through handle it.
     if (isSealBypassed(channelId)) return;
+    hostActions().deactivateSearchView();
     setContextView(channelId, "channel");
     requestRender();
 }
 
 /** Focus the voice channel's fixed CHAT view. */
 function focusVoiceChatTab(channelId: string | null): void {
+    hostActions().deactivateSearchView();
     setContextView(channelId, "voice-chat");
     requestRender();
 }

@@ -237,7 +237,7 @@ test("F9 measures and flushes member columns after applying the new live host wi
 
     assert.match(
         source,
-        /toggleDockWidthMode\(\);\s*applyHostWidth\(\);\s*commitF9MemberColumnsBeforePaint\(\);/
+        /selectDockWidthPreset\(next\);\s*applyHostWidth\(\);\s*syncVisibleChatPortalsNow\(\);\s*commitF9MemberColumnsBeforePaint\(\);/
     );
     assert.match(
         source,

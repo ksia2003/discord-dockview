@@ -55,8 +55,8 @@
  * the Viewer contract, and a dispose() that revokes the blob: url we created.
  *
  * Cache contract (mirrors the DXF / single-image raster path): the entry KEY stays
- * "dicom|<cdn-url>" (set by detectType at open time); we retype entry.type to "image"
- * and park the blob on entry.url so a restore re-points the <img>. The restore
+ * "dicom|<cdn-url>" (set by detectType at open time); sourceType/sourceUrl stay intact
+ * while renderType/renderUrl park the blob so a restore re-points the <img>. The restore
  * descriptor derives its type from the file NAME (".dcm"), so routing type stays "dicom"
  * and the key still matches; dispose revokes the blob on eviction.
  */
@@ -444,8 +444,8 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
         .then(buf => dicomToBlobUrl(buf, ctx))
         .then(blobUrl => {
             if (entry) {
-                entry.type = "image";
-                entry.url = blobUrl;
+                entry.renderType = "image";
+                entry.renderUrl = blobUrl;
                 entry.loading = false;
                 entry.error = null;
             }
@@ -476,7 +476,7 @@ function restore(): void { /* nothing to restore */ }
 /** Revoke the blob: url this viewer created when the cache entry is evicted. Guarded on
  *  the blob: scheme so we only ever revoke urls WE created, never a CDN url. */
 function dispose(entry: CacheEntry): void {
-    const u = entry.url;
+    const u = entry.renderUrl;
     if (u && u.startsWith("blob:")) {
         try { URL.revokeObjectURL(u); } catch { /* already gone */ }
     }

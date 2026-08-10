@@ -9,9 +9,8 @@
  *
  * Every key is read at RUNTIME through `settings.store.<key>` at the moment a
  * behaviour runs (a chip click, a dock open, a media mount, a channel switch), so a
- * toggle takes effect LIVE with no reload. The dock WIDTH is NOT here — it persists
- * through DataStore (engine/persist.ts LS_WIDTH), one width store shared with the
- * drag-resize; the General page's slider drives that same store, not a copy.
+ * toggle takes effect LIVE with no reload. Dock width presets live here as a compact
+ * comma-separated setting; the old DataStore width is read once only for migration.
  *
  * This module is imported by index.tsx (which wires `settings` into the plugin def),
  * so it must NOT import index.tsx at module top level, or we'd create an import cycle.
@@ -35,14 +34,12 @@ const enum OptionType {
 
 export const settings = definePluginSettings({
     // --- General page -------------------------------------------------------
-    // What the global F9 shortcut does. "width" preserves the existing compact ↔
-    // expanded switch. "hide" temporarily removes the dock from layout; an explicit
-    // new-tab action reveals it again. Kept as a string so the custom General page can
-    // present the two behaviours through Discord's native Select component.
-    f9Behavior: {
+    // Ordered non-zero widths. F9 cycles 0 (hidden) → each preset → 0. A string keeps
+    // the list extensible without making Vencord's schema own a fixed number of sliders.
+    dockWidthPresets: {
         type: OptionType.STRING,
-        description: "F9 shortcut behavior",
-        default: "width"
+        description: "Ordered DockView width presets",
+        default: "264,560"
     },
     // ON (default) projects the captured guild Members ListScroller into two or three
     // native-width cells as the DockView rail grows. OFF returns the exact native props.

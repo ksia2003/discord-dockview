@@ -20,10 +20,19 @@
  */
 
 import { viewerEnabled } from "./engine/categoryMap";
+import { decoderEnabledForFile } from "./engine/decoderModes";
+import {
+    inlineImageTypeFor, isCurrentAttachmentSurface, isDockFileEligible,
+    portalThreadIdFromSurface
+} from "./engine/dockEligibility";
 import { detectType, IMG_EXT } from "./engine/detectType";
-import type { ContentType } from "./engine/types";
+import type { ContentType, SourceImageContext } from "./engine/types";
 import { load } from "./engine/load";
 import { openExternalLink } from "./external/openExternal";
+import { getChannelById, getCurrentChannelId } from "./host/channel";
+import {
+    getNativeSearchScopeId, isNativeSearchSurfaceActive
+} from "./host/searchResults";
 import { fullResImageUrl } from "./viewers/image/url";
 
 /** The matched extension of a url's path, lowercased, or null (path-aware, the
@@ -54,8 +63,12 @@ function isPanelUrl(url: string | null | undefined): boolean {
     if (type === "unknown") return false;
     // A "web" url is not an attachment/file chip. Plain message links keep Vesktop's
     // normal click behavior and expose an explicit context-menu action in index.tsx.
-    if (type === "web") return false;
-    return viewerEnabled(type);
+    if (type === "web" || type === "audio" || type === "video") return false;
+    return isDockFileEligible({
+        type,
+        categoryEnabled: viewerEnabled(type),
+        decoderEnabled: decoderEnabledForFile(type, url)
+    });
 }
 
 /** Derive the panel display name from the url. */
@@ -92,14 +105,158 @@ function webNameFor(url: string): string {
  * Content-Disposition). Falls back to opening the link externally only if load()
  * throws (panel mount refused — e.g. on the Discord home/friends page).
  */
-function openInPanel(url: string, name: string) {
+function openInPanel(
+    url: string,
+    name: string,
+    sourceMessage?: { channelId: string; messageId: string; } | null
+) {
     try {
-        load({ name, url });
+        load({ name, url, sourceMessage });
         return;
     } catch {
         /* panel mount failed somehow — fall back to opening the link */
     }
     openExternalLink(url);
+}
+
+const MESSAGE_SURFACE_SELECTOR = "[id^='chat-messages-'], [data-list-item-id*='chat-messages-']";
+const ATTACHMENT_SURFACE_SELECTOR = [
+    "[class*='attachment']",
+    "[class*='Attachment']",
+    "[class*='fileName']",
+    "[class*='nonVisualMediaItem']",
+    "[class*='nonMediaAttachment']",
+    "[class*='visualMediaItem']",
+    "[class*='imageWrapper']",
+    "[class*='lazyImgContainer']",
+    "[class*='wrapperAudio']",
+    "[class*='message-attachment']",
+    "[data-testid*='attachment']"
+].join(", ");
+const SEARCH_SURFACE_SELECTOR = [
+    "[class*='searchResult']",
+    "[class*='search-results']",
+    "[class*='searchResults']",
+    "[data-search-result]",
+    "[data-list-id*='search']"
+].join(", ");
+const HOME_SURFACE_SELECTOR = [
+    "[data-home-view]",
+    "[data-list-id*='home']",
+    "[class*='homePanel']",
+    "[class*='friendsPage']"
+].join(", ");
+
+interface MessageSurface {
+    node: HTMLElement;
+    channelId: string;
+    messageId: string;
+    searchSurface: boolean;
+    searchResultSurface: boolean;
+    homeSurface: boolean;
+}
+
+function messageSurfaceFromTarget(target: EventTarget | null): MessageSurface | null {
+    const source = target instanceof Element ? target : null;
+    const node = source?.closest<HTMLElement>(MESSAGE_SURFACE_SELECTOR) || null;
+    const raw = node?.id || node?.getAttribute("data-list-item-id") || "";
+    const match = /chat-messages-(\d+)-(\d+)/.exec(raw);
+    if (!node || !match) return null;
+    const dockSearchBody = source?.closest<HTMLElement>(".dockview-search-results-body") || null;
+    const searchSurface = !dockSearchBody && !!source?.closest(SEARCH_SURFACE_SELECTOR);
+    const homeSurface = !!source?.closest(HOME_SURFACE_SELECTOR);
+    return {
+        node,
+        channelId: match[1],
+        messageId: match[2],
+        searchSurface,
+        searchResultSurface: !!dockSearchBody,
+        homeSurface
+    };
+}
+
+/** True only for a real Discord attachment chip/inline preview in the current channel
+ * or thread. A supported extension by itself is not enough: ordinary message anchors,
+ * search results, home surfaces, and arbitrary external URLs stay upstream. */
+export function isDockAttachmentTarget(target: EventTarget | null, url: string | null | undefined): boolean {
+    const source = target instanceof Element ? target : null;
+    const message = messageSurfaceFromTarget(target);
+    const marker = source?.closest(ATTACHMENT_SURFACE_SELECTOR) || null;
+    if (!message || !marker || !message.node.contains(marker)) return false;
+    const portal = source?.closest<HTMLElement>(".dockview-thread-portal") || null;
+    if (portal && (portal.style.display === "none" || !portal.contains(message.node))) return false;
+    // The portal's own native message tree is the binding evidence. Its message row
+    // already carries the thread channel id, so do not depend on a synthetic dataset
+    // attribute that Discord's portal renderer does not provide.
+    const portalThreadId = portalThreadIdFromSurface(!!portal, message.channelId);
+    const currentChannelId = getCurrentChannelId();
+    const currentChannel = getChannelById(currentChannelId);
+    const messageChannel = getChannelById(message.channelId);
+    const searchBody = source?.closest<HTMLElement>(".dockview-search-results-body") || null;
+    const searchScopeId = searchBody?.dataset.dockviewSearchScope ?? null;
+    const activeSearch = searchScopeId != null
+        && searchBody?.dataset.dockviewSearchActive === "true"
+        && isNativeSearchSurfaceActive(searchScopeId, currentChannelId);
+    return isCurrentAttachmentSurface({
+        attachmentMarker: true,
+        attachmentUrl: url,
+        messageChannelId: message.channelId,
+        activeSurfaceChannelIds: currentChannelId ? [currentChannelId] : [],
+        portalThreadId,
+        searchResultSurface: message.searchResultSurface,
+        searchResultScopeId: searchScopeId,
+        activeSearchScopeId: getNativeSearchScopeId(currentChannelId),
+        searchResultActive: activeSearch,
+        messageGuildId: messageChannel?.guild_id ? String(messageChannel.guild_id) : null,
+        activeGuildId: currentChannel?.guild_id ? String(currentChannel.guild_id) : null,
+        searchSurface: message.searchSurface,
+        homeSurface: message.homeSurface,
+        explicitDownload: isExplicitDownloadButton(target)
+    });
+}
+
+export function sourceMessageFromTarget(target: EventTarget | null): { channelId: string; messageId: string; } | null {
+    const message = messageSurfaceFromTarget(target);
+    return message ? { channelId: message.channelId, messageId: message.messageId } : null;
+}
+
+/** Build a session-only bridge to Discord's own source-image context menu. We retain the
+ * clicked element weakly, only when its React ancestry actually owns an onContextMenu
+ * handler. A Dock image can then redispatch a right-click at the Dock coordinates and get
+ * Discord's permission-aware menu without copying its actions. Virtualized/deleted source
+ * messages naturally fall back because the weak target is gone or disconnected. */
+export function sourceImageContextFromTarget(target: EventTarget | null): SourceImageContext | null {
+    const source = target instanceof Element ? target : null;
+    if (!source) return null;
+
+    let cursor: Element | null = source;
+    let hasHandler = false;
+    for (let depth = 0; cursor && depth < 12; depth++, cursor = cursor.parentElement) {
+        const propsKey = Object.keys(cursor).find(key => key.startsWith("__reactProps$"));
+        const props = propsKey ? (cursor as any)[propsKey] : null;
+        if (typeof props?.onContextMenu === "function") {
+            hasHandler = true;
+            break;
+        }
+        if (cursor.matches?.("[id^='chat-messages-'], [data-list-item-id*='chat-messages']")) break;
+    }
+    if (!hasHandler) return null;
+
+    const ref = new WeakRef(source);
+    return point => {
+        const live = ref.deref();
+        if (!live?.isConnected) return false;
+        live.dispatchEvent(new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            button: 2,
+            buttons: 2,
+            clientX: point.clientX,
+            clientY: point.clientY
+        }));
+        return true;
+    };
 }
 
 // --- chip click delegation --------------------------------------------------
@@ -134,8 +291,9 @@ function resolvePanelClick(target: EventTarget | null): { url: string; anchor: H
     for (let i = 0; i < 12 && el; i++) {
         if (el.tagName === "A") {
             const a = el as HTMLAnchorElement;
-            if (isPanelUrl(a.href || a.getAttribute("href"))) {
-                return { url: a.href, anchor: a };
+            const url = a.href || a.getAttribute("href");
+            if (isPanelUrl(url) && isDockAttachmentTarget(target, url)) {
+                return { url: a.href || url!, anchor: a };
             }
         }
         el = el.parentElement;
@@ -150,7 +308,9 @@ function resolvePanelClick(target: EventTarget | null): { url: string; anchor: H
         if (/attachment|fileName|nonMediaAttachment|nonVisualMediaItem|wrapperAudio|message-attachment/i.test(cls)) {
             const anchors = el.querySelectorAll<HTMLAnchorElement>("a[href]");
             for (const a of Array.from(anchors)) {
-                if (isPanelUrl(a.href)) return { url: a.href, anchor: a };
+                if (isPanelUrl(a.href) && isDockAttachmentTarget(target, a.href)) {
+                    return { url: a.href, anchor: a };
+                }
             }
         }
         el = el.parentElement;
@@ -215,14 +375,9 @@ function isImageUrl(url: string): boolean {
  *  A <video> routes to the video viewer with its RAW url (the full-res image transform
  *  must never touch a media url); otherwise the image full-res path applies. */
 function mediaFromContainer(wrapper: HTMLElement): { url: string; name: string; type: ContentType; } | null {
-    const vid = wrapper.querySelector("video") as HTMLVideoElement | null;
-    if (vid) {
-        // Prefer the url the inline <video> is ACTUALLY playing (currentSrc/src) — it's
-        // the signed, playable one. fiberImageUrl can hand back a different/un-signed
-        // attachment url that the dock's <video> then 403s on ("Can't play this here").
-        const vurl = vid.currentSrc || vid.src || fiberImageUrl(wrapper) || null;
-        if (vurl && detectType({ url: vurl }) === "video" && viewerEnabled("video")) return { url: vurl, name: nameFromUrl(vurl), type: "video" };
-    }
+    // Native media controls own every left click. Opening audio/video in DockView is an
+    // explicit context-menu action, never a capture-phase body interception.
+    if (wrapper.querySelector("video, audio")) return null;
     const img = wrapper.querySelector("img");
     const url = fiberImageUrl(wrapper) || (img ? img.src : null);
     if (!url) return null;
@@ -230,10 +385,19 @@ function mediaFromContainer(wrapper: HTMLElement): { url: string; name: string; 
     // An inline video/audio → gate on the Media category; anything else is an image →
     // gate on the Images category. A disabled category returns null so the click falls
     // through to Discord's native lightbox / player (no dock).
-    if (t === "video" || t === "audio") return viewerEnabled(t) ? { url, name: nameFromUrl(url), type: t } : null;
-    if (!isImageUrl(url) && !/\/attachments\//.test(url)) return null;
-    if (!viewerEnabled("image")) return null;
-    return { url: fullResImageUrl(url), name: nameFromUrl(url), type: "image" };
+    if (t === "video" || t === "audio") return null;
+    // Unknown and exotic raster attachment formats are not inline image captures. In
+    // particular, do not turn a PSD/HEIC/JXL CDN preview into an `image` route: the
+    // raster decoder must own its original type, so these clicks stay with Discord.
+    const inlineType = inlineImageTypeFor(t);
+    if (!inlineType || !isImageUrl(url)) return null;
+    if (!isDockAttachmentTarget(wrapper, url)) return null;
+    if (!isDockFileEligible({
+        type: inlineType,
+        categoryEnabled: viewerEnabled(inlineType),
+        decoderEnabled: decoderEnabledForFile(inlineType, url)
+    })) return null;
+    return { url: fullResImageUrl(url), name: nameFromUrl(url), type: inlineType };
 }
 
 function resolveInlineMediaClick(target: EventTarget | null): { url: string; name: string; type: ContentType; } | null {
@@ -246,22 +410,6 @@ function resolveInlineMediaClick(target: EventTarget | null): { url: string; nam
             const hit = mediaFromContainer(el);
             if (hit) return hit;
             break;
-        }
-        el = el.parentElement;
-    }
-    // Phase 2: a click that landed on a VIDEO player's overlay chrome (the play button /
-    // title) which can sit OUTSIDE the imageWrapper. Climb to the video's visual-media
-    // container and route it as video. Audio (nonVisualMediaItem) has no <video>, so it
-    // never matches here and falls through to resolvePanelClick.
-    el = target as HTMLElement | null;
-    for (let i = 0; i < 10 && el; i++) {
-        const cls = String((el as any).className?.baseVal ?? el.className ?? "");
-        if (/(?:^|[^a-z])visualMediaItem|mosaicItem/i.test(cls)) {
-            const vid = el.querySelector("video") as HTMLVideoElement | null;
-            if (vid) {
-                const vurl = vid.currentSrc || vid.src || fiberImageUrl(el) || null;
-                if (vurl && detectType({ url: vurl }) === "video") return { url: vurl, name: nameFromUrl(vurl), type: "video" };
-            }
         }
         el = el.parentElement;
     }
@@ -278,7 +426,13 @@ function onDocClickCapture(e: MouseEvent) {
         e.stopPropagation();
         e.stopImmediatePropagation();
         try {
-            load({ name: mediaHit.name, url: mediaHit.url, type: mediaHit.type });
+            load({
+                name: mediaHit.name,
+                url: mediaHit.url,
+                type: mediaHit.type,
+                sourceMessage: sourceMessageFromTarget(e.target),
+                sourceImageContext: sourceImageContextFromTarget(e.target)
+            });
         } catch {
             /* panel mount failed; fall back to native by not blocking next time */
         }
@@ -289,7 +443,7 @@ function onDocClickCapture(e: MouseEvent) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
-        openInPanel(hit.url, nameFromUrl(hit.url));
+        openInPanel(hit.url, nameFromUrl(hit.url), sourceMessageFromTarget(e.target));
         return;
     }
 }

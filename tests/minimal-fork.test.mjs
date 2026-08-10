@@ -61,7 +61,7 @@ test("ordinary link clicks stay upstream while right-click offers Open in DockVi
     assert.equal(isExternalWebUrl("https://cdn.discordapp.com/file/page.html"), false);
 });
 
-test("F9 can switch width or temporarily hide until an explicit tab opens", () => {
+test("F9 cycles an editable ordered preset list plus fixed hidden state", () => {
     const plugin = source("plugin/index.tsx");
     const layout = source("plugin/host/layout.ts");
     const mount = source("plugin/host/mount.ts");
@@ -80,30 +80,33 @@ test("F9 can switch width or temporarily hide until an explicit tab opens", () =
     assert.match(layout, /export function getCompactDockWidth\(\)/);
     assert.match(layout, /getPropertyValue\(COMPACT_WIDTH_PROPERTY\)/);
     assert.match(layout, /export const DEFAULT_EXPANDED_WIDTH = 560;/);
-    assert.match(layout, /export function toggleDockWidthMode\(\)/);
-    assert.match(layout, /dockWidth = expandedDockWidth/);
-    assert.match(layout, /compactWidthMode = false/);
-    assert.match(layout, /dockWidth = compactWidth/);
+    assert.match(layout, /export function setDockWidthPresets\(/);
+    assert.match(layout, /export function selectDockWidthPreset\(/);
+    assert.match(layout, /let dockPresets = \[COMPACT_WIDTH_FALLBACK, DEFAULT_EXPANDED_WIDTH\]/);
+    assert.match(layout, /activePresetIndex/);
     assert.match(layout, /classList\.toggle\("dockview-host--compact", isCompactDockWidth\(\)\)/);
-    assert.match(panel, /if \(isCompactDockWidth\(\)\) return;/);
-    assert.match(
-        css,
-        /#dockview-root\.dockview-host--compact \.dockview-resize\s*\{[^}]*display:\s*none;/s
-    );
+    assert.doesNotMatch(panel, /onResizeStart|dockview-resize|clampDockDrag/);
+    assert.doesNotMatch(css, /dockview-resize|dockview-drag-overlay/);
     assert.match(plugin, /e\.key !== "F9" && e\.code !== "F9"/);
-    assert.match(plugin, /settings\.store\.f9Behavior === "hide"/);
+    assert.match(plugin, /getActiveDockPresetIndex\(\) \+ 1/);
+    assert.match(plugin, /selectDockWidthPreset\(0\)/);
     assert.match(plugin, /toggleDockTemporaryVisibility\(\)/);
-    assert.match(plugin, /toggleDockWidthMode\(\)/);
+    assert.match(
+        plugin,
+        /applyHostWidth\(\);\s*syncVisibleChatPortalsNow\(\);\s*commitF9MemberColumnsBeforePaint\(\)/
+    );
     assert.match(plugin, /window\.addEventListener\("keydown", onKeyDown\)/);
     assert.match(plugin, /window\.removeEventListener\("keydown", onKeyDown\)/);
-    assert.match(plugin, /onResize = \(\) => \{\s*applyHostWidth\(\);\s*\}/);
-    assert.match(strings, /widthTitle: "Expanded dock width"/);
-    assert.match(strings, /f9Hide: "Temporarily hide dock"/);
-    assert.match(settings, /f9Behavior:\s*\{[^}]*default: "width"/s);
-    assert.match(general, /F9BehaviorSelect/);
-    assert.match(general, /value: "width"/);
-    assert.match(general, /value: "hide"/);
-    assert.match(general, /value === "hide" && isCompactDockWidth\(\)/);
+    assert.match(
+        plugin,
+        /onResize = \(\) => \{\s*applyHostWidth\(\);\s*syncVisibleChatPortalsNow\(\);\s*\}/
+    );
+    assert.match(strings, /widthTitle: "F9 dock width presets"/);
+    assert.match(settings, /dockWidthPresets:\s*\{[^}]*default: "264,560"/s);
+    assert.match(general, /WidthPresetEditor/);
+    assert.match(general, /addPreset/);
+    assert.match(general, /move\(index, -1\)/);
+    assert.match(general, /remove\(index\)/);
     assert.match(mount, /let temporarilyHidden = false;/);
     assert.match(mount, /export function toggleDockTemporaryVisibility\(\)/);
     assert.match(mount, /classList\.toggle\("dockview-open", visible\)/);
@@ -113,7 +116,7 @@ test("F9 can switch width or temporarily hide until an explicit tab opens", () =
     assert.doesNotMatch(channelMemory, /revealDock/);
     assert.match(
         css,
-        /\[data-dockview-temporarily-hidden="true"\]\s*\{[^}]*display:\s*none !important;/s
+        /\[data-dockview-temporarily-hidden="true"\]\s*\{[^}]*visibility:\s*hidden !important;[^}]*pointer-events:\s*none !important;/s
     );
     assert.doesNotMatch(css, /html:not\(\.dockview-open\) \.dockview-(?:thread|voice-chat)-portal/);
 });
@@ -124,8 +127,9 @@ test("the native member list stays fluid without breaking its one-column virtual
     const nativePanels = source("plugin/host/nativePanels.ts");
     const panel = source("plugin/ui/DockPanel.tsx");
 
-    assert.match(layout, /const dockMinWidth = getCompactDockWidth\(\)/);
-    assert.match(panel, /channelContextActive \? " dockview-body--context" : ""/);
+    assert.match(layout, /const dockMinWidth = MIN_DOCK_WIDTH/);
+    assert.match(panel, /const nativeRailContextActive = contextView === "channel" \|\| contextView === "search"/);
+    assert.match(panel, /nativeRailContextActive \? " dockview-body--context" : ""/);
     assert.match(
         css,
         /\.dockview-body--context\s*\{[^}]*overflow:\s*hidden;[^}]*scrollbar-gutter:\s*auto;/s
@@ -142,6 +146,126 @@ test("the native member list stays fluid without breaking its one-column virtual
     assert.match(nativePanels, /function exclusiveLayoutRoot\(/);
     assert.match(nativePanels, /parent\.children\.length !== 1/);
     assert.match(nativePanels, /mark\(el, true\)/);
+    assert.match(
+        nativePanels,
+        /inner\.querySelectorAll<HTMLElement>\('div\[class\*="chatLayerWrapper"\]'\)[\s\S]*?\.forEach\(el => mark\(el, true\)\)/
+    );
+});
+
+test("compact viewer controls wrap instead of escaping past the required More menu", () => {
+    const css = source("plugin/style.css");
+
+    assert.match(css, /\.dockview-viewer-toolbar\s*\{[^}]*flex-wrap:\s*wrap;/s);
+    assert.match(css, /\.dockview-viewer-toolbar \.dockview-file-more\s*\{[^}]*margin-left:\s*auto;/s);
+    assert.match(css, /\.dockview-tool-group\s*\{[^}]*flex:\s*0 0 auto;/s);
+});
+
+test("a newly focused screen-share viewer hides once and never auto-restores", () => {
+    const screenShare = source("plugin/host/screenShareAutoHide.ts");
+    const mount = source("plugin/host/mount.ts");
+    const plugin = source("plugin/index.tsx");
+
+    assert.match(screenShare, /ChannelRTCStore\?\.getSelectedParticipant\?\.\(channelId\)/);
+    assert.match(screenShare, /if \(!participant\?\.stream\) return null/);
+    assert.match(screenShare, /if \(next && next !== lastStreamSelection\) hideDockTemporarily\(\)/);
+    assert.match(screenShare, /lastStreamSelection = next/);
+    assert.doesNotMatch(screenShare, /revealDock|toggleDockTemporaryVisibility/);
+    assert.match(mount, /export function hideDockTemporarily\(\)/);
+    assert.match(plugin, /startScreenShareAutoHide\(\)/);
+    assert.match(plugin, /stopScreenShareAutoHide\(\)/);
+    assert.match(plugin, /CHANNEL_SELECT[\s\S]*reconcileScreenShareSelection\(\)/);
+});
+
+test("queued root retirement cannot unmount a re-adopted DockPanel", () => {
+    const mount = source("plugin/host/mount.ts");
+
+    assert.match(mount, /const rootRetirements = new WeakMap<Root, object>\(\)/);
+    assert.match(mount, /rootRetirements\.delete\(resident\)/);
+    assert.match(mount, /const retirement = \{\};\s*rootRetirements\.set\(stale, retirement\)/);
+    assert.match(mount, /if \(rootRetirements\.get\(stale\) !== retirement\) return/);
+    assert.match(mount, /resident\.render\(React\.createElement\(DockPanel\)\)/);
+    assert.match(mount, /resident root was dead/);
+    assert.match(mount, /rootRetirements\.delete\(r\)/);
+});
+
+test("an active thread portal is bound before its tab can paint blank", () => {
+    const threadBody = source("plugin/viewers/thread/ThreadBody.tsx");
+    const portal = source("plugin/viewers/thread/threadPortal.ts");
+    const voicePortal = source("plugin/viewers/voice/voiceChatPortal.ts");
+    const scrollAnchor = source("plugin/viewers/chatScrollAnchor.ts");
+    const plugin = source("plugin/index.tsx");
+    const tabs = source("plugin/engine/tabs.ts");
+    const load = source("plugin/engine/load.ts");
+    const search = source("plugin/host/searchResults.ts");
+
+    assert.match(threadBody, /const \{ useLayoutEffect \} = React/);
+    assert.match(threadBody, /useLayoutEffect\(\(\) => \{/);
+    assert.match(threadBody, /claim = showThreadPortal\(threadId\)/);
+    assert.match(threadBody, /releaseThreadPortals\(claim\)/);
+    assert.doesNotMatch(threadBody, /const \{ useEffect \} = React/);
+    assert.match(tabs, /selectPortalForWindow\(getActiveWindow\(\)\)/);
+    assert.match(load, /selectThreadPortal\(null\);\s*showContent/);
+    assert.match(search, /searchRegistry\.activate\(scopeId\);\s*selectThreadPortal\(null\)/);
+    assert.match(portal, /export function syncVisibleThreadPortalNow\(\): void/);
+    assert.match(portal, /function syncLoop\(\): void \{[\s\S]*syncVisibleThreadPortalNow\(\)/);
+    assert.match(portal, /if \(!p\.rendered\) \{\s*p\.rendered = renderPortal\(p\)/);
+    assert.match(portal, /function scheduleInitialRender\(p: Portal\): void/);
+    assert.match(voicePortal, /export function syncVisibleVoiceChatPortalNow\(\): void/);
+    assert.match(voicePortal, /function syncLoop\(\): void \{[\s\S]*syncVisibleVoiceChatPortalNow\(\)/);
+    assert.match(voicePortal, /if \(!portal\.rendered\) \{\s*portal\.rendered = renderPortal\(portal\)/);
+    assert.match(voicePortal, /createInitialRenderRetry/);
+    assert.match(voicePortal, /renderRetry: InitialRenderRetryController \| null/);
+    assert.match(voicePortal, /subscribeVoiceChatReadiness/);
+    assert.match(voicePortal, /if \(!portal \|\| portal\.rendered\) return/);
+    assert.match(voicePortal, /cancelInitialRender\(portal\)/);
+    assert.match(scrollAnchor, /startsWith\("chat-messages___chat-messages-"\)/);
+    assert.match(scrollAnchor, /restoreChatScrollAnchorAcrossFrames/);
+    assert.match(
+        plugin,
+        /function syncVisibleChatPortalsNow\(\): void \{\s*syncVisibleThreadPortalNow\(\);\s*syncVisibleVoiceChatPortalNow\(\);\s*\}/
+    );
+});
+
+test("Dock images reuse a live Discord source menu and fall back honestly", () => {
+    const embed = source("plugin/embed.ts");
+    const load = source("plugin/engine/load.ts");
+    const image = source("plugin/viewers/image/ImageBody.tsx");
+    const fallback = source("plugin/viewers/image/ImageContextMenu.tsx");
+
+    assert.match(embed, /sourceImageContextFromTarget/);
+    assert.match(embed, /new WeakRef\(source\)/);
+    assert.match(embed, /new MouseEvent\("contextmenu"/);
+    assert.match(embed, /if \(!live\?\.isConnected\) return false/);
+    assert.match(load, /win\.sourceImageContext = opts\.sourceImageContext/);
+    assert.match(image, /win\.sourceImageContext\?\.\(\{/);
+    assert.match(fallback, /STRINGS\.menu\.copyImage/);
+    assert.match(fallback, /STRINGS\.menu\.saveImage/);
+    assert.doesNotMatch(fallback, /openInBrowser|copyLink/);
+});
+
+test("sandboxed document links keep browser click behavior and one explicit context menu", () => {
+    const bridge = source("plugin/engine/iframeLinkBridge.ts");
+    const nonce = source("plugin/engine/nonce.ts");
+    const plugin = source("plugin/index.tsx");
+
+    assert.match(bridge, /__dockViewOpenLink/);
+    assert.match(bridge, /__dockViewLinkContext/);
+    assert.match(bridge, /document\.addEventListener\("contextmenu"/);
+    assert.match(nonce, /ensureIframeLinkBridge\(html\)/);
+    assert.match(plugin, /id: "dockview-link-open-browser"/);
+    assert.match(plugin, /id: "dockview-link-open-dock"/);
+    assert.match(plugin, /id: "dockview-link-copy"/);
+    assert.match(plugin, /normalizeIframeLink\(d\.__dockViewOpenLink(?:,\s*frame)?\)/);
+});
+
+test("a failed provisional file is removed even after the user leaves its tab", () => {
+    const rollback = source("plugin/engine/openRollback.ts");
+    const panel = source("plugin/ui/DockPanel.tsx");
+
+    assert.match(rollback, /for \(const win of \[\.\.\.allLiveWindows\(\)\]\)/);
+    assert.match(rollback, /if \(!isCurrentActive\) \{[\s\S]*removeWindowEverywhere\(win\)/);
+    assert.match(rollback, /win\.ownerChannelId === getWindowChannelId\(\)/);
+    assert.match(panel, /useLayoutEffect\(\(\) => \{[\s\S]*settlePendingOpens\(\);[\s\S]*\}\)/);
 });
 
 test("guild Channel and voice Chat are permanent dock surfaces", () => {
@@ -150,9 +274,12 @@ test("guild Channel and voice Chat are permanent dock surfaces", () => {
     const tabs = source("plugin/ui/DockTabs.tsx");
     const contextBody = source("plugin/ui/ContextTabBody.tsx");
     const overview = source("plugin/ui/ChannelOverview.tsx");
+    const searchResults = source("plugin/host/searchResults.ts");
+    const searchBody = source("plugin/ui/SearchResultsBody.tsx");
     const interception = source("plugin/host/interception.ts");
     const capture = source("plugin/host/voiceChatCapture.ts");
     const portal = source("plugin/viewers/voice/voiceChatPortal.ts");
+    const hostMount = source("plugin/host/mount.ts");
     const css = source("plugin/style.css");
 
     // Guild identity/topic moves to CHANNEL while only the native header's topic +
@@ -161,21 +288,58 @@ test("guild Channel and voice Chat are permanent dock surfaces", () => {
     assert.match(plugin, /filterChannelHeaderSubtitle/);
     assert.match(standalone, /plugin\.filterChannelHeaderToolbar\(toolbar, channel\)/);
     assert.match(standalone, /plugin\.filterChannelHeaderSubtitle\(subtitle, channel\)/);
+    assert.match(standalone, /plugin\.openThreadFromBrowser\(channel\)/);
     assert.match(standalone, /plugin\.renderDockRail\(channelView\)/);
+    assert.match(standalone, /plugin\.captureUnifiedChannelHeader\(header, channelView\)/);
+    assert.match(plugin, /captureUnifiedChannelHeader\(header, channelView\)/);
+    assert.match(plugin, /find: "Thread Browser Empty State"/);
+    assert.match(plugin, /\$self\.openThreadFromBrowser\(\$1\)/);
+    assert.match(plugin, /openThreadTab\(threadId, parentId\)/);
+    assert.match(source("plugin/host/unifiedHeader.tsx"), /channel\.type === 0/);
+    assert.match(source("plugin/host/unifiedHeader.tsx"), /railSeen\.has\(instance\)/);
+    assert.match(source("plugin/host/unifiedHeader.tsx"), /setUnifiedHeaderActive/);
+    assert.match(source("plugin/host/unifiedHeader.tsx"), /nativeTitle/);
+    assert.match(source("plugin/host/unifiedHeader.tsx"), /nativeToolbar/);
+    assert.match(source("plugin/host/unifiedHeader.tsx"), /NativeSearchToolbarSeed/);
+    assert.match(source("plugin/host/unifiedHeader.tsx"), /ReactDOM\.createPortal\(toolbar, target\)/);
+    assert.match(source("plugin/host/unifiedHeader.tsx"), /bindUnifiedChannelToolbarTarget/);
+    assert.match(hostMount, /setUnifiedHeaderActive\(true\)/);
+    assert.match(hostMount, /setUnifiedHeaderActive\(false\)/);
     assert.match(contextBody, /ChannelOverview/);
     assert.match(contextBody, /dockview-context-slot/);
     assert.match(overview, /Parser\.parseTopic/);
     assert.match(overview, /findCssClasses/);
     assert.match(overview, /Clickable/);
     assert.match(overview, /openNativeChannelMenu/);
+    assert.match(overview, /if \(!openNativeChannelMenu\(event, channelId\)\) return;\s*event\?\.preventDefault/);
     assert.match(overview, /getNativeChannelHeaderSubtitle/);
+    assert.match(overview, /getUnifiedChannelHeaderTitle/);
+    assert.match(overview, /bindUnifiedChannelToolbarTarget/);
+    assert.match(overview, /dockview-channel-native-toolbar/);
     assert.match(overview, /nativeTopicBoundary/);
     assert.match(overview, /dockview-channel-heading/);
     assert.match(overview, /dockview-channel-topic/);
+    assert.match(plugin, /\$self\.captureNativeSearchResults\(\$1,this\)/);
+    assert.match(standalone, /plugin\.captureNativeSearchResults\(sidebar, channelView\)/);
+    assert.match(searchResults, /channelView\?\.props\?\.section === "SEARCH"/);
+    assert.match(searchResults, /new SearchSurfaceRegistry\(\)/);
+    assert.match(searchResults, /if \(nativeSearchQueryText\(\) == null\) queueNativeClose\(scopeId, channelId\)/);
+    assert.match(searchResults, /`guild:\$\{String\(guildId\)\}`/);
+    assert.match(searchResults, /searchRegistry\.activate\(scopeId\)/);
+    assert.match(searchResults, /const closeButton = nativeSearchControlButton\(\)/);
+    assert.match(searchResults, /if \(!closeButton\) return/);
+    assert.match(searchResults, /closeButton\.click\(\)/);
+    assert.doesNotMatch(searchResults, /toggleDockWidthMode|applyHostWidth/);
+    assert.match(searchBody, /getNativeSearchEntries/);
+    assert.match(tabs, /searchTabElement/);
+    assert.match(css, /dockview-search-results-body/);
     assert.match(
         source("plugin/host/channelView.ts"),
         /channelHeaderSubtitle = \{ channelId, element: subtitle \}/
     );
+    assert.match(source("plugin/host/channelView.ts"), /function withoutMemberToggle/);
+    assert.match(source("plugin/host/channelView.ts"), /Array\.isArray\(node\)/);
+    assert.match(source("plugin/host/channelView.ts"), /key === "members"/);
     assert.match(
         css,
         /\.dockview-channel-topic--native > \[class\*="topic_"\]\s*\{[^}]*max-height:\s*none;[^}]*overflow:\s*visible;/s
@@ -213,6 +377,47 @@ test("guild Channel and voice Chat are permanent dock surfaces", () => {
     assert.match(css, /\.dockview-voice-chat-portal\s*\{/);
 });
 
+test("Search tab and resident body share one active-state source and repaint signal", () => {
+    const searchResults = source("plugin/host/searchResults.ts");
+    const searchRegistry = source("plugin/host/searchResultsRegistry.ts");
+    const searchBody = source("plugin/ui/SearchResultsBody.tsx");
+    const tabs = source("plugin/ui/DockTabs.tsx");
+
+    // One predicate is THE active-state source for both the fixed Search tab and its
+    // resident body; the tab passes the current scope, the body each resident entry.
+    assert.match(searchRegistry, /export function isSearchSurfaceActive/);
+    assert.match(searchResults, /isSearchSurfaceActive\(channelId: string \| null, scopeId: string \| null\)/);
+    assert.match(searchBody, /isSearchSurfaceActive\(channelId, entry\.scopeId\)/);
+    assert.match(tabs, /searchTabElement\(channelId, isSearchSurfaceActive\(channelId, getNativeSearchScopeId\(channelId\)\)\)/);
+    // The body must repaint on the same engine signal as the tab (UnifiedHeaderTabs
+    // subscribes), not only through the panel's single renderer slot. The subscription
+    // attaches in the commit-synchronous layout phase — a passive effect would miss the
+    // queueMicrotask activation that follows the first-open capture render.
+    assert.match(searchBody, /useLayoutEffect\(\(\) => subscribeRender\(rerender\), \[rerender\]\)/);
+    assert.doesNotMatch(searchBody, /\buseEffect\b/);
+});
+
+test("Search close keeps the native tree resident and Enter reactivates it", () => {
+    const searchResults = source("plugin/host/searchResults.ts");
+    const searchRegistry = source("plugin/host/searchResultsRegistry.ts");
+
+    assert.doesNotMatch(searchResults, /suppressedScopes|suppressionTokens|SearchCloseLifecycle/);
+    assert.match(searchRegistry, /private readonly visibleScopes/);
+    assert.match(searchRegistry, /hide\(scopeId: string \| null\)/);
+    assert.match(searchResults, /searchRegistry\.hideIfSource\(scopeId, sourceChannelId\)/);
+    assert.match(searchResults, /!searchRegistry\.isVisible\(scopeId\) && searchQuery != null/);
+    assert.match(searchResults, /armSearchReopenOnEnter\(scopeId, entryAtClose\)/);
+    assert.match(searchResults, /editor\.addEventListener\("keydown", listener, true\)/);
+    assert.match(searchResults, /event\.key !== "Enter"/);
+    assert.match(searchResults, /searchRegistry\.activate\(scopeId\)/);
+    // The editor query is judged by Slate semantic content only: a placeholder
+    // (data-slate-placeholder) is never a query, and the translated textContent vs
+    // aria-label equality fallback (which misread the localized placeholder) is gone.
+    assert.match(searchResults, /data-slate-placeholder/);
+    assert.match(searchResults, /slateSearchEditorQuery\(/);
+    assert.doesNotMatch(searchResults, /editor\.textContent|aria-label/);
+});
+
 test("tab headers reclaim the outer left inset without crowding tab contents", () => {
     const css = source("plugin/style.css");
 
@@ -226,8 +431,47 @@ test("tab headers reclaim the outer left inset without crowding tab contents", (
     );
     assert.match(
         css,
-        /\.dockview-tab\s*\{[^}]*padding:\s*0 6px 0 10px;/s
+        /\.dockview-tab\s*\{[^}]*padding:\s*0 38px 0 10px;/s
     );
+    assert.match(css, /\.dockview-tab\s*\{[^}]*flex:\s*0 0 10rem;[^}]*min-width:\s*10rem;/s);
+    assert.match(css, /\.dockview-tabs\s*\{[^}]*overflow-x:\s*auto;/s);
+    assert.match(css, /\.dockview-tab-primary\s*\{/);
+    assert.match(
+        css,
+        /\.dockview-unified-tabs > \.dockview-tab-primary,[\s\S]*?\.dockview-unified-tabs > \.dockview-tab-search\s*\{[^}]*flex:\s*1 1 10rem;[^}]*min-width:\s*5rem;/s
+    );
+    assert.match(css, /\.dockview-unified-tabs > \.dockview-tabs\s*\{[^}]*flex:\s*1 1 10rem;[^}]*min-width:\s*0;/s);
+    assert.match(css, /\.dockview-tab-native-title\s*\{/);
+    assert.match(css, /\.dockview-tab-list-button\s*\{/);
+    assert.match(css, /\.dockview-tab-name-start/);
+    assert.match(css, /\.dockview-unified-tabs \.dockview-tab::before\s*\{/);
+    assert.match(css, /\.dockview-page-inner\.dockview-unified-layout\s*\{[^}]*display:\s*grid\s*!important;/s);
+    assert.match(css, /\.dockview-unified-header\s*\{[^}]*grid-row:\s*1;/s);
+    assert.doesNotMatch(css, /\.dockview-channel-header-spacer/);
+    assert.doesNotMatch(css, /\.dockview-unified-header-layer/);
+
+    const tabs = source("plugin/ui/DockTabs.tsx");
+    assert.match(tabs, /onAuxClick/);
+    assert.match(tabs, /middleLabelParts/);
+    assert.match(tabs, /ResizeObserver/);
+    assert.match(tabs, /dockview-all-tabs/);
+    assert.match(tabs, /openNativeChannelMenu/);
+    assert.match(source("plugin/ui/DockTabMenu.tsx"), /closeOtherTabs/);
+    assert.match(source("plugin/ui/DockTabMenu.tsx"), /closeTabsToRight/);
+    assert.match(source("plugin/ui/DockTabMenu.tsx"), /activateTarget/);
+    assert.doesNotMatch(source("plugin/ui/DockMoreMenu.tsx"), /dockview-tab-close/);
+    assert.doesNotMatch(tabs, /reorderTab|onDragStart|onDragOver|onDragEnd/);
+    assert.doesNotMatch(source("plugin/index.tsx"), /reorderTab/);
+});
+
+test("reopening an existing file always repaints the focused tab", () => {
+    const load = source("plugin/engine/load.ts");
+    const afterOpen = load.slice(load.indexOf("export function load"), load.indexOf("export function loadInPlace"));
+
+    assert.match(afterOpen, /openTab\(opts\.url \?\? null, type\)/);
+    assert.match(afterOpen, /setContextActive\(getWindowChannelId\(\), false\)/);
+    assert.match(afterOpen, /openPanelChrome\(\)[\s\S]*requestRender\(\)/);
+    assert.doesNotMatch(afterOpen, /result !== "noop"/);
 });
 
 test("the Vesktop overlay is restricted to the documented DockView seams", () => {
@@ -446,6 +690,7 @@ test("DockView is built and loaded independently of official Vencord", () => {
     assert.doesNotMatch(prepare, /patch-vencord-build/);
     assert.match(prepare, /static", "dockviewDist/);
     assert.match(prepare, /\["buildStandalone"\]/);
+    assert.match(prepare, /SOURCE_DATE_EPOCH: sourceDateEpoch/);
     assert.ok(preload.indexOf("GET_VENCORD_RENDERER_SCRIPT") < preload.indexOf("GET_DOCKVIEW_RENDERER_SCRIPT"));
     assert.match(ipc, /handle\(IpcEvents\.DOCKVIEW_INVOKE/);
     assert.doesNotMatch(ipc, /DOCKVIEW_READ_CHUNK|DOCKVIEW_CONVERT_ATTACHMENT|DOCKVIEW_APPLY_UPDATE/);

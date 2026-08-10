@@ -40,7 +40,7 @@ export function toggleStructuredMode(): void {
     // leaving the raw view: close its find bar so it doesn't linger over the tree.
     if (tv.mode === "tree" && codeState(win).findOpen) toggleCodeFind();
     win.content.seq += 1; // new body identity -> CodeBody/StructuredBody remount fresh
-    setPendingScrollTop(null);
+    setPendingScrollTop(null, win);
     requestRender();
 }
 

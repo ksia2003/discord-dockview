@@ -266,6 +266,11 @@ export interface GalleryState {
     loading: boolean; // a fetchMessages() is in flight
 }
 
+/** Session-only bridge back to Discord's source image. The function redispatches a
+ * contextmenu event at the Dock click coordinates while the original message element is
+ * still mounted; callers fall back to DockView's Copy/Save menu when it returns false. */
+export type SourceImageContext = (point: { clientX: number; clientY: number; }) => boolean;
+
 // ── the window ───────────────────────────────────────────────────────────────
 
 /** One dock window (a tab). Every tab is bound to the channel it opened in
@@ -287,10 +292,25 @@ export interface DockWindow {
     gallery: GalleryState; // viewers/image/gallery.ts
     isNewFile: boolean;
     newFileChannel: any;
+    /** Discord message that originally exposed the active file, when known. */
+    sourceMessage: { channelId: string; messageId: string; } | null;
+    /** Native image-menu bridge for the currently shown source attachment, when live. */
+    sourceImageContext: SourceImageContext | null;
+    openRollback: {
+        previousWindowId: string | null;
+        previousContextView: "channel" | "voice-chat" | null;
+        previousSearch: boolean;
+    } | null;
 
     /** Engine bookkeeping. */
     activeDescriptor: ChannelDescriptor | null;
     activeCacheKey: string | null;
+    /** Exact payload entry currently owned by this window. The key alone is not
+     * enough when a retry replaces a shared cache entry while another window still
+     * renders the older payload. */
+    activeCacheEntry: CacheEntry | null;
+    /** Mutable view/edit/derived-render state is scoped to this DockWindow. */
+    cacheStates: Map<string, WindowCacheState>;
 }
 
 // ── content cache (LRU) ──────────────────────────────────────────────────────
@@ -339,8 +359,16 @@ export interface CachedView {
 export interface CacheEntry {
     key: string;
     name: string;
+    /** `type`/`url` mirror the latest routing/source descriptor. Converter viewers
+     * must write only renderType/renderUrl, never these fields. */
     type: ContentType;
     url: string;
+    /** Latest source descriptor for this identity. Only the engine may refresh the
+     * signed URL; converters must leave it unchanged. */
+    sourceType: ContentType;
+    sourceUrl: string;
+    renderType: ContentType;
+    renderUrl: string;
     html?: string | null;
     frameHtml?: string | null;
     code?: string | null;
@@ -365,14 +393,24 @@ export interface CacheEntry {
     // `rasterTiff.pages` is the IFD count. Single-page raster files (which retype to
     // "image") never set this. `rasterPageUrls` memoises the blob: url per already-
     // visited page (index 0-based) so flipping back to a page is instant; the raster
-    // viewer's dispose() revokes every url here on eviction (mirrors the single blob
-    // the retype path leaves on entry.url). Plain bytes — no GPU/worker handle.
+    // viewer's dispose() revokes every url here on eviction. Plain bytes — no GPU/
+    // worker handle.
     rasterTiff?: { buf: ArrayBuffer; pages: number } | null;
     rasterPageUrls?: (string | null)[];
     binary?: boolean;
     error?: string | null;
     loading: boolean;
     view: CachedView;
+}
+
+/** Per-window state overlay for a shared payload cache entry. `html` and
+ * `frameHtml` are optional derived edit renders; the pristine entry payload stays
+ * shared and immutable. */
+export interface WindowCacheState {
+    view: CachedView;
+    html?: string | null;
+    frameHtml?: string | null;
+    renderUrl?: string;
 }
 
 // ── file descriptor ──────────────────────────────────────────────────────────

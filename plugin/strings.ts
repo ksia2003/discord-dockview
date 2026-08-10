@@ -19,6 +19,7 @@ export const STRINGS = {
     // Lead with information. The title says what happened; the sub says what the
     // user can do or why. No wit here.
     error: {
+        openFailedToast: "Couldn't open this file in DockView. Discord's original file actions are still available.",
         gone: {
             title: "This file couldn't be loaded",
             sub: "The link may have expired or been removed."
@@ -335,12 +336,18 @@ export const STRINGS = {
         openInNewWindow: "Open in browser",
         download: "Download",
         copyImage: "Copy image",
+        saveImage: "Save image",
         copyLink: "Copy link",
         openInDockView: "Open in DockView",
         // Attach the file currently shown in the panel to the message composer
         // (a pending upload chip on the active channel). When the file has edits,
         // the EDITED buffer is attached, not the original.
         attach: "Attach to message",
+        jumpToMessage: "Go to message",
+        currentVersion: "Current version",
+        originalVersion: "Original",
+        closeOtherTabs: "Close other tabs",
+        closeTabsToRight: "Close tabs to the right",
         // `+` composer-menu item: open an empty editable dock surface (a new
         // markdown file) and write it from scratch.
         newFile: "New file"
@@ -353,12 +360,16 @@ export const STRINGS = {
         // {name} -> the file name shown in the tab.
         select: (name: string) => `Switch to ${name}`,
         close: "Close tab",
+        allTabs: "All open tabs",
+        active: "Active tab",
         // the label for an empty window's tab (the open-but-empty dock).
         untitled: "DockView",
         // The permanent leftmost "context tab" label — the member list (guild) or the
         // user-profile sidebar (DM). It follows the current channel and is never closable.
         channel: "Channel",
+        channelInfo: "Channel info",
         chat: "Chat",
+        search: "Search",
         members: "Members",
         profile: "Profile"
     },
@@ -422,17 +433,17 @@ export const STRINGS = {
     // The dock's behaviour preferences: F9 action, width, and media autoplay. Each row is
     // a native-style control with a one-line note under it. Changes apply live.
     general: {
-        // F9 action Select.
-        f9Title: "F9 shortcut",
-        f9Note:
-            "Choose whether F9 switches the dock width or temporarily hides it. " +
-            "Opening a new DockView tab always reveals a hidden dock.",
-        f9Width: "Switch dock width",
-        f9Hide: "Temporarily hide dock",
-        // Width slider group.
-        widthTitle: "Expanded dock width",
-        widthNote: "Press F9 to switch between the compact rail and this width.",
-        widthNoteHide: "This is the width restored when F9 shows the dock.",
+        widthTitle: "F9 dock width presets",
+        widthNote:
+            "F9 cycles through hidden and these widths in order. Opening DockView content " +
+            "while hidden restores the last non-zero width.",
+        hiddenPresetTitle: "Hidden — 0px",
+        hiddenPresetNote: "Always the first step in the F9 cycle and cannot be edited.",
+        presetTitle: (index: number) => `Width preset ${index}`,
+        addPreset: "Add width",
+        removePreset: "Remove",
+        moveUp: "Move up",
+        moveDown: "Move down",
         // {px} -> the current width in pixels.
         widthValue: (px: number) => `${px}px`,
         // Media autoplay switch.

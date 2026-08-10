@@ -20,9 +20,8 @@
  *  - The body dispatches on getActiveWindow().content.type → getViewer(type)?.Body.
  *    With no viewer for the type (or an idle body) it falls to the StateCards:
  *    loading (content.loading), empty (no file), else unsupported.
- *  - The resize drag is a PURE DOM operation decoupled from React (a rAF coalesces
- *    pointermoves into one host-width write per frame; React state is touched ONCE on
- *    drag end, which persists the width). No re-render during the drag.
+ *  - Width is deliberately absent from this component. F9 applies the ordered presets;
+ *    there is no edge-drag state competing with those settings.
  *
  * NO module-top React.createElement. The CLS map below is plain findCssClasses
  * lookups returning objects (no elements), safe at module eval per panel.tsx.
@@ -31,26 +30,26 @@
 import { findCssClasses } from "@vencord/types/webpack";
 import { React } from "@vencord/types/webpack/common";
 
+import { hasFileActionSurface } from "../engine/dockEligibility";
 import { dvFetch } from "../engine/fetch";
-import { getLiveController, requestRender, isRenderer, setRenderer } from "../engine/forceRender";
-import { LS_WIDTH, lsSet } from "../engine/persist";
+import { requestRender, isRenderer, setRenderer } from "../engine/forceRender";
 import { consumePendingScroll } from "../engine/viewState";
 import { getActiveWindow } from "../engine/window";
 import { getCurrentChannelMemId } from "../engine/channelMemory";
-import { getContextView, isContextActive } from "../engine/contextTab";
+import { settlePendingOpens } from "../engine/openRollback";
 import { ContextTabBody } from "./ContextTabBody";
+import { SearchResultsBody } from "./SearchResultsBody";
+import { getDockContextView } from "../host/searchResults";
 import { VoiceChatBody } from "../viewers/voice/VoiceChatBody";
-import {
-    applyHostWidth, clampDockDrag, getCompactDockWidth, isCompactDockWidth
-} from "../host/layout";
-import { applyOpenState } from "../host/mount";
 import { getViewer } from "../viewers/registry";
 import type { ViewerContext } from "../engine/types";
 import { attachToolbar, isAttachBarOpen } from "../edit/attach";
 import { DockTabs } from "./DockTabs";
 import { FindBar } from "./FindBar";
 import { HeaderControls, hasViewerControls } from "./HeaderControls";
+import { DockMoreButton } from "./DockMoreMenu";
 import { LoadingBody, renderEmptyBody, renderErrorBody, renderUnsupportedBody } from "./StateCards";
+import { holdPendingMediaOpen, isPendingMediaOpen } from "../viewers/media/mediaError";
 
 /** A minimal ViewerContext for the find-slot dispatch — findModel only reads
  *  window/content + requestRender; fetch is the live dvFetch in case a viewer's
@@ -64,7 +63,7 @@ function findCtx(win = getActiveWindow()): ViewerContext {
  *  empty otherwise (no viewer, or find closed). */
 function renderFindBar() {
     // The context tab (member list / profile) has no find bar.
-    if (isContextActive(getCurrentChannelMemId())) return null;
+    if (getDockContextView(getCurrentChannelMemId()) != null) return null;
     const win = getActiveWindow();
     if (win.content.name == null || win.content.loading || win.content.error) return null;
     const model = getViewer(win.content.type)?.findModel?.(findCtx(win));
@@ -92,7 +91,6 @@ const defaultColor = cssMod("defaultColor")["defaultColor"] || "defaultColor__4b
 
 const CLS = {
     wrapper: wrapMod.chatLayerWrapper || "chatLayerWrapper__01ae2",
-    resizeHandle: wrapMod.resizeHandle || "resizeHandle__01ae2",
     card: wrapMod.container || "container__01ae2",
     headerSection: `${headMod.container || "container__9293f"} ${headMod.themed || "themed__9293f"}`,
     upper: headMod.upperContainer || "upperContainer__9293f",
@@ -101,32 +99,34 @@ const CLS = {
     title: `${defaultColor} ${textMd} ${headMod.title || "title__9293f"}`
 };
 
-/** The body dispatcher. When the CONTEXT tab is the active view for the current channel,
- *  render the context body (member list / profile). Otherwise route content.type to its
- *  viewer's Body; with no viewer registered it falls to the shared state cards. The order
- *  — context, empty, error, loading, viewer/unsupported. Keyed on the channel id (via the
- *  caller) so a channel switch remounts the captured component with fresh props. */
+/** The body dispatcher. SearchResultsBody is a keyed resident sibling for every opened
+ *  guild scope; only its active surface is visible. The ordinary dock body remains beside
+ *  that resident layer so switching Search → file/context never unmounts native results. */
 function renderBody() {
     const channelId = getCurrentChannelMemId();
-    const contextView = getContextView(channelId);
+    const contextView = getDockContextView(channelId);
+    const residentSearch = React.createElement(SearchResultsBody, { key: "search-resident" });
+    let body: any = null;
     if (contextView === "voice-chat") {
-        return React.createElement(VoiceChatBody, { key: `voice-chat-${channelId ?? "none"}` });
+        body = React.createElement(VoiceChatBody, { key: `voice-chat-${channelId ?? "none"}` });
+    } else if (contextView === "channel") {
+        body = React.createElement(ContextTabBody, { key: `ctx-${channelId ?? "none"}` });
+    } else if (contextView !== "search") {
+        const win = getActiveWindow();
+        if (win.content.name == null) body = renderEmptyBody();
+        else if (win.content.error != null) body = win.openRollback ? null : renderErrorBody(win.content.error);
+        else if (win.content.loading && !isPendingMediaOpen(win)) body = React.createElement(LoadingBody, null);
+        else {
+            const viewer = getViewer(win.content.type);
+            // No viewer for the type yet → shared unsupported/download card.
+            body = viewer ? React.createElement(viewer.Body, { key: win.content.seq }) : renderUnsupportedBody();
+        }
     }
-    if (contextView === "channel") {
-        return React.createElement(ContextTabBody, { key: `ctx-${channelId ?? "none"}` });
-    }
-    const win = getActiveWindow();
-    if (win.content.name == null) return renderEmptyBody();
-    if (win.content.error != null) return renderErrorBody(win.content.error);
-    if (win.content.loading) return React.createElement(LoadingBody, null);
-    const viewer = getViewer(win.content.type);
-    if (viewer) return React.createElement(viewer.Body, { key: win.content.seq });
-    // No viewer for this type yet → the unsupported/download card (every type, P2).
-    return renderUnsupportedBody();
+    return React.createElement(React.Fragment, null, residentSearch, body);
 }
 
 export function DockPanel() {
-    const { useState, useCallback, useEffect, useRef } = React;
+    const { useState, useCallback, useEffect, useLayoutEffect } = React;
 
     const [, bump] = useState(0);
     const rerender = useCallback(() => bump((n: number) => n + 1), []);
@@ -139,17 +139,6 @@ export function DockPanel() {
         };
     }, [rerender]);
 
-    const [width, setWidth] = useState(getActiveWindow().state.width);
-    const resizing = useRef(false);
-
-    useEffect(() => {
-        getActiveWindow().state.width = width;
-        // The persisted value is the F9 expanded preset. Reaching the native compact
-        // width by drag must not erase the wider value F9 should return to.
-        if (width > getCompactDockWidth()) lsSet(LS_WIDTH, String(Math.round(width)));
-        applyOpenState();
-    }, [width]);
-
     // After a cache RESTORE of a non-pdf file, re-apply the saved scroll once the
     // body DOM is committed. (A pdf body restores its OWN scroll after its lazy page
     // boxes exist, so a pdf viewer opts out via scrollerSelector / its own restore;
@@ -157,95 +146,19 @@ export function DockPanel() {
     useEffect(() => {
         if (getActiveWindow().content.type !== "pdf") consumePendingScroll(getActiveWindow());
     });
-
-    const onResizeStart = useCallback((e: any) => {
-        if (e.button != null && e.button !== 0) return;
-        // Compact is the fixed native member-rail mode. Its handle is hidden in CSS,
-        // but keep the event boundary fail-closed in case Discord forwards a stale
-        // pointer event while F9 is switching modes.
-        if (isCompactDockWidth()) return;
-        e.preventDefault();
-        resizing.current = true;
-        const startX = e.clientX;
-        const startWidth = getActiveWindow().state.width;
-
-        const handle: HTMLElement | null = e.currentTarget || null;
-        handle?.classList.add("dockview-resizing");
-
-        const overlay = document.createElement("div");
-        overlay.className = "dockview-drag-overlay";
-        document.body.appendChild(overlay);
-
-        // If a PDF body is mounted, drive its CSS live-scale preview through the drag
-        // (and pause its ResizeObserver via setResizeDragging) so the pages follow the
-        // width smoothly and re-raster crisply ONCE on release — never mid-drag. Any
-        // other body reflows for free from the host's CSS width, so this is a no-op
-        // unless the "pdf" controller is published; the dock stays viewer-agnostic.
-        const pdf = getLiveController<{
-            setResizeDragging(on: boolean): void;
-            beginLiveScale(): void;
-            liveScale(ratio: number): void;
-            endLiveScale(): void;
-        }>("pdf");
-        let pdfScaled = false;
-        pdf?.setResizeDragging(true);
-        pdf?.beginLiveScale();
-
-        // The drag is a PURE DOM operation, fully decoupled from React: every
-        // pointermove records the latest pixel and a single rAF coalesces them into
-        // one host-width write per frame. We deliberately do NOT touch React state
-        // (no setWidth / requestRender) DURING the drag — a re-render would re-run
-        // renderBody() (and, once viewers exist, re-highlight / re-raster the whole
-        // body every frame). The content reflows purely from the host's CSS width,
-        // so no render is needed to make the body follow. We commit to React ONCE on
-        // drag end (setWidth → the [width] effect persists it).
-        let pendingX = startX;
-        let rafId = 0;
-        const flush = () => {
-            rafId = 0;
-            if (!resizing.current) return;
-            const delta = startX - pendingX; // drag left edge: leftward = wider
-            const next = clampDockDrag(startWidth + delta);
-            if (next !== getActiveWindow().state.width) {
-                getActiveWindow().state.width = next;
-                applyHostWidth(); // direct inline-style write, no React
-                if (pdf) { pdf.liveScale(next / startWidth); pdfScaled = true; }
-            }
-        };
-        const onMove = (ev: MouseEvent) => {
-            if (!resizing.current) return;
-            pendingX = ev.clientX;
-            if (!rafId) rafId = requestAnimationFrame(flush);
-        };
-        const onUp = () => {
-            resizing.current = false;
-            if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
-            document.removeEventListener("mousemove", onMove);
-            document.removeEventListener("mouseup", onUp);
-            document.body.style.cursor = "";
-            document.body.style.userSelect = "";
-            handle?.classList.remove("dockview-resizing");
-            overlay.remove();
-            const delta = startX - pendingX;
-            const final = clampDockDrag(startWidth + delta);
-            getActiveWindow().state.width = final;
-            applyHostWidth();
-            // Drag settled: let the PDF body re-raster crisply at the final width.
-            // Clear the drag flag FIRST (endLiveScale's queue pump checks it).
-            pdf?.setResizeDragging(false);
-            if (pdfScaled) pdf?.endLiveScale();
-            setWidth(final); // commit to React ONCE → the [width] effect persists it
-        };
-        document.body.style.cursor = "ew-resize";
-        document.body.style.userSelect = "none";
-        document.addEventListener("mousemove", onMove);
-        document.addEventListener("mouseup", onUp);
-    }, []);
+    useLayoutEffect(() => {
+        // switchToWindow may reconcile a ready cache entry over a still-provisional
+        // media window. Re-apply the window-only pending state before settle scans it.
+        const activeWindow = getActiveWindow();
+        if (isPendingMediaOpen(activeWindow)) holdPendingMediaOpen(activeWindow);
+        settlePendingOpens();
+    });
 
     const win = getActiveWindow();
     const channelId = getCurrentChannelMemId();
-    const ctxActive = isContextActive(channelId);
-    const channelContextActive = getContextView(channelId) === "channel";
+    const contextView = getDockContextView(channelId);
+    const ctxActive = contextView != null;
+    const nativeRailContextActive = contextView === "channel" || contextView === "search";
     const hasContent = win.content.name != null && !ctxActive;
 
     // The header grows to TWO rows for the second-row strip: the attach filename bar
@@ -253,16 +166,15 @@ export function DockPanel() {
     // otherwise the active viewer's controls show when it has any. An empty/loading/
     // errored body — and the context tab (member list / profile) — has no controls row.
     const showAttachBar = isAttachBarOpen() && hasContent;
-    const showViewerRow = !showAttachBar && !ctxActive && hasViewerControls();
+    const viewerHasControls = !ctxActive && hasViewerControls();
+    const hasFileActions = !ctxActive && hasFileActionSurface(win.content.type) && win.content.name != null
+        && !win.content.loading && !win.content.error;
+    const showViewerRow = !showAttachBar && (viewerHasControls || hasFileActions);
     const twoRow = showAttachBar || showViewerRow;
 
     return React.createElement(
         "div",
         { className: `${CLS.wrapper} dockview-wrapper` },
-        React.createElement("div", {
-            className: `${CLS.resizeHandle} dockview-resize`,
-            onMouseDown: onResizeStart
-        }),
         React.createElement(
             "div",
             { className: `${CLS.card} dockview-card` },
@@ -297,7 +209,8 @@ export function DockPanel() {
                         ? React.createElement(
                             "div",
                             { className: "dockview-viewer-toolbar" },
-                            React.createElement(HeaderControls, null)
+                            viewerHasControls ? React.createElement(HeaderControls, null) : null,
+                            hasFileActions ? React.createElement(DockMoreButton, null) : null
                         )
                         : null
             ),
@@ -314,7 +227,7 @@ export function DockPanel() {
                         {
                             className: "dockview-body"
                                 + (hasContent && win.content.type === "pdf" ? " dockview-body-pdf" : "")
-                                + (channelContextActive ? " dockview-body--context" : "")
+                                + (nativeRailContextActive ? " dockview-body--context" : "")
                         },
                         renderBody()
                     ),

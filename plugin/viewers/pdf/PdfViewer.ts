@@ -31,7 +31,8 @@
  * lazily inside load() / PdfBody; the worker + Map polyfill run on first open.
  */
 
-import { getCacheEntry } from "../../engine/cache";
+import { isCacheEntryLive } from "../../engine/cache";
+import { settleDetachedEntry } from "../../engine/cacheOwnership";
 import { STRINGS } from "../../strings";
 import type {
     CacheEntry, FindBarModel, LoadOpts, LoadToken, PdfViewState, Viewer, ViewerContext
@@ -90,9 +91,20 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             // the entry is detached and storing the doc there would leak it — so
             // destroy it. The doc is persisted even when superseded (so a re-open
             // is instant), as long as the entry is still live.
-            const live = entry != null && getCacheEntry(entry.key) === entry;
-            if (live) { entry!.pdfDoc = doc; entry!.pdfPages = doc.numPages; entry!.loading = false; entry!.error = null; }
-            else { destroyPdfDoc(doc); }
+            const live = entry != null && isCacheEntryLive(entry);
+            if (!live) {
+                destroyPdfDoc(doc);
+                if (entry) {
+                    entry.pdfDoc = null;
+                    entry.pdfPages = 0;
+                    settleDetachedEntry(entry, "PDF load completed after its cache entry was detached");
+                }
+                return;
+            }
+            entry!.pdfDoc = doc;
+            entry!.pdfPages = doc.numPages;
+            entry!.loading = false;
+            entry!.error = null;
             if (!token.isCurrent()) return; // superseded — don't touch content
             ctx.content.pdf.doc = doc;
             ctx.content.pdf.pages = doc.numPages;

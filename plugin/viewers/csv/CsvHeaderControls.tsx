@@ -41,7 +41,7 @@ export function toggleCsvMode(): void {
     // leaving the raw view: close its find bar so it doesn't linger over the grid.
     if (cv.mode === "grid" && codeState(win).findOpen) toggleCodeFind();
     win.content.seq += 1; // new body identity -> CodeBody/CsvBody remount fresh
-    setPendingScrollTop(null); // each view opens at its own top (no cross-bleed)
+    setPendingScrollTop(null, win); // each view opens at its own top (no cross-bleed)
     requestRender();
 }
 

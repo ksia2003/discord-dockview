@@ -16,13 +16,15 @@
 
 import { LS_WIDTH, lsGet, lsSet } from "../engine/persist";
 import { getActiveWindow } from "../engine/window";
+import { findPageInnerForHost as findHostPageInner, selectDockHost } from "./hostSelection";
 
-const HOST_ID = "dockview-root";
+export { findPageInnerForHost } from "./hostSelection";
 
 // Follow Discord's live native member-list width instead of freezing today's value.
 // The current client resolves this custom property to 264px, but Discord can change it
 // by build or experiment. The fallback is used only before/without that property.
 export const COMPACT_WIDTH_FALLBACK = 264;
+export const MIN_DOCK_WIDTH = 200;
 const COMPACT_WIDTH_PROPERTY = "--custom-member-list-width";
 export const DEFAULT_EXPANDED_WIDTH = 560;
 export const MAX_WIDTH_FRAC = 0.6; // of window width
@@ -61,45 +63,68 @@ export const CHAT_MIN_WIDTH = 420;
 export const FLOAT_CHAT_SLIVER = 48;
 
 let dockWidth = COMPACT_WIDTH_FALLBACK;
-let expandedDockWidth = DEFAULT_EXPANDED_WIDTH;
-let compactWidthMode = true;
+let dockPresets = [COMPACT_WIDTH_FALLBACK, DEFAULT_EXPANDED_WIDTH];
+let activePresetIndex = 0;
 export function getDockWidth(): number {
-    return compactWidthMode ? getCompactDockWidth() : dockWidth;
+    return dockWidth;
 }
-export function getExpandedDockWidth(): number { return expandedDockWidth; }
-export function isCompactDockWidth(): boolean { return compactWidthMode; }
+export function getDockWidthPresets(): number[] { return [...dockPresets]; }
+export function getActiveDockPresetIndex(): number { return activePresetIndex; }
+export function getExpandedDockWidth(): number { return dockPresets[dockPresets.length - 1] ?? DEFAULT_EXPANDED_WIDTH; }
+export function isCompactDockWidth(): boolean { return Math.abs(dockWidth - getCompactDockWidth()) <= 1; }
 export function setDockWidth(w: number): void {
-    const compactWidth = getCompactDockWidth();
     dockWidth = clampWidthRaw(w);
-    compactWidthMode = dockWidth <= compactWidth;
-    if (!compactWidthMode) expandedDockWidth = dockWidth;
+    const exact = dockPresets.findIndex(value => value === dockWidth);
+    if (exact >= 0) activePresetIndex = exact;
 }
 
 /** Remember the wide-side preset without forcing a compact rail open. The General
  * settings slider uses this so "Expanded dock width" remains a preset, not a second
  * live-width state that unexpectedly widens the current channel. */
 export function setExpandedDockWidth(w: number): number {
-    expandedDockWidth = clampWidthRaw(w);
-    if (!compactWidthMode) dockWidth = expandedDockWidth;
-    return expandedDockWidth;
+    const next = [...dockPresets];
+    next[Math.max(0, next.length - 1)] = w;
+    setDockWidthPresets(next);
+    return getExpandedDockWidth();
 }
 
-/** F9 width switch. The dock itself never hides and every tab/view remains mounted;
- * only the one global rail width changes between compact and the remembered preset. */
-export function toggleDockWidthMode(): number {
-    if (compactWidthMode) {
-        // Keep the configured intent intact when the window is temporarily narrow.
-        // applyDockLayout() clamps only the painted width and restores the full preset
-        // automatically once there is room again.
-        dockWidth = expandedDockWidth;
-        compactWidthMode = false;
-    } else {
-        const compactWidth = getCompactDockWidth();
-        if (dockWidth > compactWidth) expandedDockWidth = dockWidth;
-        dockWidth = compactWidth;
-        compactWidthMode = true;
+/** Normalise and install the ordered non-zero F9 presets. Values stay in their authored
+ * order; at least one preset always survives. Editing the active row changes
+ * the live width, while editing another row does not jump the rail to that row. */
+export function setDockWidthPresets(values: readonly number[]): number[] {
+    const max = Math.max(200, Math.floor((window.innerWidth || 1280) * MAX_WIDTH_FRAC));
+    const normalised: number[] = [];
+    for (const raw of values) {
+        const value = Math.min(max, Math.max(200, Math.round(Number(raw))));
+        // Keep duplicate values during editing. Deleting a row merely because its slider
+        // crossed another preset would make the settings UI jump underneath the pointer.
+        if (Number.isFinite(value)) normalised.push(value);
     }
+    if (normalised.length === 0) normalised.push(getCompactDockWidth());
+    const priorIndex = Math.min(activePresetIndex, normalised.length - 1);
+    dockPresets = normalised;
+    activePresetIndex = priorIndex;
+    dockWidth = dockPresets[activePresetIndex];
+    return [...dockPresets];
+}
+
+export function parseDockWidthPresets(raw: unknown): number[] {
+    const values = typeof raw === "string"
+        ? raw.split(",").map(value => Number(value.trim()))
+        : [];
+    return setDockWidthPresets(values.filter(Number.isFinite));
+}
+
+export function selectDockWidthPreset(index: number): number {
+    activePresetIndex = Math.max(0, Math.min(dockPresets.length - 1, Math.trunc(index)));
+    dockWidth = dockPresets[activePresetIndex];
     return dockWidth;
+}
+
+/** Compatibility verb retained for the debug surface: switch between the first and last
+ * configured non-zero presets. Product F9 uses selectDockWidthPreset + the hidden state. */
+export function toggleDockWidthMode(): number {
+    return selectDockWidthPreset(activePresetIndex === 0 ? dockPresets.length - 1 : 0);
 }
 
 // `seeded` makes the LS read happen exactly once (the first makeWindow call), so a
@@ -108,16 +133,18 @@ let dockWidthSeeded = false;
 export function seedDockWidthFromLS(): void {
     if (dockWidthSeeded) return;
     dockWidthSeeded = true;
-    expandedDockWidth = clampWidthRaw(
+    const migratedExpanded = clampWidthRaw(
         parseInt(lsGet(LS_WIDTH) || "", 10) || DEFAULT_EXPANDED_WIDTH
     );
-    dockWidth = getCompactDockWidth();
-    compactWidthMode = true;
+    dockPresets = [getCompactDockWidth(), migratedExpanded]
+        .filter((value, index, all) => all.indexOf(value) === index);
+    activePresetIndex = 0;
+    dockWidth = dockPresets[0];
 }
 
-/** Clamp a width to [native member width, MAX_WIDTH_FRAC·windowWidth]. */
+/** Clamp a user preset to the supported non-zero range. */
 export function clampWidthRaw(w: number): number {
-    const min = getCompactDockWidth();
+    const min = MIN_DOCK_WIDTH;
     const max = Math.max(min, Math.floor((window.innerWidth || 1280) * MAX_WIDTH_FRAC));
     return Math.min(max, Math.max(min, w));
 }
@@ -134,7 +161,7 @@ export function clampWidth(w: number): number {
 /** The PAGE INNER div = the page__'s child that directly contains chat_. The dock
  *  host mounts here as the last flex child (a sibling of chat_), so it pushes the
  *  chat exactly like a native thread sidebar. */
-export function findPageInner(): HTMLElement | null {
+function findPageInnerGlobally(): HTMLElement | null {
     const page = document.querySelector<HTMLElement>('div[class*="page_"]');
     if (!page) return null;
     for (const child of Array.from(page.children)) {
@@ -148,6 +175,11 @@ export function findPageInner(): HTMLElement | null {
         if (el) return el;
     }
     return null;
+}
+
+/** Find the inner belonging to `host`; only a missing host uses the legacy global scan. */
+export function findPageInner(host: HTMLElement | null = selectDockHost()): HTMLElement | null {
+    return host ? findHostPageInner(host) : findPageInnerGlobally();
 }
 
 /** The chat_ element (our in-flow sibling) inside the page inner div. */
@@ -165,31 +197,14 @@ export function availableContentWidth(inner: HTMLElement | null): number {
     return Math.max(0, (window.innerWidth || 1280));
 }
 
-/** Clamp a width chosen by the LEFT-edge resize DRAG. Native clamps the drag so the
- *  chat keeps its minimum (you can't drag a docked panel so wide the chat
- *  collapses) — floating is reserved for a too-narrow WINDOW, not for dragging. So:
- *  on top of the base clamp, cap the dragged width to leave the chat ≥ CHAT_MIN_WIDTH
- *  while there's room to dock at all. */
-export function clampDockDrag(w: number): number {
-    let v = clampWidthRaw(w);
-    const inner = findPageInner();
-    const avail = availableContentWidth(inner);
-    const dockMinWidth = getCompactDockWidth();
-    if (avail > 0) {
-        const maxDocked = avail - CHAT_MIN_WIDTH;
-        if (maxDocked >= dockMinWidth) v = Math.min(v, maxDocked);
-    }
-    return v;
-}
-
 // ---------------------------------------------------------------------------
 // applyDockLayout — the docked/floating DOM geometry.
 // ---------------------------------------------------------------------------
 
-/** TWO-MODE geometry: decide docked (push) vs floating (overlay) from the shared
+/** Responsive geometry: decide docked (push) vs floating (overlay) from the shared
  *  content width and apply the host's width/flex/position accordingly. This is the
  *  SINGLE place the mode + clamp live; every entry point (open, channel switch,
- *  window resize, resize-drag) calls it.
+ *  window resize, preset switch) calls it.
  *
  *  Native parity:
  *   - DOCKED: the host stays an in-flow flex spacer that pushes the chat. The
@@ -203,14 +218,13 @@ export function clampDockDrag(w: number): number {
  *     width underneath; the card overlays from the content's right edge at a width
  *     capped to leave a clickable chat sliver. No resize handle in this mode (CSS
  *     hides it under the floating class). */
-export function applyDockLayout(): void {
-    const host = document.getElementById(HOST_ID);
+export function applyDockLayout(host: HTMLElement | null = selectDockHost()): void {
     if (!host) return;
 
-    const inner = findPageInner();
+    const inner = findPageInner(host);
     const avail = availableContentWidth(inner);
     const want = getActiveWindow().state.width; // the user's intended (persisted) width
-    const dockMinWidth = getCompactDockWidth();
+    const dockMinWidth = MIN_DOCK_WIDTH;
 
     // Compact is a fixed native-member-width mode, not a narrow resizable mode.
     // CSS uses this marker to remove the 8px resize handle entirely so the native
@@ -244,10 +258,8 @@ export function applyDockLayout(): void {
     }
 }
 
-/** Write ONLY the host's geometry from state.width, nothing else. Used in the
- *  resize drag's rAF loop so a width change is a single cheap layout pass (no React
- *  render, no document-class / page-inner work like applyOpenState). The mode/clamp
- *  recompute lives in applyDockLayout(), so a drag re-evaluates the mode live too. */
+/** Write only the host's geometry from state.width. Preset switches and settings edits
+ * use this cheap layout pass without rebuilding native portals. */
 export function applyHostWidth(): void {
     applyDockLayout();
 }

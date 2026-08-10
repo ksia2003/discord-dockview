@@ -32,11 +32,15 @@ import {
  *  stale body's cleanup must not hide the new body's portal). Captures the chat type
  *  priming-free and refreshes the portal once it lands. */
 export function ThreadBody() {
-    const { useEffect } = React;
+    // The portal is the visible body, not a background side effect. A passive effect can
+    // be deferred for hundreds of milliseconds while Discord is busy; that exposed the
+    // backdrop as a blank thread after rapid tab/F9 switches. Bind it in the layout phase
+    // so the overlay is positioned before the browser paints the newly active thread tab.
+    const { useLayoutEffect } = React;
     const win = getActiveWindow();
     const threadId = win.content.threadChannelId;
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         let alive = true;
         let claim = 0; // 0 = this body never showed a portal (nothing to release)
         // Everything here touches the ISOLATED portal roots (document.body); a throw must

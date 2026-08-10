@@ -37,19 +37,21 @@
  *
  * blob: urls are same-origin and NOT subject to Discord's CSP connect-src, so once
  * decoded the picture renders anywhere. The urls are OWNED by this viewer: dispose()
- * revokes them on cache eviction (the single retyped url on entry.url AND every page url
+ * revokes them on cache eviction (the single retyped renderUrl AND every page url
  * in entry.rasterPageUrls), so a long session doesn't leak decoded bitmaps.
  *
  * Cache contract (mirrors xlsx): the entry KEY stays "rasterimage|<cdn-url>" (set by
- * detectType at open time). For a single-image file we retype entry.type to "image" and
- * park the blob on entry.url (a restore re-points the <img>). For a multi-page TIFF the
- * entry STAYS "rasterimage" (so a restore routes back here, restores the page, and re-
- * blobs it) with entry.url holding the current page's blob. The descriptor that re-keys a
+ * detectType at open time). For a single-image file we set renderType to "image" and
+ * park the blob on renderUrl (a restore re-points the <img>). For a multi-page TIFF the
+ * entry STAYS renderType "rasterimage" (so a restore routes back here, restores the page,
+ * and re-blobs it) with renderUrl holding the initial decoded page's blob. The descriptor that re-keys a
  * restore derives its type from the original file NAME (e.g. "scan.tiff"), so the routing
  * type stays "rasterimage" and the key still matches.
  */
 
 import { settings } from "../../settings";
+import { getWindowCacheState } from "../../engine/cache";
+import { revokeUniqueBlobUrls } from "../../engine/cacheOwnership";
 import { STRINGS } from "../../strings";
 import type {
     CacheEntry, LoadOpts, LoadToken, RasterViewState, Viewer, ViewerContext
@@ -419,7 +421,7 @@ async function decodeJp2(buf: ArrayBuffer, ctx: ViewerContext): Promise<Decoded>
 
 /**
  * Re-blob a specific page of an already-decoded multi-page TIFF and point the live
- * content.url (+ entry.url) at it. Used by the page selector: it re-decodes the chosen
+ * content.url (+ entry.renderUrl) at it. Used by the page selector: it re-decodes the chosen
  * IFD from the cached TIFF bytes (no re-fetch), memoising the blob per page on the
  * entry so flipping back is instant. Returns the blob url. Throws if the page can't be
  * decoded (the caller surfaces it). The utif lib is already loaded by the initial open.
@@ -518,8 +520,13 @@ async function loadTiff(buf: ArrayBuffer, _opts: LoadOpts, token: LoadToken, ent
     // Multi-page TIFF — keep the "rasterimage" surface (image + page selector). Park the
     // source bytes + page count on the entry so page switches re-blob with no re-fetch.
     if (entry) {
-        entry.type = "rasterimage";
-        entry.url = url;
+        const state = getWindowCacheState(ctx.window, entry.key)!;
+        entry.renderType = "rasterimage";
+        state.view.rasterPage = startPage;
+        state.renderUrl = url;
+        // Keep the decoded initial page on the shared payload. A fresh window derives
+        // its own page/render URL overlay from this blob's index in rasterPageUrls.
+        entry.renderUrl = url;
         entry.rasterTiff = { buf, pages };
         entry.rasterPageUrls = [];
         entry.rasterPageUrls[startPage - 1] = url;
@@ -542,8 +549,8 @@ async function loadTiff(buf: ArrayBuffer, _opts: LoadOpts, token: LoadToken, ent
  *  live content at it, retyping to the image viewer surface. */
 function finishAsImage(blobUrl: string, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): void {
     if (entry) {
-        entry.type = "image";
-        entry.url = blobUrl;
+        entry.renderType = "image";
+        entry.renderUrl = blobUrl;
         entry.loading = false;
         entry.error = null;
     }
@@ -569,7 +576,7 @@ function resetState(vs: RasterViewState): void {
 /** Park the current TIFF page on the entry so a cache return reopens it on the same
  *  page (single-image files retype to "image" before this fires and never reach here). */
 function snapshot(vs: RasterViewState, entry: CacheEntry): void {
-    if (entry.type !== "rasterimage") return;
+    if (entry.renderType !== "rasterimage") return;
     entry.view.rasterPage = vs?.page ?? 1;
 }
 
@@ -584,21 +591,16 @@ function restore(vs: RasterViewState, entry: CacheEntry): void {
 }
 
 /** Revoke every decoded blob: url this viewer created when the cache entry is evicted.
- *  A single-image file leaves one url on entry.url (entry.type === "image"); a multi-
+ *  A single-image file leaves one URL on entry.renderUrl (entry.renderType === "image"); a multi-
  *  page TIFF leaves the per-page urls in entry.rasterPageUrls (entry.type stays
- *  "rasterimage", entry.url is one of those page urls). Guard on the blob: scheme so we
+ *  "rasterimage", entry.renderUrl is one of those page urls). Guard on the blob: scheme so we
  *  only ever revoke urls WE created, never a CDN url. */
 function dispose(entry: CacheEntry): void {
-    const revoke = (u: string | null | undefined) => {
-        if (u && u.startsWith("blob:")) {
-            try { URL.revokeObjectURL(u); } catch { /* already gone */ }
-        }
-    };
-    revoke(entry.url);
-    if (entry.rasterPageUrls) {
-        for (const u of entry.rasterPageUrls) revoke(u);
-        entry.rasterPageUrls = [];
-    }
+    revokeUniqueBlobUrls(
+        [entry.renderUrl, ...(entry.rasterPageUrls ?? [])],
+        url => { try { URL.revokeObjectURL(url); } catch { /* already gone */ } }
+    );
+    entry.rasterPageUrls = [];
     entry.rasterTiff = null;
 }
 

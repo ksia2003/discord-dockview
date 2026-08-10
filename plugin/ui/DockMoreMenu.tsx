@@ -1,139 +1,111 @@
-/*
- * The ⋯ more-menu — a Discord-native context menu of SECONDARY per-window actions
- * (the per-type toolbar already exposes zoom/page/etc.). Parameterized by a window
- * `win`: a non-active tab's ⋯ opens the menu for THAT window and every action
- * operates on it IN PLACE — opening the menu never switches the active tab.
- *
- * Items: Attach-to-message (when there's a file to stage), Open-in-browser (per-type
- * in-app window) + Download + Copy-link (when a url), and the viewer-specific bits (PDF
- * fit-to-width, image copy-image) GUARDED behind `isActive && a registered viewer` so
- * they degrade gracefully.
- *
- * The "Attach to message" item stages the live/edited buffer as an upload via the
- * cross-cutting edit/attach layer (the EDITED buffer is staged when the file has
- * edits). For the ACTIVE window it opens the inline filename bar (active-window
- * header chrome); a non-active tab attaches THAT window's file directly under its
- * own name (its hidden header has no inline bar).
- */
+/* Active-file actions. Tab lifecycle lives exclusively in DockTabMenu. */
 
 import { ContextMenuApi, Menu, React } from "@vencord/types/webpack/common";
 
-import { getActiveWindow } from "../engine/window";
-import { absUrl, copyText, downloadUrl } from "../external/openExternal";
-import { openInVesktopWindow } from "../external/vesktopWindow";
-import { attachActiveFile, openAttachBar } from "../edit/attach";
-import { STRINGS } from "../strings";
-import { getViewer } from "../viewers/registry";
+import { hasFileActionSurface } from "../engine/dockEligibility";
 import type { DockWindow } from "../engine/types";
+import { getActiveWindow } from "../engine/window";
+import {
+    attachActiveFile, downloadWindowFile, type FileVersion
+} from "../edit/attach";
+import { jumpToSourceMessage } from "../external/jumpToSource";
+import { STRINGS } from "../strings";
 import { menuIcon } from "./toolbar";
 
-const MENU_ICON = {
-    popout: menuIcon("M10 5a1 1 0 0 0 0 2h5.59l-8.3 8.3a1 1 0 1 0 1.42 1.4l8.29-8.29V14a1 1 0 1 0 2 0V6a1 1 0 0 0-1-1h-8Z M5 8a3 3 0 0 1 3-3h2a1 1 0 1 1 0 2H8a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-2a1 1 0 1 1 2 0v2a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V8Z"),
+const MORE_PATH = "M5 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm7 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm7 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z";
+const ICON = {
+    jump: menuIcon("M5 4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-6l-4 4v-4H6a1 1 0 0 1-1-1V4Zm4 4v2h6V8H9Zm0 4v2h4v-2H9Z"),
     download: menuIcon("M12 3a1 1 0 0 1 1 1v9.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42l2.3 2.3V4a1 1 0 0 1 1-1ZM5 18a1 1 0 0 1 1-1h12a1 1 0 1 1 0 2H6a1 1 0 0 1-1-1Z"),
-    copyImage: menuIcon("M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V5Zm3-1a1 1 0 0 0-1 1v9.59l2.3-2.3a1 1 0 0 1 1.4 0l2.3 2.3 3.3-3.3a1 1 0 0 1 1.4 0L18 14.6V5a1 1 0 0 0-1-1H7Zm2.5 5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"),
-    copyLink: menuIcon("M9.88 13.41a1 1 0 0 1 0-1.41l2.12-2.12a1 1 0 0 1 1.42 1.41L11.3 13.4a1 1 0 0 1-1.42 0Zm-2.3 4.6a3 3 0 0 1 0-4.24l2.12-2.12a1 1 0 0 1 1.42 1.41l-2.12 2.12a1 1 0 0 0 1.41 1.42l2.12-2.13a1 1 0 0 1 1.42 1.42l-2.13 2.12a3 3 0 0 1-4.24 0Zm9.9-9.9a3 3 0 0 1 0 4.25l-2.13 2.12a1 1 0 0 1-1.41-1.41l2.12-2.13a1 1 0 0 0-1.41-1.41l-2.12 2.12a1 1 0 1 1-1.42-1.42l2.13-2.12a3 3 0 0 1 4.24 0Z"),
-    fitWidth: menuIcon("M4 5a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1Zm16 0a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1ZM8.7 8.3a1 1 0 0 0-1.4 1.4l.29.3H7a1 1 0 0 0 0 2h.59l-.3.3a1 1 0 1 0 1.42 1.4l2-2a1 1 0 0 0 0-1.4l-2-2Zm6.6 0a1 1 0 0 1 1.4 1.4l-.29.3H17a1 1 0 1 1 0 2h-.59l.3.3a1 1 0 0 1-1.42 1.4l-2-2a1 1 0 0 1 0-1.4l2-2Z"),
-    // Paperclip — the universal "attach a file" affordance (matches Discord's own).
     attach: menuIcon("M16.5 6.3 8.8 14a2 2 0 1 0 2.83 2.83l7.07-7.07a4 4 0 1 0-5.66-5.66l-7.07 7.07a6 6 0 0 0 8.49 8.49l6.36-6.36a1 1 0 0 0-1.41-1.42l-6.37 6.37a4 4 0 0 1-5.65-5.66l7.07-7.07a2 2 0 0 1 2.83 2.83l-7.08 7.07a.99.99 0 0 1-1.4-1.41l7.7-7.7a1 1 0 0 0-1.42-1.41Z")
 };
 
+function versionActions(w: DockWindow, version: FileVersion, prefix: string) {
+    return [
+        React.createElement(Menu.MenuItem, {
+            key: `${prefix}-download`,
+            id: `${prefix}-download`,
+            label: STRINGS.menu.download,
+            icon: ICON.download,
+            action: () => downloadWindowFile(w, version)
+        }),
+        React.createElement(Menu.MenuItem, {
+            key: `${prefix}-attach`,
+            id: `${prefix}-attach`,
+            label: STRINGS.menu.attach,
+            icon: ICON.attach,
+            action: () => attachActiveFile(null, w, version)
+        })
+    ];
+}
+
 export function DockMoreMenu({ win }: { win?: DockWindow } = {}) {
     const w = win || getActiveWindow();
-    const isActive = w === getActiveWindow();
-    const url = w.content.url;
-    const name = w.content.name as string | null;
-    const type = w.content.type;
-    const isHtml = type === "html";
-
+    const hasEdits = w.editView.editBuffer != null;
+    const canUseFile = hasFileActionSurface(w.content.type)
+        && !w.content.loading && !w.content.error && w.content.name != null
+        && (w.content.code != null || w.content.html != null || w.content.url != null);
     const items: any[] = [];
 
-    // Attach to message: stage THIS window's file as a pending upload on the channel
-    // composer. Shown whenever there's a file to attach — text in memory
-    // (code/csv/structured/unknown), inline artifact html, or a url. For the ACTIVE
-    // window, open the inline filename bar (active-window header chrome); a non-active
-    // tab attaches THAT window's file directly under its own name.
-    const canAttach = !w.content.loading && !w.content.error && w.content.name != null
-        && (w.content.code != null || (isHtml && w.content.html != null) || url != null);
-    if (canAttach) {
+    if (w.sourceMessage) {
         items.push(React.createElement(Menu.MenuItem, {
-            id: "dockview-more-attach",
-            label: STRINGS.menu.attach,
-            icon: MENU_ICON.attach,
-            action: () => { if (isActive) openAttachBar(); else attachActiveFile(null, w); }
+            key: "jump",
+            id: "dockview-file-jump-source",
+            label: STRINGS.menu.jumpToMessage,
+            icon: ICON.jump,
+            action: () => jumpToSourceMessage(w.sourceMessage!)
         }));
     }
 
-    // Open in browser: open the CURRENT file in a real IN-APP Vesktop window. ONE
-    // reliable path for every viewer — openInVesktopWindow() builds the per-type
-    // shell (artifact html / rendered markdown / <pre> text / <embed> pdf / <img>
-    // image, embedding url-backed types by their working url) and opens it via the
-    // empty-window + write path (in-app regardless of the "Open Links in app"
-    // setting). Shown whenever there's a file (content or a url to embed).
-    if (w.content.name != null) {
-        items.push(React.createElement(Menu.MenuItem, {
-            id: "dockview-more-popout",
-            label: STRINGS.menu.openInNewWindow,
-            icon: MENU_ICON.popout,
-            action: () => openInVesktopWindow(w)
-        }));
-    }
-    if (url) {
-        items.push(React.createElement(Menu.MenuItem, {
-            id: "dockview-more-download",
-            label: STRINGS.menu.download,
-            icon: MENU_ICON.download,
-            action: () => downloadUrl(url, name)
-        }));
-    }
-
-    // Image copy: needs the image viewer's copy path (it transcodes to a PNG blob).
-    // Guarded behind a registered image viewer + the active window, so it stays
-    // hidden until P4 wires the viewer.
-    if (isActive && type === "image" && url && getViewer("image")) {
-        const viewer = getViewer("image") as any;
-        if (typeof viewer.copyImage === "function") {
-            items.push(React.createElement(Menu.MenuItem, {
-                id: "dockview-more-copy-image",
-                label: STRINGS.menu.copyImage,
-                icon: MENU_ICON.copyImage,
-                action: () => viewer.copyImage(url)
-            }));
+    if (canUseFile) {
+        if (hasEdits) {
+            items.push(
+                React.createElement(
+                    Menu.MenuItem,
+                    { key: "current", id: "dockview-file-current", label: STRINGS.menu.currentVersion },
+                    ...versionActions(w, "current", "dockview-file-current")
+                )
+            );
+            if (!w.isNewFile) {
+                items.push(
+                    React.createElement(
+                        Menu.MenuItem,
+                        { key: "original", id: "dockview-file-original", label: STRINGS.menu.originalVersion },
+                        ...versionActions(w, "original", "dockview-file-original")
+                    )
+                );
+            }
+        } else {
+            items.push(...versionActions(w, "current", "dockview-file"));
         }
     }
 
-    // PDF fit-to-width: needs the live PDF controller (the active viewer). Guarded
-    // behind a registered pdf viewer; hidden until P7.
-    if (isActive && type === "pdf" && getViewer("pdf")) {
-        const viewer = getViewer("pdf") as any;
-        if (typeof viewer.fitWidth === "function") {
-            items.push(React.createElement(Menu.MenuItem, {
-                id: "dockview-more-fit-width",
-                label: STRINGS.menu.fitToWidth,
-                icon: MENU_ICON.fitWidth,
-                action: () => viewer.fitWidth()
-            }));
-        }
-    }
+    return React.createElement(
+        Menu.Menu,
+        { navId: "dockview-more-menu", onClose: ContextMenuApi.closeContextMenu },
+        React.createElement(Menu.MenuGroup, null, ...items)
+    );
+}
 
-    const linkGroup = url
-        ? [
-            React.createElement(Menu.MenuSeparator, { key: "sep" }),
-            React.createElement(Menu.MenuGroup, { key: "link" },
-                React.createElement(Menu.MenuItem, {
-                    id: "dockview-more-copy-link",
-                    label: STRINGS.menu.copyLink,
-                    icon: MENU_ICON.copyLink,
-                    action: () => copyText(absUrl(url))
-                })
-            )
-        ]
-        : [];
-
-    return React.createElement(Menu.Menu, {
-        navId: "dockview-more-menu",
-        onClose: ContextMenuApi.closeContextMenu
-    },
-    React.createElement(Menu.MenuGroup, null, ...items),
-    ...linkGroup
+export function DockMoreButton() {
+    const win = getActiveWindow();
+    if (win.content.name == null || !hasFileActionSurface(win.content.type)) return null;
+    return React.createElement(
+        "button",
+        {
+            type: "button",
+            className: "dockview-tool-btn dockview-file-more",
+            title: STRINGS.header.more,
+            "aria-label": STRINGS.header.more,
+            onClick: (event: any) => {
+                event.preventDefault();
+                event.stopPropagation();
+                ContextMenuApi.openContextMenu(event, () => React.createElement(DockMoreMenu, { win }));
+            }
+        },
+        React.createElement(
+            "svg",
+            { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+            React.createElement("path", { fill: "currentColor", d: MORE_PATH })
+        )
     );
 }

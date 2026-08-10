@@ -15,7 +15,7 @@
  */
 
 import { getViewer, } from "../viewers/registry";
-import { getCacheEntry, registerViewRestore } from "./cache";
+import { getActiveCacheEntry, registerViewRestore, windowCacheEntry } from "./cache";
 import type { CacheEntry, DockWindow, ViewerContext } from "./types";
 
 const HOST_ID = "dockview-root";
@@ -56,33 +56,41 @@ function makeScrollCtx(win: DockWindow): ViewerContext {
  *  here; everything type-specific is delegated to the viewer. */
 export function snapshotActiveView(win: DockWindow): void {
     if (win.activeCacheKey == null) return;
-    const e = getCacheEntry(win.activeCacheKey);
+    const e = getActiveCacheEntry(win);
     if (!e) return;
+    const scoped = windowCacheEntry(win, e);
     const sc = viewScroller(win);
-    e.view.scrollTop = sc ? sc.scrollTop : e.view.scrollTop;
-    getViewer(e.type)?.snapshot(win.viewStates[e.type], e, makeScrollCtx(win));
+    scoped.view.scrollTop = sc ? sc.scrollTop : scoped.view.scrollTop;
+    const renderType = scoped.renderType ?? scoped.type;
+    getViewer(renderType)?.snapshot(win.viewStates[renderType], scoped, makeScrollCtx(win));
 }
 
 /** Where a freshly-restored body's saved scroll is parked until its content
  *  mounts (consumePendingScroll re-applies it). */
-let pendingScrollTop: number | null = null;
+const pendingScrollTop = new WeakMap<DockWindow, number | null>();
 
-export function getPendingScrollTop(): number | null { return pendingScrollTop; }
-export function setPendingScrollTop(v: number | null): void { pendingScrollTop = v; }
+export function getPendingScrollTop(win: DockWindow): number | null {
+    return pendingScrollTop.get(win) ?? null;
+}
+export function setPendingScrollTop(v: number | null, win: DockWindow): void {
+    pendingScrollTop.set(win, v);
+}
 
 /** Apply a cache entry's saved view-state into `win` so the body renderer opens
  *  at the remembered zoom/page/scroll/mode. The viewer restores its own slice;
  *  the shared scrollTop is parked for consumePendingScroll. */
 export function applyCachedView(win: DockWindow, e: CacheEntry): void {
-    getViewer(e.type)?.restore(win.viewStates[e.type], e);
-    pendingScrollTop = e.view.scrollTop ?? null;
+    const scoped = windowCacheEntry(win, e);
+    const renderType = scoped.renderType ?? scoped.type;
+    getViewer(renderType)?.restore(win.viewStates[renderType], scoped);
+    pendingScrollTop.set(win, scoped.view.scrollTop ?? null);
 }
 
 /** After a restore, re-apply the saved scroll once the body has its content. */
 export function consumePendingScroll(win: DockWindow): void {
-    if (pendingScrollTop == null) return;
-    const target = pendingScrollTop;
-    pendingScrollTop = null;
+    const target = pendingScrollTop.get(win);
+    if (target == null) return;
+    pendingScrollTop.delete(win);
     const sc = viewScroller(win);
     if (sc) sc.scrollTop = target;
 }

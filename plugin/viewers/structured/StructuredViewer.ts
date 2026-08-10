@@ -103,7 +103,8 @@ function snapshot(vs: TreeViewState, entry: CacheEntry): void {
 function restore(vs: TreeViewState, entry: CacheEntry): void {
     if (!vs) return; // missing slice (init-order edge) — StructuredBody back-fills on mount
     vs.mode = entry.view.treeMode ?? "tree";
-    // re-derive the kind so the tree body parses identically on a cache return.
+    // entry.url is the source descriptor (not a converted render URL), so its
+    // extension remains the right input for the tree parser.
     vs.kind = kindFor(entry.name, entry.url);
     // find never persists across files — clear the reused code find slice (restore
     // runs on the active window in showContent, so codeState() reaches the right one).

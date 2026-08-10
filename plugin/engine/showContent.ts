@@ -23,9 +23,9 @@
 
 import { getViewer } from "../viewers/registry";
 import {
-    cacheKeyFor, cacheTouch, disposeCacheEntry, getCacheEntry, mountFromCache, putCacheEntry
+    activateCacheEntry, cacheKeyFor, cacheTouch, getActiveCacheEntry, getCacheEntry,
+    mountFromCache, putCacheEntry, updateSourceDescriptor
 } from "./cache";
-import { detectType } from "./detectType";
 import { dvFetch } from "./fetch";
 import { requestRender } from "./forceRender";
 import { bump, nextToken } from "./loadToken";
@@ -75,8 +75,17 @@ export function showContent(opts: ShowOpts): "noop" | "cache" | "fetch" {
     // --- same file already shown? -> no-op (keep DOM, scroll, zoom as-is) -----
     // A retry (noCache) skips the no-op shortcut so it actually re-fetches.
     if (!opts.noCache && key != null && key === win.activeCacheKey && win.content.name != null && win.content.error == null) {
+        // The active exact entry may be retired after another window retried the same
+        // identity. Refresh that entry, not the global current payload owned by B.
+        const active = getActiveCacheEntry(win);
+        const current = active?.key === key ? active : getCacheEntry(key);
+        if (current) {
+            updateSourceDescriptor(current, url as string, type);
+            win.content.type = current.renderType;
+            win.content.url = current.renderUrl;
+            win.activeDescriptor = { name, url: current.sourceUrl, type: current.sourceType };
+        }
         win.content.name = name;
-        win.activeDescriptor = { name, url: url as string, type };
         return "noop";
     }
 
@@ -89,22 +98,19 @@ export function showContent(opts: ShowOpts): "noop" | "cache" | "fetch" {
     // --- cache hit on a DIFFERENT file -> instant restore (no fetch) ----------
     const hit = !opts.noCache && key != null ? getCacheEntry(key) : null;
     if (hit && hit.error == null && !hit.loading) {
-        bump(); // supersede any in-flight loader
+        updateSourceDescriptor(hit, url as string, type);
+        bump(win); // supersede only this window's previous loader
         win.content.seq += 1; // new body identity (different file)
-        hit.name = name; // honour the (possibly fresh) display name
         mountFromCache(win, hit);
-        // The descriptor must re-PRODUCE this entry's cache key on a later restore,
-        // so it carries the key's ROUTING type (what detectType returns for the url)
-        // — not the entry's RENDER type, which can differ for a decode-then-retype
-        // format (an .eps is keyed/fetched as "postscript" but ends up RENDERING as
-        // "pdf"; a .tiff keyed as "rasterimage" renders as "image"). Using hit.type
-        // here would key a restore on the render type and miss the cache.
-        win.activeDescriptor = { name, url: hit.url, type: detectType({ url: hit.url, name }) };
+        win.content.name = name; // display names are per-window, not payload state
+        // The descriptor reproduces the ORIGINAL routing identity, never a converter's
+        // blob/render URL or render type.
+        win.activeDescriptor = { name, url: hit.sourceUrl, type: hit.sourceType };
         return "cache";
     }
 
     // --- miss (or inline html / errored entry) -> fetch + populate cache ------
-    const token = nextToken();
+    const token = nextToken(win);
     win.content.name = name;
     win.content.url = url;
     win.content.error = null;
@@ -116,20 +122,30 @@ export function showContent(opts: ShowOpts): "noop" | "cache" | "fetch" {
     // Build a fresh cache entry for url-backed files (inline html isn't cached).
     let entry: CacheEntry | null = null;
     if (key != null && url != null) {
-        // If a stale entry for this key exists (an errored one, or one whose fetch
-        // is still in flight after we navigated away and came back), dispose it
-        // first so its half-built doc can't leak when its loader resolves.
-        const prior = getCacheEntry(key);
-        if (prior) { disposeCacheEntry(prior); }
-        entry = { key, name, type, url, codeLang: "plaintext", loading: true, view: {} };
+        entry = {
+            key,
+            name,
+            type,
+            url,
+            sourceType: type,
+            sourceUrl: url,
+            renderType: type,
+            renderUrl: url,
+            codeLang: "plaintext",
+            loading: true,
+            view: {}
+        };
+        // Point this window at the new payload before putCacheEntry retires the old
+        // entry. A different window may still own that old entry and keep it live.
+        activateCacheEntry(win, entry);
         putCacheEntry(entry);
-        win.activeCacheKey = key;
         cacheTouch(entry);
     } else {
         win.activeCacheKey = null;
+        win.activeCacheEntry = null;
     }
     // a brand-new load opens at the default view (no cached view to apply).
-    setPendingScrollTop(null);
+    setPendingScrollTop(null, win);
 
     // Hand the fetch+parse to the format's viewer. The load-token + cache entry go
     // with it: the viewer always writes `entry`, only writes `content` while

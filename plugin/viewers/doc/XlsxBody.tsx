@@ -114,7 +114,7 @@ export function selectSheet(index: number): void {
     if (i === vs.sheet) return; // already on this sheet
     feedSheet(win, i);
     win.content.seq += 1; // new grid identity → CsvBody remounts + re-parses
-    setPendingScrollTop(null); // each sheet opens at its own top (no cross-bleed)
+    setPendingScrollTop(null, win); // each sheet opens at its own top (no cross-bleed)
     requestRender();
 }
 

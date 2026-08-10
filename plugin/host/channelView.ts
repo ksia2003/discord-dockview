@@ -62,13 +62,31 @@ export function getNativeChannelHeaderSubtitle(channelId: string): any {
         : null;
 }
 
+function withoutMemberToggle(node: any): any {
+    if (Array.isArray(node)) {
+        let changed = false;
+        const children: any[] = [];
+        for (const child of node) {
+            const filtered = withoutMemberToggle(child);
+            if (filtered !== child) changed = true;
+            if (filtered != null) children.push(filtered);
+        }
+        return changed ? children : node;
+    }
+    if (!React.isValidElement(node)) return node;
+    if ((node as any).key === "members") return null;
+
+    const raw = (node as any).props?.children;
+    if (raw == null) return node;
+    const filtered = withoutMemberToggle(raw);
+    return filtered === raw ? node : React.cloneElement(node, { children: filtered } as any);
+}
+
 export function filterChannelHeaderToolbar(toolbar: any, channel: any): any {
-    if (!channel?.guild_id || !React.isValidElement(toolbar)) return toolbar;
-    const raw = (toolbar as any).props?.children;
-    const children = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-    const filtered = children.filter(child => child?.key !== "members");
-    if (filtered.length === children.length) return toolbar;
-    return React.cloneElement(toolbar, { children: filtered });
+    if (!channel?.guild_id) return toolbar;
+    // Current Discord builds return the toolbar as a flat array; older builds wrapped
+    // it in a React element. Walk either shape and remove only the explicit native key.
+    return withoutMemberToggle(toolbar);
 }
 
 /** Open Discord's own current-channel context menu at the supplied React mouse event.

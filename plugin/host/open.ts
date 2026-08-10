@@ -12,6 +12,9 @@ import { onChannelSelect } from "../engine/channelMemory";
 import { getCurrentChannelId } from "./channel";
 import { applyHostWidth } from "./layout";
 import {
+    activateCurrentNativeSearchView, deactivateNativeSearchView, isCurrentNativeSearchActive
+} from "./searchResults";
+import {
     applyOpenState, ensureHost, hideContextBody, revealDock, startHost, stopHost
 } from "./mount";
 
@@ -24,7 +27,10 @@ export function registerHost(): void {
         applyOpenState,
         applyHostWidth,
         revealDock,
-        hideContextBody
+        hideContextBody,
+        deactivateSearchView: deactivateNativeSearchView,
+        isSearchViewActive: isCurrentNativeSearchActive,
+        activateSearchView: activateCurrentNativeSearchView
     });
     // Run the same entry path for the channel we boot into. A direct memory assignment
     // would skip fixed-view seeding, which made a Vesktop launched directly into a voice

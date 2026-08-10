@@ -3,8 +3,8 @@
  *
  * Audio and video share ONE body; the element is chosen from content.type. Like the
  * image viewer, there is nothing to fetch or decode — the element streams the
- * attachment url itself. An unplayable container (the browser fires the element's
- * `error` event) falls back to a quiet download notice, matching the unsupported card.
+ * attachment url itself. An unplayable container reports a provisional load failure
+ * to the engine so openRollback can remove a failed new tab.
  *
  * AUTOPLAY is a user setting (General page, default OFF): a side-panel viewer
  * shouldn't blare on open. When ON, the element requests autoplay — but Chromium
@@ -20,20 +20,19 @@
 
 import { React } from "@vencord/types/webpack/common";
 
+import { requestRender } from "../../engine/forceRender";
 import { getActiveWindow } from "../../engine/window";
 import { settings } from "../../settings";
-import { STRINGS } from "../../strings";
+import { markMediaDecodeError, markMediaLoaded } from "./mediaError";
+import { settleMediaProbeFromBody } from "./mediaProbe";
 
 /** The shared inline media body. Keyed on content.seq by the dispatcher, so a new
- *  file (or a retry) remounts it and the local `failed` flag resets. */
+ *  file (or a retry) remounts it with a fresh native element. */
 export function MediaBody() {
-    const { useState } = React;
-    const [failed, setFailed] = useState(false);
-
     const win = getActiveWindow();
+    const mediaSeq = win.content.seq;
     const isVideo = win.content.type === "video";
     const url = win.content.url || "";
-    const name = win.content.name || (isVideo ? "video" : "audio");
 
     // Autoplay is a live setting, read once at mount. Chromium blocks UNMUTED autoplay
     // without a user gesture, so an autoplaying element must be muted or it stays paused
@@ -44,18 +43,14 @@ export function MediaBody() {
         try { return !!settings.store.dockMediaAutoplay; } catch { return false; }
     }, []);
 
-    if (failed || !url) {
-        return React.createElement(
-            "div",
-            { className: "dockview-media-wrap dockview-media-fallback" },
-            React.createElement(
-                "div",
-                { className: "dockview-media-fallback-card" },
-                React.createElement("div", { className: "dockview-media-fallback-title" }, STRINGS.media.title),
-                React.createElement("div", { className: "dockview-media-fallback-sub" }, STRINGS.media.sub(name))
-            )
-        );
-    }
+    if (!url) return null;
+
+    const reportDecodeError = () => {
+        if (settleMediaProbeFromBody(win, mediaSeq, "error") || markMediaDecodeError(win, mediaSeq)) requestRender();
+    };
+    const reportLoaded = () => {
+        if (settleMediaProbeFromBody(win, mediaSeq, "loaded") || markMediaLoaded(win, mediaSeq)) requestRender();
+    };
 
     return React.createElement(
         "div",
@@ -73,7 +68,9 @@ export function MediaBody() {
             muted: autoplay,
             preload: autoplay ? "auto" : "metadata",
             ref: (el: HTMLMediaElement | null) => { if (el) el.muted = autoplay; },
-            onError: () => setFailed(true)
+            onLoadedMetadata: reportLoaded,
+            onCanPlay: reportLoaded,
+            onError: reportDecodeError
         })
     );
 }

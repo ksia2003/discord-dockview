@@ -5,7 +5,7 @@
  */
 
 import { lstat, readFile } from "fs/promises";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 
 const STANDALONE_BANNER = /^\/\/ Standalone: true$/im;
 
@@ -21,7 +21,12 @@ export async function isStandaloneVencordInstall(dir: string): Promise<boolean> 
  * updater and must be repaired to standalone just like the old managed install.
  */
 export async function isGitVencordInstall(dir: string): Promise<boolean> {
-    for (const root of [dir, dirname(dir)]) {
+    // Only the documented shapes count: the checkout root itself, or its literal
+    // `dist/` output directory. Checking every arbitrary parent causes a false Git
+    // install whenever a user-selected file directory merely lives inside some other
+    // repository (or, as the regression fixture proved, when /tmp/.git exists).
+    const roots = basename(dir) === "dist" ? [dir, dirname(dir)] : [dir];
+    for (const root of roots) {
         try {
             await lstat(join(root, ".git"));
             return true;

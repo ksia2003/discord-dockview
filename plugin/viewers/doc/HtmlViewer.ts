@@ -33,6 +33,7 @@
 import { React } from "@vencord/types/webpack/common";
 
 import { injectNonce, pageNonce, setArtifactHtml } from "../../engine/nonce";
+import { ensureIframeLinkBridge } from "../../engine/iframeLinkBridge";
 import { getActiveWindow } from "../../engine/window";
 import { STRINGS } from "../../strings";
 import type {
@@ -80,7 +81,8 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             if (entry) {
                 entry.html = text;
                 const nonce = pageNonce();
-                entry.frameHtml = nonce ? injectNonce(text, nonce) : text;
+                const bridged = ensureIframeLinkBridge(text);
+                entry.frameHtml = nonce ? injectNonce(bridged, nonce) : bridged;
                 entry.code = text;
                 entry.codeLang = "html";
                 entry.loading = false;

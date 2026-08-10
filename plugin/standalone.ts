@@ -53,12 +53,24 @@ export function renderDockRail(channelView: unknown): unknown {
     return plugin.renderDockRail(channelView);
 }
 
+export function captureUnifiedChannelHeader(header: unknown, channelView: unknown): unknown {
+    return plugin.captureUnifiedChannelHeader(header, channelView);
+}
+
 export function filterChannelHeaderToolbar(toolbar: unknown, channel: unknown): unknown {
     return plugin.filterChannelHeaderToolbar(toolbar, channel);
 }
 
 export function filterChannelHeaderSubtitle(subtitle: unknown, channel: unknown): unknown {
     return plugin.filterChannelHeaderSubtitle(subtitle, channel);
+}
+
+export function captureNativeSearchResults(sidebar: unknown, channelView: unknown): unknown {
+    return plugin.captureNativeSearchResults(sidebar, channelView);
+}
+
+export function openThreadFromBrowser(channel: unknown): void {
+    plugin.openThreadFromBrowser(channel);
 }
 
 export function memberVirtualizerStats(): unknown {

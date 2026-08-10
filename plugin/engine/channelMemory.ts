@@ -16,8 +16,9 @@
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
 import { snapshotActiveView } from "./viewState";
-import { clearSealBypass, seedContextView, setContextActive } from "./contextTab";
+import { clearSealBypass, getContextView, seedContextView, setContextActive } from "./contextTab";
 import { isGuildVoiceChannel } from "../host/channel";
+import { selectThreadPortal } from "../viewers/thread/threadPortal";
 import {
     activeIdFor, focusEmptyShell, getActiveWindow, reconcileActiveFromCache, setActiveWindow,
     setWindowChannelId
@@ -82,9 +83,17 @@ export function onChannelSelect(newId: string | null): void {
     if (newId == null) {
         // Going to @me / no real channel: tabs stay in their channels' lists (they
         // rehydrate when we return), but there is no host to show them.
+        selectThreadPortal(null);
         requestRender();
         return;
     }
+
+    const active = getActiveWindow();
+    selectThreadPortal(
+        getContextView(newId) == null && active.content.type === "thread"
+            ? active.content.threadChannelId
+            : null
+    );
 
     // 4. Mount + reflect the existing visible/temporarily-hidden state. A passive channel
     //    switch must not reveal a dock the user hid with F9. applyOpenState still

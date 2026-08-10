@@ -24,7 +24,7 @@
  * (which itself lazily registers marked) only inside toggleEditMode.
  */
 
-import { getCacheEntry } from "../engine/cache";
+import { getActiveCacheEntry, getWindowCacheState } from "../engine/cache";
 import { requestRender } from "../engine/forceRender";
 import { setArtifactHtml } from "../engine/nonce";
 import { setPendingScrollTop } from "../engine/viewState";
@@ -66,8 +66,8 @@ export function editBufferText(w: DockWindow = getActiveWindow()): string {
 export function setEditBuffer(text: string, w: DockWindow = getActiveWindow()): void {
     w.editView.editBuffer = text;
     if (w.activeCacheKey != null) {
-        const e = getCacheEntry(w.activeCacheKey);
-        if (e) e.view.editBuffer = text;
+        const state = getWindowCacheState(w, w.activeCacheKey);
+        if (state) state.view.editBuffer = text;
     }
 }
 
@@ -109,14 +109,18 @@ export function toggleEditMode(): void {
         setArtifactHtml(win.content, fullHtml);
         // keep the cache entry's rendered payload in sync so a re-open shows edits.
         if (win.activeCacheKey != null) {
-            const e = getCacheEntry(win.activeCacheKey);
-            if (e) { e.html = win.content.html; e.frameHtml = win.content.frameHtml; }
+            const e = getActiveCacheEntry(win);
+            const state = e ? getWindowCacheState(win, e.key) : undefined;
+            if (state) {
+                state.html = win.content.html;
+                state.frameHtml = win.content.frameHtml;
+            }
         }
     }
     // close any find bar from the edit CM so it doesn't linger over the render.
     if (!entering && codeState(win).findOpen) toggleCodeFind();
     win.content.seq += 1; // new body identity -> iframe/CM remount fresh
-    setPendingScrollTop(null); // each mode opens at its own top
+    setPendingScrollTop(null, win); // each mode opens at its own top
     requestRender();
 }
 
@@ -140,5 +144,7 @@ export function snapshotEditState(win: DockWindow, e: CacheEntry): void {
  *  grid/raw choice is the csv slice's job). */
 export function restoreEditState(win: DockWindow, e: CacheEntry): void {
     win.editView.editBuffer = e.view.editBuffer ?? null;
-    win.editView.mode = e.type === "csv" ? "view" : (e.view.editMode ?? "view");
+    // CSV is a render surface here (an XLSX entry can be retyped to CSV); the
+    // source routing type is not the viewer whose edit mode is being restored.
+    win.editView.mode = e.renderType === "csv" ? "view" : (e.view.editMode ?? "view");
 }

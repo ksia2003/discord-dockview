@@ -30,6 +30,7 @@
 import { React } from "@vencord/types/webpack/common";
 
 import { escapeHtml } from "../../engine/html";
+import { IFRAME_LINK_BRIDGE } from "../../engine/iframeLinkBridge";
 import { getActiveWindow } from "../../engine/window";
 import { KATEX_CSS } from "../../katex-css";
 import { ARTIFACT_RENDER_FAILURE, LoadingBody, renderErrorBody } from "../../ui/StateCards";
@@ -293,16 +294,7 @@ export const MD_MATH_STYLE = `<style>
  *  opened in the user's BROWSER (not navigated inside the sandbox). The iframe
  *  is sandboxed without allow-popups, so we can't window.open from inside; we
  *  postMessage the href up to the host, which opens it (VencordNative/window). */
-export const MD_LINK_SCRIPT = `<script>(function(){
-  document.addEventListener("click", function(e){
-    var a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
-    if (!a) return;
-    var href = a.getAttribute("href") || "";
-    if (!href || href[0] === "#") return; // in-page anchor: let it scroll
-    e.preventDefault();
-    try { parent.postMessage({ __dockViewOpenLink: href }, "*"); } catch (_) {}
-  }, true);
-})();</script>`;
+export const MD_LINK_SCRIPT = IFRAME_LINK_BRIDGE;
 
 /** Wrap rendered markdown HTML in a full dark-themed document. Anchors get a
  *  default target so even if the click handler is bypassed they don't navigate

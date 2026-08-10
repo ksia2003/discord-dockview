@@ -33,6 +33,12 @@ export interface HostActions {
      *  synchronous turn the state flips, so the transition is visually atomic; React then
      *  unmounts the node on its own commit. No-op when no context body is mounted. */
     hideContextBody(): void;
+    /** Leave the server-scoped native Search surface without destroying its query/results.
+     * Explicit Channel info, voice chat, file and thread selections call this so Search
+     * behaves like a fixed tab rather than a per-channel context enum. */
+    deactivateSearchView(): void;
+    isSearchViewActive(): boolean;
+    activateSearchView(): void;
 }
 
 const noop = () => { };
@@ -42,7 +48,10 @@ let host: HostActions = {
     applyOpenState: noop,
     applyHostWidth: noop,
     revealDock: noop,
-    hideContextBody: noop
+    hideContextBody: noop,
+    deactivateSearchView: noop,
+    isSearchViewActive: () => false,
+    activateSearchView: noop
 };
 
 /** Phase 2 host registers its real DOM actions here. */

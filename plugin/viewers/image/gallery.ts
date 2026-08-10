@@ -126,6 +126,14 @@ export function ensureGallery(): number {
  *  place, preserving the pinned tab, and only renders (the panel is already open). */
 function galleryLoadInPlace(next: { name: string; url: string }): void {
     loadInPlace({ name: next.name, url: next.url, type: "image" });
+    const channelId = getCurrentChannelId();
+    const entry = getActiveWindow().gallery.items.find(item => item.url === next.url);
+    getActiveWindow().sourceMessage = channelId && entry
+        ? { channelId, messageId: entry.messageId }
+        : null;
+    // Gallery neighbours come from MessageStore, not from a still-mounted source DOM
+    // element. The previous image's native context bridge must never be reused here.
+    getActiveWindow().sourceImageContext = null;
 }
 
 /** Fetch one older/newer page into MessageStore, then rebuild the gallery. `dir`

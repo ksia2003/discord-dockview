@@ -33,21 +33,29 @@
  */
 
 import { STRINGS } from "../../strings";
+import { isCacheEntryLive } from "../../engine/cache";
+import { discardStaleBlob } from "../../engine/cacheOwnership";
 import type { CacheEntry, LoadOpts, LoadToken, Viewer, ViewerContext } from "../../engine/types";
 import { PdfViewer } from "../pdf/PdfViewer";
 import { looksLikePdf, psToPdf } from "./ghostscript";
 import { PsPlaceholderBody } from "./PsBody";
 
-/** Hand a ready PDF (blob: url) to the pdf viewer: retype content + entry to "pdf",
- *  point them at the blob, then delegate to PdfViewer.load() so pdf.js parses it and the
- *  pdf surface renders. The entry carries the blob url so a re-open is a cache hit; the
- *  pdf viewer owns the parsed doc + its dispose, this viewer's dispose revokes the blob. */
+/** Hand a ready PDF (blob: url) to the pdf viewer: keep the source descriptor intact,
+ *  point the render payload at the blob, then delegate to PdfViewer.load(). */
 function handToPdf(blobUrl: string, opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: ViewerContext): void {
-    if (entry) {
-        entry.type = "pdf";
-        entry.url = blobUrl;
+    if (!token.isCurrent() || (entry != null && !isCacheEntryLive(entry))) {
+        discardStaleBlob(
+            entry,
+            blobUrl,
+            url => { try { URL.revokeObjectURL(url); } catch { /* already revoked */ } },
+            "PostScript conversion completed after its cache entry was detached"
+        );
+        return;
     }
-    if (!token.isCurrent()) return; // superseded — entry holds the blob; dispose revokes it
+    if (entry) {
+        entry.renderType = "pdf";
+        entry.renderUrl = blobUrl;
+    }
     ctx.content.type = "pdf";
     ctx.content.url = blobUrl;
     // Delegate to the pdf viewer's loader with the blob url. It resets content.pdf, fetches
@@ -114,7 +122,7 @@ function restore(): void { /* nothing to restore */ }
  *  entry has retyped to "pdf" the cache calls THAT dispose, not this one — so this guards
  *  only the (rare) eviction of a still-"postscript" entry whose conversion hadn't finished. */
 function dispose(entry: CacheEntry): void {
-    const u = entry.url;
+    const u = entry.renderUrl;
     if (u && u.startsWith("blob:")) {
         try { URL.revokeObjectURL(u); } catch { /* already gone */ }
     }

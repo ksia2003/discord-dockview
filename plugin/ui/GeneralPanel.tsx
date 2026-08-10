@@ -1,50 +1,18 @@
-/*
- * DockView — the "General" settings page (renderer).
- * ---------------------------------------------------------------------------
- * The dock's behaviour preferences under the DockView settings section:
- *   - Dock width — the native Slider bound to the ONE live dock width (the same
- *     width the edge-drag resizes and persists, layout.ts). Dragging it resizes the
- *     dock live and writes through the same DataStore persistence; there is no second
- *     "default width" concept.
- *   - Autoplay media when opened.
- *   - Multi-column Members layout (native ListScroller adapter).
- * The switch binds to the reactive settings store (settings.use) so a flip persists and
- * re-renders; each behaviour reads the same store live at the moment it runs, so a toggle
- * applies with no reload.
- *
- * GRAMMAR — mirrors AboutPanel.tsx / UpdatePanel.tsx: plain React.createElement over
- * @webpack/common primitives (no JSX), semantic CSS variables only, so it matches the
- * native settings look in every theme. The page header ("General") comes from the
- * sidebar row's panel title, so it isn't repeated; FormTitle h3 heads each sub-group.
- *
- * NO module-top webpack access: the `h` wrapper defers React.createElement to call
- * time (resolving the proxy at import time would throw before Vencord is ready and drop
- * the plugin). No import cycle: this imports ../settings (store-only) + host/layout.
- */
+/* DockView General settings: ordered F9 width presets plus viewer behaviour toggles. */
 
-import { Forms, React, Select, Slider, Switch } from "@vencord/types/webpack/common";
+import { Button, Forms, React, Slider, Switch } from "@vencord/types/webpack/common";
 
-import { hostActions } from "../engine/hostBridge";
 import { requestRender } from "../engine/forceRender";
 import {
-    DEFAULT_EXPANDED_WIDTH, getCompactDockWidth, getExpandedDockWidth, isCompactDockWidth,
-    MAX_WIDTH_FRAC, setDockWidthPersisted, toggleDockWidthMode
+    applyHostWidth, getCompactDockWidth, getDockWidthPresets, MAX_WIDTH_FRAC,
+    parseDockWidthPresets, setDockWidthPresets
 } from "../host/layout";
 import { settings } from "../settings";
 import { STRINGS } from "../strings";
 
 const h = (...args: any[]) => (React.createElement as any)(...args);
-
 const G = STRINGS.general;
-type F9Behavior = "width" | "hide";
 
-const F9_OPTIONS: Array<{ value: F9Behavior; label: string; }> = [
-    { value: "width", label: G.f9Width },
-    { value: "hide", label: G.f9Hide }
-];
-
-/** One switch row bound to a settings-store boolean. `store` is the live proxied store
- *  from settings.use(); writing store[key] persists + fires listeners. */
 function switchRow(store: any, key: string, title: string, note: string, afterChange?: () => void) {
     return h(
         Switch,
@@ -52,65 +20,64 @@ function switchRow(store: any, key: string, title: string, note: string, afterCh
             value: store[key] !== false,
             note,
             hideBorder: false,
-            onChange: (v: boolean) => { store[key] = v; afterChange?.(); }
+            onChange: (value: boolean) => { store[key] = value; afterChange?.(); }
         },
         title
     );
 }
 
-function F9BehaviorSelect({ store }: { store: any; }) {
-    const current: F9Behavior = store.f9Behavior === "hide" ? "hide" : "width";
-    const select = (value: F9Behavior) => {
-        store.f9Behavior = value;
-        // Hide mode replaces the compact destination, so enter it at the remembered
-        // expanded width. That keeps the adjacent width slider useful and gives F9 an
-        // unambiguous shown ↔ hidden pair. Switching either way also reveals a dock that
-        // may currently be hidden.
-        if (value === "hide" && isCompactDockWidth()) toggleDockWidthMode();
-        hostActions().revealDock();
-    };
-
+function smallButton(label: string, action: () => void, disabled = false) {
     return h(
-        "div",
-        null,
-        h(Forms.FormTitle, { tag: "h3" }, G.f9Title),
-        h(
-            Forms.FormText,
-            { style: { marginBottom: "12px", color: "var(--text-muted)" } },
-            G.f9Note
-        ),
-        h(
-            "div",
-            { style: { maxWidth: "320px" } },
-            h(Select, {
-                options: F9_OPTIONS,
-                isSelected: (value: F9Behavior) => value === current,
-                select,
-                serialize: String,
-                closeOnSelect: true,
-                "aria-label": G.f9Title
-            })
-        )
+        Button,
+        {
+            size: Button.Sizes.SMALL,
+            color: Button.Colors.PRIMARY,
+            disabled,
+            onClick: action,
+            style: { minWidth: "auto" }
+        },
+        label
     );
 }
 
-/** The expanded-width preset. Compact width follows Discord's native member rail; this
- *  slider changes the width F9 expands to. When already expanded the change stays live. */
-function WidthSlider({ f9Behavior }: { f9Behavior: F9Behavior; }) {
-    const { useState, useMemo } = React;
-    const [width, setWidth] = useState(() => getExpandedDockWidth());
-    const compactWidth = useMemo(() => getCompactDockWidth(), []);
-
-    // The slider's max = MAX_WIDTH_FRAC of the current window width (the same ceiling
-    // clampWidthRaw enforces), floored above the live native member width.
+function WidthPresetEditor({ store }: { store: any; }) {
+    const { useMemo, useState } = React;
+    const initial = useMemo(() => parseDockWidthPresets(store.dockWidthPresets), []);
+    const [presets, setPresets] = useState(() => initial.length ? initial : getDockWidthPresets());
+    const [structureRevision, setStructureRevision] = useState(0);
+    const compact = useMemo(() => getCompactDockWidth(), []);
     const maxWidth = useMemo(
-        () => Math.max(compactWidth + 60, Math.floor((window.innerWidth || 1280) * MAX_WIDTH_FRAC)),
-        [compactWidth]
+        () => Math.max(compact + 60, Math.floor((window.innerWidth || 1280) * MAX_WIDTH_FRAC)),
+        [compact]
     );
 
-    const apply = (v: number) => {
-        const applied = setDockWidthPersisted(Math.round(v));
-        setWidth(applied);
+    const commit = (next: number[], structureChanged = false) => {
+        const normalised = setDockWidthPresets(next);
+        store.dockWidthPresets = normalised.join(",");
+        setPresets(normalised);
+        if (structureChanged) setStructureRevision(value => value + 1);
+        applyHostWidth();
+        requestRender();
+    };
+    const change = (index: number, value: number) => {
+        const next = [...presets];
+        next[index] = Math.round(value);
+        commit(next, true);
+    };
+    const move = (index: number, delta: number) => {
+        const target = index + delta;
+        if (target < 0 || target >= presets.length) return;
+        const next = [...presets];
+        [next[index], next[target]] = [next[target], next[index]];
+        commit(next);
+    };
+    const remove = (index: number) => {
+        if (presets.length <= 1) return;
+        commit(presets.filter((_, itemIndex) => itemIndex !== index), true);
+    };
+    const add = () => {
+        const last = presets[presets.length - 1] ?? compact;
+        commit([...presets, Math.min(maxWidth, last + 120)], true);
     };
 
     return h(
@@ -120,27 +87,69 @@ function WidthSlider({ f9Behavior }: { f9Behavior: F9Behavior; }) {
         h(
             Forms.FormText,
             { style: { marginBottom: "12px", color: "var(--text-muted)" } },
-            f9Behavior === "hide" ? G.widthNoteHide : G.widthNote
+            G.widthNote
         ),
-        h(Slider, {
-            initialValue: width,
-            minValue: compactWidth,
-            maxValue: maxWidth,
-            keyboardStep: 10,
-            markers: [compactWidth, DEFAULT_EXPANDED_WIDTH, maxWidth],
-            stickToMarkers: false,
-            onValueRender: (v: number) => G.widthValue(Math.round(v)),
-            asValueChanges: (v: number) => apply(v),
-            onValueChange: (v: number) => apply(v)
-        })
+        h(
+            "div",
+            {
+                style: {
+                    marginBottom: "12px",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    background: "var(--background-secondary)"
+                }
+            },
+            h(Forms.FormTitle, { tag: "h5", style: { marginBottom: "2px" } }, G.hiddenPresetTitle),
+            h(Forms.FormText, { style: { color: "var(--text-muted)", fontSize: "12px" } }, G.hiddenPresetNote)
+        ),
+        ...presets.map((width, index) => h(
+            "div",
+            {
+                // Discord's Slider owns its drag state. Keep it mounted while the value
+                // changes, but remount rows after an add/remove/reorder so initialValue is
+                // refreshed for the new structural order.
+                key: `dock-width-${structureRevision}-${index}`,
+                style: {
+                    display: "grid",
+                    gridTemplateColumns: "minmax(120px, 1fr) auto",
+                    alignItems: "center",
+                    gap: "10px",
+                    marginBottom: "12px"
+                }
+            },
+            h(
+                "div",
+                { style: { minWidth: 0 } },
+                h(Forms.FormTitle, { tag: "h5", style: { marginBottom: "4px" } }, G.presetTitle(index + 1)),
+                h(Slider, {
+                    initialValue: width,
+                    minValue: 200,
+                    maxValue: maxWidth,
+                    keyboardStep: 10,
+                    markers: [200, compact, 560, maxWidth].filter((value, markerIndex, all) =>
+                        value <= maxWidth && all.indexOf(value) === markerIndex
+                    ),
+                    stickToMarkers: false,
+                    onValueRender: (value: number) => G.widthValue(Math.round(value)),
+                    asValueChanges: (value: number) => change(index, value),
+                    onValueChange: (value: number) => change(index, value)
+                })
+            ),
+            h(
+                "div",
+                { style: { display: "flex", gap: "6px", alignItems: "center" } },
+                smallButton(G.moveUp, () => move(index, -1), index === 0),
+                smallButton(G.moveDown, () => move(index, 1), index === presets.length - 1),
+                smallButton(G.removePreset, () => remove(index), presets.length <= 1)
+            )
+        )),
+        smallButton(G.addPreset, add, presets[presets.length - 1] >= maxWidth)
     );
 }
 
 export function GeneralPanel() {
-    // Subscribe to the behaviour keys; `use()` returns the live proxied store, so
-    // assignments below persist AND fire the option listeners, and a change re-renders.
     const store = settings.use([
-        "f9Behavior",
+        "dockWidthPresets",
         "dockMediaAutoplay",
         "membersMultiColumn"
     ]);
@@ -148,24 +157,10 @@ export function GeneralPanel() {
     return h(
         "div",
         null,
-
-        // --- F9 action -----------------------------------------------------
-        h(F9BehaviorSelect, { store }),
-
+        h(WidthPresetEditor, { store }),
         h(Forms.FormDivider, { style: { margin: "20px 0" } }),
-
-        // --- Dock width ----------------------------------------------------
-        h(WidthSlider, {
-            f9Behavior: store.f9Behavior === "hide" ? "hide" : "width"
-        }),
-
-        h(Forms.FormDivider, { style: { margin: "20px 0" } }),
-
-        // --- Behaviour switches --------------------------------------------
         switchRow(store, "dockMediaAutoplay", G.autoplayTitle, G.autoplayNote),
-
         h(Forms.FormDivider, { style: { margin: "20px 0" } }),
-
         switchRow(store, "membersMultiColumn", G.membersColumnsTitle, G.membersColumnsNote, requestRender)
     );
 }

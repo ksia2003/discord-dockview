@@ -16,7 +16,7 @@ import { React } from "@vencord/types/webpack/common";
 
 import { retryActiveLoad } from "../engine/load";
 import { getActiveWindow } from "../engine/window";
-import { downloadUrl, extOf, openUrlInVesktopWindow } from "../external/openExternal";
+import { downloadUrl, extOf } from "../external/openExternal";
 import { STRINGS } from "../strings";
 
 /** Map a raw error string to a humane title/sub. HTTP status codes lead; a
@@ -49,9 +49,9 @@ export function humanizeError(raw: string): { title: string; sub: string } {
     return { title: E.generic.title, sub: E.generic.sub(raw) };
 }
 
-/** Error fallback: a centered card with Retry / Open-in-browser / Download. Retry
- *  re-fetches the same url bypassing the cache; the other two embed/download the
- *  url. Only shown with a url to act on (inline-html artifacts have none, and they
+/** Error fallback: a centered card with Retry / Download. Retry
+ *  re-fetches the same url bypassing the cache; download remains the native fallback.
+ *  Only shown with a url to act on (inline-html artifacts have none, and they
  *  don't take the fetch path anyway). */
 export function renderErrorBody(raw: string) {
     const win = getActiveWindow();
@@ -69,18 +69,6 @@ export function renderErrorBody(raw: string) {
                 onClick: () => retryActiveLoad()
             },
             STRINGS.actions.retry
-        ));
-        actions.push(React.createElement(
-            "button",
-            {
-                key: "open",
-                type: "button",
-                className: "dockview-unsupported-btn",
-                // "Open in browser" = an in-app Vesktop window (unified path). The
-                // file failed to load so there's no in-memory content; embed its url.
-                onClick: () => { if (url) openUrlInVesktopWindow(url, name); }
-            },
-            STRINGS.actions.openInNewWindow
         ));
         actions.push(React.createElement(
             "button",
@@ -113,7 +101,7 @@ export function renderErrorBody(raw: string) {
 }
 
 /** Unsupported-format fallback: a clean centered card for a file we can't preview,
- *  with Download + Open-in-browser actions (no raw-byte iframe dump). Reached for a
+ *  with Download only (no raw-byte iframe dump). Reached for a
  *  binary "unknown" file, or any content type with no registered viewer. */
 export function renderUnsupportedBody() {
     const win = getActiveWindow();
@@ -149,15 +137,6 @@ export function renderUnsupportedBody() {
                         onClick: () => downloadUrl(url, name)
                     },
                     STRINGS.actions.download
-                ),
-                React.createElement(
-                    "button",
-                    {
-                        type: "button",
-                        className: "dockview-unsupported-btn",
-                        onClick: () => { if (url) openUrlInVesktopWindow(url, name); }
-                    },
-                    STRINGS.actions.openInNewWindow
                 )
             )
             : null

@@ -104,6 +104,15 @@ test("the check bridge can distinguish standalone and custom Git Vencord builds"
     assert.equal(await isGitVencordInstall(root), false);
     await mkdir(join(root, ".git"));
     assert.equal(await isGitVencordInstall(root), true);
+
+    const checkout = join(root, "another-checkout");
+    const arbitraryChild = join(checkout, "custom-vencord-files");
+    const dist = join(checkout, "dist");
+    await mkdir(join(checkout, ".git"), { recursive: true });
+    await mkdir(arbitraryChild);
+    await mkdir(dist);
+    assert.equal(await isGitVencordInstall(arbitraryChild), false);
+    assert.equal(await isGitVencordInstall(dist), true);
 });
 
 test("a file-only non-standalone runtime migrates even when a stale custom path points to it", async t => {

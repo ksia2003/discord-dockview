@@ -6,8 +6,8 @@
  * bridge, restores the persisted width, and exposes window.__dockView for console /
  * CDP driving.
  *
- * By default F9 changes the dock width; an optional setting makes F9 hide it temporarily
- * instead. Explicit new-tab actions reveal a temporarily hidden dock. Chip-click loading
+ * F9 cycles a fixed hidden step and the user's ordered non-zero width presets. Explicit
+ * new-tab actions reveal a temporarily hidden dock at its last non-zero width. Chip-click loading
  * is wired via embed.ts, which intercepts a dock-handled
  * attachment chip / inline image and routes it through the engine's load(); a handled
  * type whose viewer isn't built yet lands on the unsupported card, and an empty channel
@@ -21,36 +21,47 @@
  */
 
 import { findGroupChildrenByChildId } from "@vencord/types/api/ContextMenu";
-import { Menu, React, ReactDOM } from "@vencord/types/webpack/common";
+import { ContextMenuApi, Menu, React, ReactDOM } from "@vencord/types/webpack/common";
 
 import managedStyle from "./style.css?managed";
 
 import { clearArtifact, load, retryActiveLoad } from "./engine/load";
 import { clearContentCache } from "./engine/cache";
-import { preloadDecoders } from "./engine/decoderModes";
+import { decoderEnabledForFile, preloadDecoders } from "./engine/decoderModes";
+import { hasFileActionSurface, isDockFileEligible } from "./engine/dockEligibility";
+import {
+    canOpenIframeDock, iframeForSource, iframeLinkBase, resolveIframeLink
+} from "./engine/iframeLinkBridge";
 import { fallbackCopy } from "./engine/fetch";
 import { loadLib } from "./engine/lazyLib";
 import { detectType, isExternalWebUrl } from "./engine/detectType";
+import { viewerEnabled } from "./engine/categoryMap";
 import { isRendererLive, requestRender } from "./engine/forceRender";
 import { onChannelSelect, setCurrentChannelMemId } from "./engine/channelMemory";
 import { isContextActive, resetContextTab, setContextActive } from "./engine/contextTab";
 import { loadPersistedState } from "./engine/persist";
 import { closeTab, switchToWindow } from "./engine/tabs";
 import {
-    getActiveWindow, getActiveWindowId, getChannelTabs, getWindows, reorderTab, resetCollection
+    getActiveWindow, getActiveWindowId, getChannelTabs, getWindows, resetCollection
 } from "./engine/window";
 import { getCurrentChannelId } from "./host/channel";
 import {
     captureChannelView, clearChannelView, filterChannelHeaderSubtitle,
     filterChannelHeaderToolbar
 } from "./host/channelView";
+import { captureUnifiedChannelHeader } from "./host/unifiedHeader";
+import { captureNativeSearchResults, clearNativeSearchResults } from "./host/searchResults";
+import {
+    reconcileScreenShareSelection, startScreenShareAutoHide, stopScreenShareAutoHide
+} from "./host/screenShareAutoHide";
 import {
     getSelfMemberToggle, getSelfProfileToggle, isMemberListShown, isUserProfileSidebarShown
 } from "./host/nativePanels";
 import { interceptionInstalled, startInterception, stopInterception } from "./host/interception";
 import {
-    applyHostWidth, getCompactDockWidth, getExpandedDockWidth, isCompactDockWidth,
-    setExpandedDockWidth, toggleDockWidthMode
+    applyHostWidth, getActiveDockPresetIndex, getCompactDockWidth, getDockWidthPresets,
+    getExpandedDockWidth, isCompactDockWidth, parseDockWidthPresets,
+    selectDockWidthPreset, toggleDockWidthMode
 } from "./host/layout";
 import {
     applyOpenState, ensureHost, isDockTemporarilyHidden, liveHost, mountDebugLog,
@@ -66,9 +77,11 @@ import {
     commitMembersSlotWidth, memberListScrollerType, memberVirtualizerStats, setMemberVirtualizerActive,
     setMemberVirtualizerReact, setMemberVirtualizerSettingReader
 } from "./host/memberListVirtualizer";
-import { destroyAllThreadPortals, livePortalThreads, portalDebugLog } from "./viewers/thread/threadPortal";
 import {
-    destroyAllVoiceChatPortals, liveVoiceChatPortals
+    destroyAllThreadPortals, livePortalThreads, portalDebugLog, syncVisibleThreadPortalNow
+} from "./viewers/thread/threadPortal";
+import {
+    destroyAllVoiceChatPortals, liveVoiceChatPortals, syncVisibleVoiceChatPortalNow
 } from "./viewers/voice/voiceChatPortal";
 import {
     captureVoiceChat, getVoiceChatProviderStack, getVoiceChatType,
@@ -77,7 +90,6 @@ import {
 import { closeThreadTabEverywhere, openThreadTab } from "./engine/threadTab";
 import { onChannelDelete, onThreadDelete, onThreadUpdate } from "./engine/threadEvents";
 import { openExternalLink } from "./external/openExternal";
-import { openInVesktopWindow, popoutArtifact, vesktopWindowHtml } from "./external/vesktopWindow";
 import { markdownHasToc, mdState } from "./viewers/doc/MarkdownViewer";
 import {
     closeAttachBar, confirmAttachBar, isAttachBarOpen, openAttachBar, setAttachBarName,
@@ -85,8 +97,12 @@ import {
 } from "./edit/attach";
 import { editBufferText, toggleEditMode } from "./edit/editMode";
 import { onNewFile } from "./edit/newFile";
-import { openWebTab, startEmbed, stopEmbed } from "./embed";
+import {
+    isDockAttachmentTarget, openWebTab, sourceImageContextFromTarget,
+    sourceMessageFromTarget, startEmbed, stopEmbed
+} from "./embed";
 import { settings } from "./settings";
+import { fullResImageUrl } from "./viewers/image/url";
 import { STRINGS } from "./strings";
 import { scheduleAutoCheck } from "./ui/autoCheck";
 import { installDockViewSection, uninstallDockViewSection } from "./ui/settingsSection";
@@ -96,23 +112,19 @@ let onKeyDown: ((e: KeyboardEvent) => void) | null = null;
 let onResize: (() => void) | null = null;
 let onMessage: ((e: MessageEvent) => void) | null = null;
 
-/** Load the remembered expanded-width preset once DataStore resolves. Startup stays
- * compact; F9 is the explicit action that applies the preset. */
+/** Load ordered width presets after Vencord settings hydrate. The old single DataStore
+ * width is accepted once as migration input when the new setting is still at default. */
 async function applyPersisted(): Promise<void> {
     const { widthStr } = await loadPersistedState();
-    if (typeof widthStr === "string") {
-        setExpandedDockWidth(parseInt(widthStr, 10) || getExpandedDockWidth());
-    }
-    // Vencord hydrates persisted plugin settings during the same startup turn. Yield once
-    // before reading f9Behavior so a saved hide mode does not momentarily look like the
-    // schema default and strand the rail in compact mode until the next key press.
     await new Promise<void>(resolve => setTimeout(resolve, 0));
-    // In hide mode F9 replaces (rather than supplements) the compact destination.
-    // Start at the remembered expanded width so the visible state and width slider stay
-    // meaningful across restarts.
-    if (settings.store.f9Behavior === "hide" && isCompactDockWidth()) {
-        toggleDockWidthMode();
+    let raw = settings.store.dockWidthPresets;
+    const migrated = typeof widthStr === "string" ? parseInt(widthStr, 10) : NaN;
+    if ((raw == null || raw === "264,560") && Number.isFinite(migrated) && migrated !== 560) {
+        raw = `${getCompactDockWidth()},${migrated}`;
+        settings.store.dockWidthPresets = raw;
     }
+    parseDockWidthPresets(raw);
+    selectDockWidthPreset(0);
     applyHostWidth();
     requestRender();
 }
@@ -130,6 +142,13 @@ function commitF9MemberColumnsBeforePaint(): void {
     });
 }
 
+/** Body-level native chat portals sit outside DockView's layout tree. Move them in the
+ * same turn as an explicit Dock geometry change; their own rAF loops remain backstops. */
+function syncVisibleChatPortalsNow(): void {
+    syncVisibleThreadPortalNow();
+    syncVisibleVoiceChatPortalNow();
+}
+
 /** The neutral console / CDP handle. Ported from the old exposeDebug surface so the
  *  CDP verification harness keeps working. Getters read the LIVE active window (it's
  *  reassigned on every tab switch — a captured snapshot would go stale). */
@@ -145,7 +164,8 @@ function exposeDebug(): void {
         ensureHost, applyOpenState,
         get dockOpen() { return !isDockTemporarilyHidden(); },
         get temporarilyHidden() { return isDockTemporarilyHidden(); },
-        get f9Behavior() { return settings.store.f9Behavior === "hide" ? "hide" : "width"; },
+        get widthPresets() { return getDockWidthPresets(); },
+        get activeWidthPreset() { return getActiveDockPresetIndex(); },
         revealDock, toggleDockTemporaryVisibility,
         toggleDockWidthMode,
         get compactMode() { return isCompactDockWidth(); },
@@ -177,7 +197,7 @@ function exposeDebug(): void {
         get windows() { return getWindows(); },
         get activeWindowId() { return getActiveWindowId(); },
         channelTabs: (id: string) => getChannelTabs(id),
-        switchToWindow, closeTab, reorderTab,
+        switchToWindow, closeTab,
 
         // context tab (member list / profile in the dock): drive the active-view flag +
         // assert acquisition state (the captured types + priming) for the rig gates.
@@ -219,15 +239,76 @@ function exposeDebug(): void {
         set attachBarName(v: string) { setAttachBarName(v); },
         get isNewFile() { return getActiveWindow().isNewFile; },
 
-        // external pop-out (in-app Vesktop window).
-        openInVesktopWindow, vesktopWindowHtml, popout: popoutArtifact,
-
         openWebTab
     };
 }
 
 function unexposeDebug(): void {
     try { delete (window as any).__dockView; } catch { /* ignore */ }
+}
+
+function liveIframeForSource(source: MessageEventSource | null): HTMLIFrameElement | null {
+    const host = liveHost();
+    if (!host || host.id !== "dockview-root") return null;
+    const frames = Array.from(host.querySelectorAll<HTMLIFrameElement>("iframe.dockview-frame"));
+    return iframeForSource(source, frames) as HTMLIFrameElement | null;
+}
+
+function normalizeIframeLink(raw: string, frame: HTMLIFrameElement | null = null): string | null {
+    const activeBase = getActiveWindow().content.url || location.href;
+    const base = frame ? iframeLinkBase(frame, activeBase) : activeBase;
+    return resolveIframeLink(raw, base);
+}
+
+function IframeLinkContextMenu({ href }: { href: string; }) {
+    const copy = () => {
+        try {
+            if (navigator.clipboard?.writeText) navigator.clipboard.writeText(href).catch(() => fallbackCopy(href));
+            else fallbackCopy(href);
+        } catch { fallbackCopy(href); }
+    };
+    const items = [
+        React.createElement(Menu.MenuItem, {
+            id: "dockview-link-open-browser",
+            label: canOpenIframeDock(href) ? STRINGS.web.openExternal : "Open link",
+            action: () => openExternalLink(href)
+        }),
+        ...(canOpenIframeDock(href) ? [React.createElement(Menu.MenuItem, {
+            id: "dockview-link-open-dock",
+            label: STRINGS.menu.openInDockView,
+            action: () => openWebTab(href)
+        })] : []),
+        React.createElement(Menu.MenuItem, {
+            id: "dockview-link-copy",
+            label: STRINGS.menu.copyLink,
+            action: copy
+        })
+    ];
+    return React.createElement(
+        Menu.Menu,
+        { navId: "dockview-iframe-link-context", onClose: ContextMenuApi.closeContextMenu },
+        React.createElement(Menu.MenuGroup, null, ...items)
+    );
+}
+
+function openIframeLinkContext(source: MessageEventSource | null, data: any): void {
+    const frame = liveIframeForSource(source);
+    const href = typeof data?.href === "string" ? normalizeIframeLink(data.href, frame) : null;
+    if (!href) return;
+    if (!frame) return;
+    const rect = frame.getBoundingClientRect();
+    const clientX = rect.left + (Number(data.clientX) || 0);
+    const clientY = rect.top + (Number(data.clientY) || 0);
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX, clientY });
+    // Discord's menu locator reads event.target/currentTarget as well as coordinates.
+    // A dispatched event loses currentTarget once propagation finishes, so open the
+    // menu from a one-shot listener while both target fields still name the real frame.
+    frame.addEventListener("contextmenu", nativeEvent => {
+        nativeEvent.preventDefault();
+        nativeEvent.stopPropagation();
+        ContextMenuApi.openContextMenu(nativeEvent, () => React.createElement(IframeLinkContextMenu, { href }));
+    }, { once: true });
+    frame.dispatchEvent(event);
 }
 
 /** Extract a plain website URL from Discord's context-menu arguments. Links inside
@@ -251,24 +332,75 @@ function contextMenuWebUrl(props: any): string | null {
     }
 }
 
+function contextMenuFile(props: any): {
+    url: string;
+    name: string;
+    type: ReturnType<typeof detectType>;
+    sourceMessage: { channelId: string; messageId: string; } | null;
+    sourceImageContext: ReturnType<typeof sourceImageContextFromTarget>;
+} | null {
+    const target = props?.target as HTMLElement | null;
+    const media = target?.closest?.("[class*='visualMediaItem'], [class*='imageWrapper'], [class*='nonVisualMediaItem']");
+    const mediaElement = media?.querySelector?.("video, audio, img") as HTMLMediaElement | HTMLImageElement | null;
+    const raw = props?.attachment?.url
+        ?? props?.attachment?.proxy_url
+        ?? props?.item?.url
+        ?? props?.href
+        ?? (mediaElement instanceof HTMLMediaElement ? mediaElement.currentSrc || mediaElement.src : mediaElement?.src)
+        ?? target?.closest?.("a[href]")?.getAttribute("href");
+    if (typeof raw !== "string" || !raw) return null;
+    const type = detectType({ url: raw });
+    if (!isDockAttachmentTarget(target, raw)) return null;
+    if (!isDockFileEligible({
+        type,
+        categoryEnabled: viewerEnabled(type),
+        decoderEnabled: decoderEnabledForFile(type, raw)
+    })) return null;
+    const url = type === "image" ? fullResImageUrl(raw) : raw;
+    let name = props?.attachment?.filename;
+    if (typeof name !== "string" || !name) {
+        try { name = decodeURIComponent(new URL(url, location.href).pathname.split("/").pop() || "file"); }
+        catch { name = "file"; }
+    }
+    const channelId = props?.message?.channel_id;
+    const messageId = props?.message?.id;
+    const sourceMessage = sourceMessageFromTarget(target);
+    return {
+        url,
+        name,
+        type,
+        sourceMessage: sourceMessage ?? (channelId && messageId
+            ? { channelId: String(channelId), messageId: String(messageId) }
+            : null),
+        sourceImageContext: type === "image" ? sourceImageContextFromTarget(target) : null
+    };
+}
+
 function addOpenInDockViewItem(children: any[], props: any): void {
+    const file = contextMenuFile(props);
     const url = contextMenuWebUrl(props);
-    if (!url) return;
+    if (!file && !url) return;
 
     const target = findGroupChildrenByChildId(["open-link", "copy-link", "copy-native-link"], children) ?? children;
-    if (target.some(item => item?.props?.id === "dockview-open-web-link")) return;
-    target.push(
-        React.createElement(Menu.MenuItem, {
+    if (file && !target.some(item => item?.props?.id === "dockview-open-file")) {
+        target.push(React.createElement(Menu.MenuItem, {
+            id: "dockview-open-file",
+            label: STRINGS.menu.openInDockView,
+            action: () => load(file)
+        }));
+    }
+    if (url && !target.some(item => item?.props?.id === "dockview-open-web-link")) {
+        target.push(React.createElement(Menu.MenuItem, {
             id: "dockview-open-web-link",
             label: STRINGS.menu.openInDockView,
             action: () => openWebTab(url)
-        })
-    );
+        }));
+    }
 }
 
 const dockViewPlugin = {
     name: "DockView",
-    description: "Click an attachment chip or inline image to render it in a right-docked, native-style panel: HTML artifacts, PDF, code, markdown, and images. F9 can switch its width or temporarily hide it.",
+    description: "Open supported attachments in a right-docked viewer with channel-bound tabs and F9 width presets.",
     authors: [{ name: "seonin", id: 0n }],
     target: "DESKTOP",
 
@@ -316,6 +448,13 @@ const dockViewPlugin = {
                     replace: "$1,$self.renderDockRail(this)"
                 },
                 {
+                    // The bridge moves the exact native header only after the companion
+                    // rail seam proves itself at runtime; every non-text surface passes
+                    // through untouched.
+                    match: /(\i\|\|\i\?null:this\.renderHeaderBar\(\))/,
+                    replace: "$self.captureUnifiedChannelHeader($1,this)"
+                },
+                {
                     // `renderHeaderToolbar()` returns Discord's toolbar container whose
                     // explicit child key "members" is the guild member-list toggle. Filter
                     // that one child only; every other toolbar action stays upstream.
@@ -328,8 +467,25 @@ const dockViewPlugin = {
                     // children close); the helper returns null only for guild channels.
                     match: /(renderFollowButton:this\.renderFollowButton\}\),\i\?.{0,400}:)(\(0,\i\.\i\)\((\i),\i\))(?=\]\},`header-)/,
                     replace: "$1$self.filterChannelHeaderSubtitle($2,$3)"
+                },
+                {
+                    // Search is the only native renderSidebar surface relocated by this
+                    // bridge. Members/profile remain governed by their existing capture
+                    // path; every non-search sidebar is returned untouched.
+                    match: /(this\.renderSidebar\(\))/,
+                    replace: "$self.captureNativeSearchResults($1,this)"
                 }
             ]
+        },
+        {
+            // Keep Discord's native Threads browser card, but route the selected row into
+            // DockView instead of replacing the primary chat route with the thread. The
+            // browser still owns loading, filtering, context menus, and its close action.
+            find: "Thread Browser Empty State",
+            replacement: {
+                match: /\(0,\i\.\i\)\((\i),!\i,\i\.\i\.BROWSER\)/,
+                replace: "$self.openThreadFromBrowser($1)"
+            }
         },
         {
             // Proven Members ListScroller module anchor. Keep this fail-closed: if the
@@ -358,6 +514,7 @@ const dockViewPlugin = {
     flux: {
         CHANNEL_SELECT({ channelId }: { channelId: string | null; }) {
             onChannelSelect(channelId ?? null);
+            reconcileScreenShareSelection();
         },
         THREAD_DELETE(payload: any) {
             onThreadDelete(payload);
@@ -400,7 +557,11 @@ const dockViewPlugin = {
     // reachable-from-$self seam.
     renderDockRail(channelView: any) {
         captureChannelView(channelView);
-        return renderDockRail();
+        return renderDockRail(channelView);
+    },
+
+    captureUnifiedChannelHeader(header: any, channelView: any) {
+        return captureUnifiedChannelHeader(header, channelView);
     },
 
     filterChannelHeaderToolbar(toolbar: any, channel: any) {
@@ -409,6 +570,17 @@ const dockViewPlugin = {
 
     filterChannelHeaderSubtitle(subtitle: any, channel: any) {
         return filterChannelHeaderSubtitle(subtitle, channel);
+    },
+
+    captureNativeSearchResults(sidebar: any, channelView: any) {
+        return captureNativeSearchResults(sidebar, channelView);
+    },
+
+    openThreadFromBrowser(channel: any) {
+        const threadId = typeof channel?.id === "string" ? channel.id : null;
+        if (!threadId) return;
+        const parentId = typeof channel?.parent_id === "string" ? channel.parent_id : null;
+        openThreadTab(threadId, parentId);
     },
 
     memberVirtualizerStats() {
@@ -432,23 +604,30 @@ const dockViewPlugin = {
         //     open actions and converts them to dock actions, so Discord never enters
         //     "sidebar open" state. Our own priming toggles pass through (self-flagged).
         startInterception();
+        startScreenShareAutoHide();
         // 2. restore the persisted expanded-width preset (async; applies on resolve).
         applyPersisted();
 
-        // 3. F9 uses the selected behavior: compact↔expanded (the backwards-compatible
-        //    default), or a session-only temporary hide that preserves every mounted tab.
-        //    Ignore key-repeat so holding the function key cannot flicker rapidly.
+        // 3. F9 cycles the fixed hidden step and every ordered non-zero preset. Explicit
+        //    content opens use revealDock() instead, restoring the last non-zero width.
         onKeyDown = (e: KeyboardEvent) => {
             if ((e.key !== "F9" && e.code !== "F9") || e.repeat) return;
             e.preventDefault();
-            if (settings.store.f9Behavior === "hide") {
+            if (isDockTemporarilyHidden()) {
+                selectDockWidthPreset(0);
+                revealDock();
+                applyHostWidth();
+                syncVisibleChatPortalsNow();
+                commitF9MemberColumnsBeforePaint();
+                return;
+            }
+            const next = getActiveDockPresetIndex() + 1;
+            if (next >= getDockWidthPresets().length) {
                 toggleDockTemporaryVisibility();
             } else {
-                // A stale hidden state can only arise if a setting is changed outside the
-                // General page. Fail visible before applying the width action.
-                revealDock();
-                toggleDockWidthMode();
+                selectDockWidthPreset(next);
                 applyHostWidth();
+                syncVisibleChatPortalsNow();
                 commitF9MemberColumnsBeforePaint();
             }
         };
@@ -459,6 +638,7 @@ const dockViewPlugin = {
         //    not silently overwrite the width F9 should restore when space returns.
         onResize = () => {
             applyHostWidth();
+            syncVisibleChatPortalsNow();
         };
         window.addEventListener("resize", onResize);
 
@@ -469,15 +649,23 @@ const dockViewPlugin = {
             const d = e?.data;
             if (!d || typeof d !== "object") return;
             if (typeof d.__dockViewOpenLink === "string") {
-                openExternalLink(d.__dockViewOpenLink);
+                const frame = liveIframeForSource(e.source);
+                const href = frame ? normalizeIframeLink(d.__dockViewOpenLink, frame) : null;
+                if (href) openExternalLink(href);
+                return;
+            }
+            if (d.__dockViewLinkContext) {
+                openIframeLinkContext(e.source, d.__dockViewLinkContext);
                 return;
             }
             // A markdown iframe just (re)loaded and asks for the current TOC state, so a
             // cache return / edit-back reopens the outline if it was left open.
             if (d.__dockViewMdTocReady) {
+                const frame = liveIframeForSource(e.source);
+                if (!frame) return;
                 const win = getActiveWindow();
                 if (win.content.type === "markdown" && markdownHasToc(win)) {
-                    try { (e.source as WindowProxy | null)?.postMessage({ __dockViewMdToc: mdState(win).tocOpen }, "*"); } catch { /* ignore */ }
+                    try { frame.contentWindow?.postMessage({ __dockViewMdToc: mdState(win).tocOpen }, "*"); } catch { /* ignore */ }
                 }
                 return;
             }
@@ -485,8 +673,10 @@ const dockViewPlugin = {
             // can't reach the clipboard itself, so it hands us the text and we copy it
             // (a real Discord origin), then ack back so the button shows "copied".
             if (d.__dockViewMdCopy && typeof d.__dockViewMdCopy.text === "string") {
+                const frame = liveIframeForSource(e.source);
+                if (!frame || getActiveWindow().content.type !== "markdown") return;
                 const { id, text } = d.__dockViewMdCopy;
-                const ack = () => { try { (e.source as WindowProxy | null)?.postMessage({ __dockViewMdCopied: id }, "*"); } catch { /* ignore */ } };
+                const ack = () => { try { frame.contentWindow?.postMessage({ __dockViewMdCopied: id }, "*"); } catch { /* ignore */ } };
                 try {
                     if (navigator.clipboard?.writeText) {
                         navigator.clipboard.writeText(text).then(ack, () => fallbackCopy(text, ack));
@@ -547,6 +737,7 @@ const dockViewPlugin = {
         // 1b. restore FluxDispatcher.dispatch to the exact original (the interception wrap),
         //     so a disable/enable cycle leaves Discord's dispatch untouched.
         stopInterception();
+        stopScreenShareAutoHide();
         // 2. tear down the host (heartbeat/observer/React unmount + triple sweep +
         //    hide-mark cleanup). Marks inactive first so no callback re-injects.
         stopHost();
@@ -563,6 +754,7 @@ const dockViewPlugin = {
         // Clear the context-tab per-channel flags + drop the captured slot component types
         // (a re-start re-primes/re-acquires them lazily).
         resetContextTab();
+        clearNativeSearchResults();
         invalidateSlotComponents();
         invalidateVoiceChatCapture();
         clearChannelView();

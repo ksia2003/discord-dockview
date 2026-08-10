@@ -109,7 +109,8 @@ function snapshot(vs: CsvViewState, entry: CacheEntry, ctx: ViewerContext): void
 function restore(vs: CsvViewState, entry: CacheEntry): void {
     if (!vs) return; // missing slice (init-order edge) — CsvBody back-fills on mount
     vs.mode = entry.view.csvMode ?? "grid";
-    // re-sniff the delimiter from the restored text so the grid parses identically.
+    // entry.url is the source descriptor, preserving the original filename
+    // extension even when the render surface came through a conversion.
     vs.delimiter = csvDelimiterFor(entry.name, entry.url, entry.code ?? "");
     // find never persists across files — clear the reused code find slice (restore
     // runs on the active window in showContent, so codeState() reaches the right one).

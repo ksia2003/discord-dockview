@@ -25,6 +25,7 @@
  */
 
 let renderer: (() => void) | null = null;
+const renderSubscribers = new Set<() => void>();
 
 /** Publish the panel's rerender callback (DockPanel mount). Pass null to clear
  *  it (unmount). Mirrors the old `forceRender = rerender` assignment with the
@@ -50,6 +51,13 @@ export function isRendererLive(): boolean {
  *  `forceRender?.()`), so engine code can call it unconditionally. */
 export function requestRender(): void {
     renderer?.();
+    for (const subscriber of renderSubscribers) subscriber();
+}
+
+/** Subscribe a lightweight companion React surface to the engine repaint signal. */
+export function subscribeRender(fn: () => void): () => void {
+    renderSubscribers.add(fn);
+    return () => renderSubscribers.delete(fn);
 }
 
 // --- live-controller slots --------------------------------------------------

@@ -29,7 +29,8 @@
  * only while token.isCurrent().
  */
 
-import { getCacheEntry } from "../../engine/cache";
+import { isCacheEntryLive } from "../../engine/cache";
+import { settleDetachedEntry } from "../../engine/cacheOwnership";
 import { extOf } from "../../engine/detectType";
 import { withLibLoading } from "../../engine/lazyLib";
 import { STRINGS } from "../../strings";
@@ -185,9 +186,18 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             // Only keep the object if `entry` is STILL the cache's live entry for its
             // key (a rapid re-click could have disposed + replaced it). Otherwise the
             // entry is detached and storing the object there would leak it — dispose.
-            const live = entry != null && getCacheEntry(entry.key) === entry;
-            if (live) { entry!.model3dObject = object; entry!.loading = false; entry!.error = null; }
-            else { disposeObject3D(object); }
+            const live = entry != null && isCacheEntryLive(entry);
+            if (!live) {
+                disposeObject3D(object);
+                if (entry) {
+                    entry.model3dObject = null;
+                    settleDetachedEntry(entry, "3D model load completed after its cache entry was detached");
+                }
+                return;
+            }
+            entry!.model3dObject = object;
+            entry!.loading = false;
+            entry!.error = null;
 
             if (!token.isCurrent()) return; // superseded — don't touch content
             ctx.content.model3d.object = object;

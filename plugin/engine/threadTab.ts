@@ -15,11 +15,10 @@
  * fetch/descriptor/cache), then reflects the layout + renders.
  */
 
-import { destroyThreadPortal } from "../viewers/thread/threadPortal";
+import { destroyThreadPortal, selectThreadPortal } from "../viewers/thread/threadPortal";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
 import { isContextActive, setContextActive } from "./contextTab";
-import { bump as bumpLoadToken } from "./loadToken";
 import {
     allThreadTabs, focusEmptyShell, getActiveWindow, getActiveWindowId, getWindowChannelId,
     openThreadWindow, reconcileActiveFromCache, removeWindowEverywhere, setActiveWindow, stripFor
@@ -67,6 +66,7 @@ export function openThreadTab(threadId: string, parentId?: string | null): void 
     // context tab) — but only when the parent is the channel we're actually looking at.
     const takesOverView = (parent ?? null) === getWindowChannelId();
     if (takesOverView) {
+        hostActions().deactivateSearchView();
         setContextActive(getWindowChannelId(), false);
     }
 
@@ -81,6 +81,7 @@ export function openThreadTab(threadId: string, parentId?: string | null): void 
     // When this thread takes over the view, hide the outgoing context body NOW so React's
     // (later) body swap can't flash the stale member list in the dock as the portal opens.
     if (takesOverView) host.hideContextBody();
+    if (takesOverView) selectThreadPortal(threadId);
     requestRender();
 }
 
@@ -127,16 +128,20 @@ export function closeThreadTabEverywhere(threadId: string): boolean {
     // closeTab's neighbour selection / empty-state fallback.
     const rest = stripFor(getWindowChannelId());
     if (rest.length === 0) {
-        bumpLoadToken();
         focusEmptyShell(getWindowChannelId());
         setContextActive(getWindowChannelId(), true);
+        selectThreadPortal(null);
     } else if (activeStrip) {
         const next = rest[activeIdx] ?? rest[Math.max(0, activeIdx - 1)];
         if (next) {
             setActiveWindow(next);
-            bumpLoadToken();
             reconcileActiveFromCache();
             getActiveWindow().content.seq += 1;
+            selectThreadPortal(
+                getActiveWindow().content.type === "thread"
+                    ? getActiveWindow().content.threadChannelId
+                    : null
+            );
         }
     }
     hostActions().applyOpenState();

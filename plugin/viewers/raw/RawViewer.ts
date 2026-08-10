@@ -44,8 +44,8 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
     convertAttachment("raw", reqUrl)
         .then(({ blobUrl }) => {
             if (entry) {
-                entry.type = "image";
-                entry.url = blobUrl;
+                entry.renderType = "image";
+                entry.renderUrl = blobUrl;
                 entry.loading = false;
                 entry.error = null;
             }
@@ -76,7 +76,7 @@ function restore(): void { /* nothing to restore */ }
 /** Revoke the blob: url this viewer created when the cache entry is evicted. Guarded on
  *  the blob: scheme so we only ever revoke urls WE created, never a CDN url. */
 function dispose(entry: CacheEntry): void {
-    const u = entry.url;
+    const u = entry.renderUrl;
     if (u && u.startsWith("blob:")) {
         try { URL.revokeObjectURL(u); } catch { /* already gone */ }
     }

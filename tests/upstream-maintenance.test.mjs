@@ -367,7 +367,8 @@ test("package, test, release, and maintenance paths preserve split runtime owner
     assert.match(releaseWorkflow, /static\/dockviewDist\/dockviewMain\.js/);
     assert.doesNotMatch(releaseWorkflow, /static\/vencordDist\/vencordDesktopMain\.js static\/vencordDist\/vencordDesktopPreload\.js/);
     assert.match(releaseWorkflow, /gh release create "\$TAG" --verify-tag --prerelease/);
-    assert.match(releaseWorkflow, /needs:\s*prepare-release/);
+    assert.match(releaseWorkflow, /needs:\s*\[prepare-release, test\]/);
+    assert.match(releaseWorkflow, /name: Run tests\s+run: pnpm test/);
     assert.match(releaseWorkflow, /fail-fast:\s*false/);
     assert.match(releaseWorkflow, /CSC_IDENTITY_AUTO_DISCOVERY=false/);
     assert.match(releaseWorkflow, /--config\.mac\.notarize=false/);

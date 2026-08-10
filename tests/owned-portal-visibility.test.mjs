@@ -54,11 +54,14 @@ test("thread and voice portals use the owned contract without an html visibility
     const thread = source("../plugin/viewers/thread/threadPortal.ts");
     const voice = source("../plugin/viewers/voice/voiceChatPortal.ts");
 
-    assert.match(css, /\[data-dockview-temporarily-hidden="true"\]\s*\{[^}]*display:\s*none !important;/s);
+    assert.match(css, /\[data-dockview-temporarily-hidden="true"\]\s*\{[^}]*visibility:\s*hidden !important;[^}]*pointer-events:\s*none !important;/s);
+    assert.doesNotMatch(css, /\[data-dockview-temporarily-hidden="true"\]\s*\{[^}]*display:\s*none/s);
     assert.doesNotMatch(css, /html:not\(\.dockview-open\) \.dockview-(?:thread|voice-chat)-portal/);
     assert.match(mount, /setOwnedPortalsTemporarilyHidden\(temporarilyHidden\)/);
     assert.match(thread, /registerOwnedPortal\(node\)/);
     assert.match(thread, /unregisterOwnedPortal\(node\)/);
+    assert.match(thread, /node\.hasAttribute\(OWNED_PORTAL_HIDDEN_ATTRIBUTE\)/);
     assert.match(voice, /registerOwnedPortal\(node\)/);
     assert.match(voice, /unregisterOwnedPortal\(node\)/);
+    assert.match(voice, /node\.hasAttribute\(OWNED_PORTAL_HIDDEN_ATTRIBUTE\)/);
 });

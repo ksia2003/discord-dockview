@@ -17,6 +17,7 @@
  */
 
 import { escapeHtml } from "./html";
+import { ensureIframeLinkBridge } from "./iframeLinkBridge";
 import type { PanelContent } from "./types";
 
 export { escapeHtml };
@@ -47,6 +48,7 @@ export function injectNonce(html: string, nonce: string): string {
  *  viewers — the html viewer hands its content in). */
 export function setArtifactHtml(content: PanelContent, html: string): void {
     content.html = html;
+    const bridged = ensureIframeLinkBridge(html);
     const nonce = pageNonce();
-    content.frameHtml = nonce ? injectNonce(html, nonce) : html;
+    content.frameHtml = nonce ? injectNonce(bridged, nonce) : bridged;
 }

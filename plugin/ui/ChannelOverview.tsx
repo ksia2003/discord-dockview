@@ -2,13 +2,13 @@
  * Guild-channel identity for the permanent CHANNEL tab.
  *
  * This is deliberately not a DockView-designed card or action dashboard. It follows the
- * grammar of Discord's CHANNEL HEADER: a plain hash + title line, muted topic copy, a
- * separator, and the native overflow icon treatment. It does NOT impersonate a member row
- * (no fake avatar/status slot or member hover surface).
+ * grammar of Discord's CHANNEL HEADER: its exact native title and toolbar, muted topic
+ * copy, and a separator. It does NOT impersonate a member row (no fake avatar/status slot
+ * or member hover surface).
  *
- * Clicking the native-looking overflow control (or right-clicking the row) delegates to
- * Channel.handleContextMenu. Mute, notifications, copy link, edit, and every permission-
- * sensitive action therefore remain Discord's own localized menu and behaviour.
+ * The toolbar remains owned by Discord's original header React tree and is portaled into
+ * this detached root, so its local popover state and permission-aware behavior survive.
+ * The overflow fallback and row right-click delegate to Channel.handleContextMenu.
  */
 
 import { findCssClasses } from "@vencord/types/webpack";
@@ -19,6 +19,9 @@ import {
 import {
     getNativeChannelHeaderSubtitle, openNativeChannelMenu
 } from "../host/channelView";
+import {
+    bindUnifiedChannelToolbarTarget, getUnifiedChannelHeaderTitle
+} from "../host/unifiedHeader";
 
 type ClassMap = Record<string, string>;
 
@@ -64,12 +67,22 @@ function nativeTopicBoundary(): any {
 }
 
 function openMenu(event: any, channelId: string): void {
+    if (!openNativeChannelMenu(event, channelId)) return;
     event?.preventDefault?.();
     event?.stopPropagation?.();
-    openNativeChannelMenu(event, channelId);
 }
 
 export function ChannelOverview({ channelId }: { channelId: string; }) {
+    const { useCallback, useRef } = React;
+    const toolbarElement = useRef<HTMLElement | null>(null);
+    const bindToolbar = useCallback(
+        (element: HTMLElement | null) => {
+            const previous = toolbarElement.current;
+            toolbarElement.current = element;
+            bindUnifiedChannelToolbarTarget(channelId, element, previous);
+        },
+        [channelId]
+    );
     const channel = useStateFromStores(
         [ChannelStore],
         () => ChannelStore.getChannel(channelId),
@@ -92,6 +105,7 @@ export function ChannelOverview({ channelId }: { channelId: string; }) {
     const nativeTopic = topic != null
         ? getNativeChannelHeaderSubtitle(channel.id)
         : null;
+    const nativeTitle = getUnifiedChannelHeaderTitle(channel.id);
     const topicContent = nativeTopic != null
         ? React.createElement(
             nativeTopicBoundary(),
@@ -110,40 +124,55 @@ export function ChannelOverview({ channelId }: { channelId: string; }) {
         React.createElement(
             "div",
             { className: "dockview-channel-heading" },
-            React.createElement(
-                "div",
-                { className: `${CLS.channelIcon} ${CLS.iconWrapper} dockview-channel-hash`, "aria-hidden": true },
-                "#"
-            ),
-            React.createElement(
-                "div",
-                { className: `${CLS.titleWrapper} dockview-channel-title-wrap` },
-                React.createElement(
-                    "h2",
-                    { className: `${CLS.title} dockview-channel-title` },
-                    channel.name
+            nativeTitle != null
+                ? React.createElement(
+                    "div",
+                    { className: "dockview-channel-native-title" },
+                    nativeTitle
                 )
-            ),
-            React.createElement(
-                Clickable,
-                {
-                    className: `${CLS.iconWrapper} ${CLS.iconClickable} dockview-channel-more`,
-                    "aria-label": channel.name,
-                    "aria-haspopup": "menu",
-                    onClick: (event: any) => openMenu(event, channel.id)
-                },
-                React.createElement(
-                    "svg",
+                : [
+                    React.createElement(
+                        "div",
+                        { key: "hash", className: `${CLS.channelIcon} ${CLS.iconWrapper} dockview-channel-hash`, "aria-hidden": true },
+                        "#"
+                    ),
+                    React.createElement(
+                        "div",
+                        { key: "title", className: `${CLS.titleWrapper} dockview-channel-title-wrap` },
+                        React.createElement(
+                            "h2",
+                            { className: `${CLS.title} dockview-channel-title` },
+                            channel.name
+                        )
+                    )
+                ],
+            React.createElement("div", {
+                className: "dockview-channel-native-toolbar",
+                "data-channel-id": channel.id,
+                ref: bindToolbar
+            }),
+            nativeTitle == null
+                ? React.createElement(
+                    Clickable,
                     {
-                        className: CLS.icon,
-                        width: 20,
-                        height: 20,
-                        viewBox: "0 0 24 24",
-                        "aria-hidden": true
+                        className: `${CLS.iconWrapper} ${CLS.iconClickable} dockview-channel-more`,
+                        "aria-label": channel.name,
+                        "aria-haspopup": "menu",
+                        onClick: (event: any) => openMenu(event, channel.id)
                     },
-                    React.createElement("path", { fill: "currentColor", d: MORE_ICON })
+                    React.createElement(
+                        "svg",
+                        {
+                            className: CLS.icon,
+                            width: 20,
+                            height: 20,
+                            viewBox: "0 0 24 24",
+                            "aria-hidden": true
+                        },
+                        React.createElement("path", { fill: "currentColor", d: MORE_ICON })
+                    )
                 )
-            )
+                : null
         ),
         topicContent != null
             ? React.createElement(

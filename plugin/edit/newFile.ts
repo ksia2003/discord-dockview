@@ -19,12 +19,14 @@ import { getCurrentChannel } from "@vencord/types/utils";
 import { ChannelStore, SelectedChannelStore } from "@vencord/types/webpack/common";
 
 import { requestRender } from "../engine/forceRender";
+import { hostActions } from "../engine/hostBridge";
 import { setContextActive } from "../engine/contextTab";
 import { bump } from "../engine/loadToken";
 import { openPanelChrome } from "../engine/load";
 import { setPendingScrollTop, snapshotActiveView } from "../engine/viewState";
 import { getActiveWindow, getWindowChannelId, openTab } from "../engine/window";
 import { STRINGS } from "../strings";
+import { selectThreadPortal } from "../viewers/thread/threadPortal";
 
 /** Resolve the channel a brand-new file should attach to: the menu's channel (if
  *  present), else the channel currently being viewed. */
@@ -44,6 +46,8 @@ export function onNewFile(channel: any | null): void {
     // A new file OPENS A NEW channel-owned tab in the current channel. It has no url so
     // it never dedups (openTab appends a fresh tab) and never clobbers a pinned tab.
     openTab(null, "markdown");
+    selectThreadPortal(null);
+    hostActions().deactivateSearchView();
     // The new file is the active view — yield the context tab for this channel.
     setContextActive(getWindowChannelId(), false);
     const win = getActiveWindow();
@@ -53,7 +57,7 @@ export function onNewFile(channel: any | null): void {
     // the body is going empty — drop any image lightbox on this window.
     const img = win.viewStates["image"] as { fullscreen?: boolean } | undefined;
     if (img) img.fullscreen = false;
-    bump(); // supersede any in-flight loader
+    bump(win); // supersede any in-flight loader for this window
 
     win.isNewFile = true;
     win.newFileChannel = resolveTargetChannel(channel);
@@ -73,8 +77,9 @@ export function onNewFile(channel: any | null): void {
     win.content.binary = false;
     win.content.seq += 1;
     win.activeCacheKey = null;
+    win.activeCacheEntry = null;
     win.activeDescriptor = null;
-    setPendingScrollTop(null);
+    setPendingScrollTop(null, win);
     // open directly in edit mode (the decision: default open = view, but a NEW file =
     // edit) with an empty buffer.
     win.editView.mode = "edit";

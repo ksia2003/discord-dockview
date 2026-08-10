@@ -211,13 +211,27 @@ try {
         console.log(`✔ Vencord ref ${VENCORD_REF} resolved to pinned commit ${actualCommit}`);
     }
 
+    const commitTimestampSeconds = execFileSync("git", ["show", "-s", "--format=%ct", "HEAD"], {
+        cwd: vencordDir,
+        encoding: "utf-8"
+    }).trim();
+    if (!/^\d+$/.test(commitTimestampSeconds)) {
+        throw new Error(`Vencord commit timestamp is invalid: ${commitTimestampSeconds}`);
+    }
+    const sourceDateEpoch = String(Number(commitTimestampSeconds) * 1000);
+    if (!Number.isSafeInteger(Number(sourceDateEpoch)) || Number(sourceDateEpoch) <= 0) {
+        throw new Error(`Vencord commit timestamp is outside the supported range: ${commitTimestampSeconds}`);
+    }
+
     // 2. Install and build the pinned official source without copying or patching
     //    DockView into the checkout.
     run(PNPM, ["install", "--frozen-lockfile"], vencordDir);
     // Vesktop installs these files without a Vencord source checkout. The
     // standalone build uses Vencord's HTTP updater; the regular build expects
     // to run git fetch/pull from __dirname and cannot update a packaged app.
-    run(PNPM, ["buildStandalone"], vencordDir);
+    // Vencord embeds BUILD_TIMESTAMP in its renderer. Pin it to the source
+    // commit time so two builds of the same reviewed ref produce identical bytes.
+    run(PNPM, ["buildStandalone"], vencordDir, { SOURCE_DATE_EPOCH: sourceDateEpoch });
 
     rmSync(VENCORD_OUT_DIR, { recursive: true, force: true });
     mkdirSync(VENCORD_OUT_DIR, { recursive: true });

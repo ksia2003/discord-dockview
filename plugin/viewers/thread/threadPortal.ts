@@ -28,14 +28,22 @@
 import { createRoot, React } from "@vencord/types/webpack/common";
 import type { Root } from "react-dom/client";
 
-import { liveHost } from "../../host/mount";
-import { registerOwnedPortal, unregisterOwnedPortal } from "../../host/ownedPortalVisibility";
+import { selectDockHost } from "../../host/hostSelection";
+import {
+    OWNED_PORTAL_HIDDEN_ATTRIBUTE, registerOwnedPortal, unregisterOwnedPortal
+} from "../../host/ownedPortalVisibility";
 import { buildThreadProps, getChatType, getProviderStack, loadThreadMessages } from "../../host/slotComponents";
+import {
+    captureChatScrollAnchor, restoreChatScrollAnchorAcrossFrames,
+    restoreRetainedChatScrollAnchor, retainChatScrollAnchor
+} from "../chatScrollAnchor";
 
 interface Portal {
     node: HTMLElement;
     root: Root;
     threadId: string;
+    rendered: boolean;
+    renderRetryRaf: number;
 }
 
 // One portal per thread id. Survives DockPanel repaints (it's not in DockPanel's tree).
@@ -53,22 +61,45 @@ const OVERLAY_CLASS = "dockview-thread-portal";
  *  first in document order (possibly the stale one); the live host is the dock the user
  *  actually sees. Fall back to the id lookup while unbound. */
 function dockBodyEl(): HTMLElement | null {
-    const bound = liveHost();
-    const dock = (bound && bound.isConnected) ? bound : document.getElementById("dockview-root");
+    const dock = selectDockHost();
     return (dock?.querySelector(".dockview-body") as HTMLElement) || null;
 }
 
-/** Position `node` as a fixed overlay exactly over the dock body's current rect. Hidden
- *  (display:none) when the dock body isn't present / has no area. */
+/** Position `node` as a fixed overlay exactly over the dock body's current rect. While F9
+ *  temporarily hides DockView, retain the last non-zero box under visibility:hidden so
+ *  Discord's managed scroller never observes a 0x0 viewport and discards its anchor. In
+ *  every other missing-target case the portal is genuinely inactive and may collapse. */
 function positionOver(node: HTMLElement, body: HTMLElement | null): void {
-    if (!body) { node.style.display = "none"; return; }
+    const preserveHiddenBox = node.hasAttribute(OWNED_PORTAL_HIDDEN_ATTRIBUTE);
+    if (!body) {
+        if (!preserveHiddenBox) {
+            retainChatScrollAnchor(node);
+            node.style.display = "none";
+        }
+        return;
+    }
     const r = body.getBoundingClientRect();
-    if (r.width <= 0 || r.height <= 0) { node.style.display = "none"; return; }
+    if (r.width <= 0 || r.height <= 0) {
+        if (!preserveHiddenBox) {
+            retainChatScrollAnchor(node);
+            node.style.display = "none";
+        }
+        return;
+    }
+    const width = Math.round(r.width);
+    const height = Math.round(r.height);
+    const priorWidth = parseFloat(node.style.width) || 0;
+    const priorHeight = parseFloat(node.style.height) || 0;
+    const resizing = node.style.display !== "none"
+        && (priorWidth !== width || priorHeight !== height);
+    const resizeAnchor = resizing ? captureChatScrollAnchor(node) : null;
     node.style.display = "flex";
     node.style.left = `${Math.round(r.left)}px`;
     node.style.top = `${Math.round(r.top)}px`;
-    node.style.width = `${Math.round(r.width)}px`;
-    node.style.height = `${Math.round(r.height)}px`;
+    node.style.width = `${width}px`;
+    node.style.height = `${height}px`;
+    if (resizeAnchor) restoreChatScrollAnchorAcrossFrames(node, resizeAnchor);
+    else restoreRetainedChatScrollAnchor(node);
 }
 
 /** The rAF loop: keep the visible portal aligned to the live dock body rect. Self-stops
@@ -76,9 +107,18 @@ function positionOver(node: HTMLElement, body: HTMLElement | null): void {
 function syncLoop(): void {
     syncRaf = 0;
     if (!visibleThread) return;
+    syncVisibleThreadPortalNow();
+    syncRaf = (window.requestAnimationFrame || ((cb: any) => setTimeout(cb, 16)))(syncLoop);
+}
+
+/** Synchronise in the caller's current layout turn. The rAF loop is the ordinary
+ * backstop, but explicit geometry changes (F9 presets and window resize) must call this
+ * after updating the host so the browser can never paint one frame with the old portal
+ * rect over the new Dock body. */
+export function syncVisibleThreadPortalNow(): void {
+    if (!visibleThread) return;
     const p = portals.get(visibleThread);
     if (p) positionOver(p.node, dockBodyEl());
-    syncRaf = (window.requestAnimationFrame || ((cb: any) => setTimeout(cb, 16)))(syncLoop);
 }
 
 function startSync(): void {
@@ -117,24 +157,39 @@ function portalBoundary(): any {
  *  warns); with the app's live values they mount into the app's own layer containers,
  *  which sit far above this overlay. An error boundary guards the wrapped tree: a broken
  *  provider entry degrades to the bare chat, never a blank portal. */
-function renderPortal(p: Portal): void {
+function renderPortal(p: Portal): boolean {
     try {
         const type = getChatType();
         const props = type ? buildThreadProps(p.threadId) : null;
-        let tree: any;
-        if (type && props) {
-            const bare = React.createElement(type, props);
-            tree = bare;
-            const stack = getProviderStack();
-            // Nearest-first iteration wraps successively, leaving the root-most provider
-            // outermost — the same nesting order the app itself renders.
-            if (stack) {
-                for (const p2 of stack) tree = React.createElement(p2.type, { value: p2.value }, tree);
-                tree = React.createElement(portalBoundary(), { fallback: bare }, tree);
-            }
+        if (!type || !props) return false;
+        const bare = React.createElement(type, props);
+        let tree: any = bare;
+        const stack = getProviderStack();
+        // Nearest-first iteration wraps successively, leaving the root-most provider
+        // outermost — the same nesting order the app itself renders.
+        if (stack) {
+            for (const p2 of stack) tree = React.createElement(p2.type, { value: p2.value }, tree);
+            tree = React.createElement(portalBoundary(), { fallback: bare }, tree);
         }
-        p.root.render(React.createElement("div", { className: "dockview-thread-portal-inner" }, tree ?? undefined));
-    } catch { /* the chat failed to render into its isolated root — the dock is unaffected */ }
+        p.root.render(React.createElement("div", { className: "dockview-thread-portal-inner" }, tree));
+        return true;
+    } catch { return false; /* the isolated root failure cannot affect the dock */ }
+}
+
+/** A thread can be opened during Discord's channel-view bootstrap, before captureChat has
+ * published the native type. Keep one bounded retry loop per blank portal; once the first
+ * real tree lands, the loop stops permanently and later surface switches preserve it. */
+function scheduleInitialRender(p: Portal): void {
+    if (p.rendered || p.renderRetryRaf) return;
+    const raf = window.requestAnimationFrame || ((cb: FrameRequestCallback) => window.setTimeout(cb, 16));
+    let tries = 0;
+    const tick = () => {
+        p.renderRetryRaf = 0;
+        if (portals.get(p.threadId) !== p || p.rendered) return;
+        p.rendered = renderPortal(p);
+        if (!p.rendered && ++tries < 180) p.renderRetryRaf = raf(tick);
+    };
+    p.renderRetryRaf = raf(tick);
 }
 
 /** Ensure a portal exists for `threadId` (create its body node + isolated root on first
@@ -151,7 +206,7 @@ export function ensureThreadPortal(threadId: string): void {
             node.style.display = "none";
             document.body.appendChild(node);
             registerOwnedPortal(node);
-            p = { node, root: createRoot(node), threadId };
+            p = { node, root: createRoot(node), threadId, rendered: false, renderRetryRaf: 0 };
             portals.set(threadId, p);
         } catch {
             if (node) {
@@ -161,14 +216,21 @@ export function ensureThreadPortal(threadId: string): void {
             return; /* couldn't create the isolated root — dock stays intact */
         }
     }
-    renderPortal(p);
+    // A live portal owns Discord's composer/virtual-scroller state. Render only until its
+    // first real tree lands; tab/Search returns must merely reveal that mounted tree.
+    if (!p.rendered) {
+        p.rendered = renderPortal(p);
+        if (!p.rendered) scheduleInitialRender(p);
+    }
 }
 
 /** Re-render the ACTIVE portal's chat (e.g. after a late chat-type capture). No-op if the
  *  thread has no portal. */
 export function refreshThreadPortal(threadId: string): void {
     const p = portals.get(threadId);
-    if (p) renderPortal(p);
+    if (!p) return;
+    p.rendered = renderPortal(p) || p.rendered;
+    if (!p.rendered) scheduleInitialRender(p);
 }
 
 // Claim counter for show/release pairing. TWO ThreadBody instances can briefly coexist
@@ -199,7 +261,10 @@ export function showThreadPortal(threadId: string): number {
     visibleThread = threadId;
     for (const [id, p] of portals) {
         if (id === threadId) positionOver(p.node, dockBodyEl());
-        else p.node.style.display = "none";
+        else {
+            retainChatScrollAnchor(p.node);
+            p.node.style.display = "none";
+        }
     }
     startSync();
     return ++showSeq;
@@ -219,8 +284,19 @@ export function releaseThreadPortals(claim: number): void {
 export function hideThreadPortals(): void {
     dlog("hide-all");
     visibleThread = null;
-    for (const p of portals.values()) p.node.style.display = "none";
+    for (const p of portals.values()) {
+        retainChatScrollAnchor(p.node);
+        p.node.style.display = "none";
+    }
     stopSync();
+}
+
+/** Imperative tab-transition seam. The engine calls this before its React repaint so a
+ * thread never lingers over a file and a returning thread is already visible while the
+ * new ThreadBody commit catches up. ThreadBody then takes the normal claimed ownership. */
+export function selectThreadPortal(threadId: string | null): void {
+    if (threadId) showThreadPortal(threadId);
+    else hideThreadPortals();
 }
 
 /** Tear down `threadId`'s portal entirely (its tab was closed): unmount the root + remove
@@ -232,6 +308,7 @@ export function destroyThreadPortal(threadId: string): void {
     portals.delete(threadId);
     if (visibleThread === threadId) { visibleThread = null; stopSync(); }
     const { root, node } = p;
+    if (p.renderRetryRaf) (window.cancelAnimationFrame || window.clearTimeout)(p.renderRetryRaf);
     unregisterOwnedPortal(node);
     // Unmount async — React forbids a synchronous unmount while a parent tree renders.
     Promise.resolve().then(() => { try { root.unmount(); } catch { /* ignore */ } try { node.remove(); } catch { /* ignore */ } });

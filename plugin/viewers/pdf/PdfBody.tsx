@@ -571,7 +571,7 @@ export function PdfBody() {
             // otherwise honour any saved page (e.g. zoom re-layout keeps the page
             // the user was on). Then raster the landing band immediately so the
             // first visible page paints without waiting on the observer.
-            if (getPendingScrollTop() != null) {
+            if (getPendingScrollTop(win) != null) {
                 consumePendingScroll(win);
             } else if (pv.page > 1) {
                 const p = built[Math.min(built.length, pv.page) - 1];

@@ -21,7 +21,8 @@
  * `import … from "xlsx"` here or in XlsxBody.
  */
 
-import { getCacheEntry } from "../../engine/cache";
+import { isCacheEntryLive } from "../../engine/cache";
+import { settleDetachedEntry } from "../../engine/cacheOwnership";
 import { loadLib, withLibLoading } from "../../engine/lazyLib";
 import { STRINGS } from "../../strings";
 import type {
@@ -111,12 +112,17 @@ function load(opts: LoadOpts, token: LoadToken, entry: CacheEntry | null, ctx: V
             // Only keep the workbook on `entry` if it is STILL the cache's live entry
             // for its key (a rapid re-click could have replaced it). Plain text, no
             // teardown — no leak to guard against.
-            const live = entry != null && getCacheEntry(entry.key) === entry;
-            if (live) {
-                entry!.xlsxWorkbook = { names: book.names, csv: book.csv, formulas: book.formulas, charts };
-                entry!.loading = false;
-                entry!.error = null;
+            const live = entry != null && isCacheEntryLive(entry);
+            if (!live) {
+                if (entry) {
+                    entry.xlsxWorkbook = null;
+                    settleDetachedEntry(entry, "Spreadsheet load completed after its cache entry was detached");
+                }
+                return;
             }
+            entry!.xlsxWorkbook = { names: book.names, csv: book.csv, formulas: book.formulas, charts };
+            entry!.loading = false;
+            entry!.error = null;
             if (!token.isCurrent()) return; // superseded — don't touch content
             ctx.content.xlsx.names = book.names;
             ctx.content.xlsx.csv = book.csv;
@@ -188,7 +194,7 @@ function extractWorkbookCharts(
             if (!anyChart) return;
 
             // Persist on the cache entry (if still live) so a re-open is instant.
-            if (entry != null && getCacheEntry(entry.key) === entry && entry.xlsxWorkbook) {
+            if (entry != null && isCacheEntryLive(entry) && entry.xlsxWorkbook) {
                 entry.xlsxWorkbook.charts = charts;
             }
             if (!token.isCurrent()) return; // superseded — don't touch content

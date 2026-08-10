@@ -29,7 +29,9 @@
  */
 
 import { CHUNK_BY_KEY } from "./chunkRegistry";
+import { decoderKeyForFile } from "./dockEligibility";
 import { settings } from "../settings";
+import type { ContentType } from "./types";
 
 /** The three loading modes. */
 export type DecoderMode = "ondemand" | "preload" | "disabled";
@@ -91,6 +93,14 @@ export function modeFor(chunkKey: string): DecoderMode {
     } catch {
         return "ondemand";
     }
+}
+
+/** Whether the optional heavy decoder for a routed file is available right now. The
+ * extension/type mapping lives in dockEligibility.ts so chat clicks and context menus
+ * apply exactly the same disabled-mode gate. */
+export function decoderEnabledForFile(type: ContentType, urlOrName?: string | null): boolean {
+    const key = decoderKeyForFile(type, urlOrName);
+    return key == null || modeFor(key) !== "disabled";
 }
 
 /** A tagged error thrown by the lazy loader when a decoder is set to "disabled". The

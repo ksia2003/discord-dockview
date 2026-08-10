@@ -1,33 +1,45 @@
 /*
- * The per-file content LRU cache.
+ * The payload cache + per-window state overlays.
  *
- * Keyed by the file's load key (url|type). An entry holds the already-resolved
- * content (so a re-open needs no fetch) PLUS the saved view-state (scroll, zoom,
- * fit, page, image pan) so the file reopens EXACTLY where the user left it. The
- * currently-displayed file's entry is the one a window's `content` mirrors; we
- * snapshot its live view-state into the cache on every switch-away. Capacity is
- * small (most-recent files); eviction delegates resource release to the owning
- * viewer (only PDF actually needs it). Inline-html artifacts (no url) are never
- * cached (no stable key).
- *
- * Layering: cache is below window.ts (which imports it). To read the live window
- * set without a circular import, window.ts registers a tiny accessor at init via
- * registerWindowRegistry; the view-state restore that mountFromCache performs is
- * likewise an injected hook (engine/viewState fills it), so cache stays a low
- * dependency.
+ * A resolved payload (decoded PDF/model/workbook or pristine source text) is
+ * shared by identity. Mutable view/edit state and derived edited HTML are kept
+ * on the DockWindow that owns the view, so two windows can show the same file
+ * without cross-contamination. `activeCacheEntry` is an exact payload pointer;
+ * the key alone is insufficient when a retry replaces a shared entry while
+ * another window still renders the older payload.
  */
 
 import { getViewer } from "../viewers/registry";
+import { contentIdentity } from "./contentIdentity";
+import {
+    collectRetiredEntries as collectRetired,
+    moveToShutdown,
+    replaceCacheEntry,
+    trackLoading,
+    touchCurrentCacheEntry
+} from "./cacheOwnership";
+import {
+    getWindowCacheState,
+    windowCacheEntry
+} from "./cacheState";
 import type { CacheEntry, ContentType, DockWindow } from "./types";
+
+export {
+    getWindowCacheState, setRenderPayload, updateSourceDescriptor, windowCacheEntry
+} from "./cacheState";
 
 const CONTENT_CACHE_MAX = 3;
 
 const contentCache = new Map<string, CacheEntry>();
+const retiredCacheEntries = new Set<CacheEntry>();
+const shutdownCacheEntries = new Set<CacheEntry>();
+const disposedCacheEntries = new WeakSet<CacheEntry>();
 
 // --- injected window access (set by window.ts at init, breaks the cycle) -----
 interface WindowRegistry {
     getWindows(): DockWindow[];
     getActiveWindow(): DockWindow;
+    getAllWindows?(): DockWindow[];
 }
 let windowRegistry: WindowRegistry | null = null;
 export function registerWindowRegistry(reg: WindowRegistry): void {
@@ -35,147 +47,184 @@ export function registerWindowRegistry(reg: WindowRegistry): void {
 }
 
 // --- injected view-state restore (set by engine/viewState) -------------------
-// mountFromCache restores the content payload here, then applies the cached
-// view-state through this hook so the cache layer never imports the viewState
-// module (which itself reads the cache).
 let viewRestore: ((win: DockWindow, e: CacheEntry) => void) | null = null;
 export function registerViewRestore(fn: (win: DockWindow, e: CacheEntry) => void): void {
     viewRestore = fn;
 }
 
-/** The cache key for a file: its url + content type (type disambiguates e.g. a
- *  .svg opened as image vs code, though in practice url is unique enough). */
+/** The cache key shared with window.ts tab deduplication. */
 export function cacheKeyFor(url: string | null, type: ContentType): string | null {
-    return url ? `${type}|${url}` : null;
+    return contentIdentity(url, type);
 }
 
-/** Look up an entry by key (null key = miss). */
+/** Look up the current payload entry by key (null key = miss). */
 export function getCacheEntry(key: string | null): CacheEntry | undefined {
     return key == null ? undefined : contentCache.get(key);
 }
 
-/** Insert a fresh entry under its key (used by showContent when a load begins). */
+/** Return the exact payload entry currently owned by a window. */
+export function getActiveCacheEntry(win: DockWindow): CacheEntry | undefined {
+    if (win.activeCacheEntry?.key === win.activeCacheKey) return win.activeCacheEntry;
+    return getCacheEntry(win.activeCacheKey);
+}
+
+/** Set both exact ownership fields together; the pointer is authoritative. */
+export function activateCacheEntry(win: DockWindow, entry: CacheEntry): void {
+    win.activeCacheKey = entry.key;
+    win.activeCacheEntry = entry;
+}
+
+/** A load may replace the current entry while another window still owns the old
+ * payload. This predicate keeps resource-bearing stale entries alive until their
+ * last window releases them. */
+export function isCacheEntryLive(entry: CacheEntry): boolean {
+    return liveCacheEntries().has(entry);
+}
+
+/** Insert a fresh entry. Replaced entries become retired payloads rather than being
+ * disposed immediately: another DockWindow may still hold their live PDF/model/blob. */
 export function putCacheEntry(entry: CacheEntry): void {
-    contentCache.set(entry.key, entry);
+    trackLoading(entry, collectRetiredEntries);
+    replaceCacheEntry(contentCache, retiredCacheEntries, entry);
+    collectRetiredEntries();
 }
 
-/** Drop an entry by key, disposing its resources. Used to clear a stale/errored
- *  entry before a re-fetch under the same key. */
+/** Drop the current entry, retaining it until no live window owns its payload. */
 export function dropCacheEntry(key: string): void {
-    const e = contentCache.get(key);
-    if (!e) return;
+    const entry = contentCache.get(key);
+    if (!entry) return;
     contentCache.delete(key);
-    disposeCacheEntry(e);
+    retiredCacheEntries.add(entry);
+    collectRetiredEntries();
 }
 
-/** Destroy/release everything an evicted entry owns. The big resource is a pdf.js
- *  document (worker-side page caches); the PDF viewer's dispose() releases it.
- *  We do NOT revoke the entry's url — the plugin never creates object urls (it
- *  loads CDN http urls + the <img>/iframe stream them), so the url is owned by
- *  the caller and may be reused. */
-export function disposeCacheEntry(e: CacheEntry): void {
-    // The concrete release lives in the owning viewer (only pdf needs it); until
-    // that viewer is registered this is a no-op, which is correct for the engine.
-    getViewer(e.type)?.dispose?.(e);
+/** Destroy/release everything an entry owns. Source and render viewers are both
+ * consulted for conversion entries (e.g. postscript→pdf), while same-type viewers
+ * are invoked only once. */
+export function disposeCacheEntry(entry: CacheEntry): void {
+    if (disposedCacheEntries.has(entry)) return;
+    disposedCacheEntries.add(entry);
+    const sourceViewer = getViewer(entry.sourceType ?? entry.type);
+    const renderViewer = getViewer(entry.renderType ?? entry.type);
+    try { sourceViewer?.dispose?.(entry); } catch { /* disposal is best-effort */ }
+    if (renderViewer && renderViewer !== sourceViewer) {
+        try { renderViewer.dispose?.(entry); } catch { /* disposal is best-effort */ }
+    }
 }
 
-/** The set of cache keys referenced by ANY live window (pinned tabs + transient).
- *  Every one of these MUST be non-evictable: each window's `content` still points
- *  at its entry's payloads (notably a live pdf.js doc), so evicting one would
- *  destroy a doc a hidden-but-live tab is still rendering. With several windows
- *  the active key alone is not enough — protect them all. */
+function allWindows(): DockWindow[] {
+    return windowRegistry?.getAllWindows?.() ?? windowRegistry?.getWindows() ?? [];
+}
+
+/** Exact payload pointers referenced by live tabs. */
+export function liveCacheEntries(): Set<CacheEntry> {
+    const entries = new Set<CacheEntry>();
+    for (const win of allWindows()) {
+        const entry = getActiveCacheEntry(win);
+        if (entry) entries.add(entry);
+    }
+    for (const entry of contentCache.values()) if (entry.loading) entries.add(entry);
+    for (const entry of retiredCacheEntries) if (entry.loading) entries.add(entry);
+    return entries;
+}
+
+/** The set of cache identities referenced by any live window. Kept as a public
+ * contract for diagnostics and the LRU floor; resource eviction uses exact entries. */
 export function liveCacheKeys(): Set<string> {
     const keys = new Set<string>();
-    const windows = windowRegistry?.getWindows() ?? [];
-    for (const w of windows) {
-        if (w.activeCacheKey != null) keys.add(w.activeCacheKey);
-    }
+    for (const entry of liveCacheEntries()) keys.add(entry.key);
     return keys;
 }
 
+export function collectRetiredEntries(): void {
+    const live = liveCacheEntries();
+    collectRetired(retiredCacheEntries, live, disposeCacheEntry);
+    const shutdownPending = new Set<CacheEntry>([...shutdownCacheEntries].filter(entry => entry.loading));
+    collectRetired(shutdownCacheEntries, shutdownPending, disposeCacheEntry);
+}
+
 /** Insert/refresh an entry as most-recently-used and evict past capacity. Any
- *  entry referenced by a LIVE window (pinned or transient) is never evicted — its
- *  pdf doc is in use by that window's content, even when the tab isn't visible. */
+ * exact entry referenced by a live window (pinned or transient) is never evicted. */
 export function cacheTouch(entry: CacheEntry): void {
-    // re-insert at the end (Map preserves insertion order = LRU order).
-    contentCache.delete(entry.key);
-    contentCache.set(entry.key, entry);
-    // The cache must hold at least every live window's entry; if more windows are
-    // live than CONTENT_CACHE_MAX, the live floor wins (never evict a live entry).
-    const live = liveCacheKeys();
+    // A stale window may mount an exact retired entry after another window's retry
+    // replaced the key. Reordering must not resurrect that retired payload globally.
+    if (!touchCurrentCacheEntry(contentCache, entry)) {
+        collectRetiredEntries();
+        return;
+    }
+    const live = liveCacheEntries();
     const cap = Math.max(CONTENT_CACHE_MAX, live.size);
     while (contentCache.size > cap) {
-        // evict the oldest entry NOT referenced by any live window.
         let victim: string | null = null;
-        for (const k of contentCache.keys()) {
-            if (!live.has(k)) { victim = k; break; }
+        for (const [key, candidate] of contentCache) {
+            if (!live.has(candidate)) { victim = key; break; }
         }
-        if (victim == null) break; // only live entries remain — nothing evictable
-        const e = contentCache.get(victim)!;
+        if (victim == null) break;
+        const candidate = contentCache.get(victim)!;
         contentCache.delete(victim);
-        disposeCacheEntry(e);
+        disposeCacheEntry(candidate);
+    }
+    collectRetiredEntries();
+}
+
+/** Drop the whole cache (plugin stop), releasing every current and retired payload. */
+export function clearContentCache(): void {
+    const entries = new Set([...contentCache.values(), ...retiredCacheEntries]);
+    moveToShutdown(entries, shutdownCacheEntries, disposeCacheEntry, entry => entry.loading);
+    contentCache.clear();
+    retiredCacheEntries.clear();
+    // `resetCollection()` normally ran just before this hook, so no live window
+    // can keep a shutdown entry alive. The loading accessor retains it until the
+    // deferred loader publishes its payload and flips loading=false.
+    collectRetiredEntries();
+    for (const win of allWindows()) {
+        win.activeCacheKey = null;
+        win.activeCacheEntry = null;
     }
 }
 
-/** Drop the whole cache (plugin stop), releasing every doc. */
-export function clearContentCache(): void {
-    for (const e of contentCache.values()) disposeCacheEntry(e);
-    contentCache.clear();
-    const active = windowRegistry?.getActiveWindow();
-    if (active) active.activeCacheKey = null;
-}
-
-/** Point a window's `content` at a cached entry WITHOUT any fetch. Returns true on
- *  hit. Restores the GENERIC content payload fields here; the per-viewer view-
- *  state (zoom/page/mode/edit-buffer) is re-applied through the registered
- *  viewRestore hook (engine/viewState → viewer.restore). The caller owns the
- *  open/render bookkeeping around this. */
-export function mountFromCache(win: DockWindow, e: CacheEntry): boolean {
-    // Re-point the live content at the cached entry's payloads. We do NOT destroy
-    // the OUTGOING doc — a cached doc stays alive in its own entry; here we just
-    // re-point, since the live doc belongs to its cache entry.
-    win.content.name = e.name;
-    win.content.type = e.type;
-    win.content.url = e.url;
-    win.content.error = e.error ?? null;
-    win.content.loading = e.loading;
-    // payloads
-    win.content.html = e.html ?? null;
-    win.content.frameHtml = e.frameHtml ?? null;
-    win.content.code = e.code ?? null;
-    win.content.codeLang = e.codeLang ?? "plaintext";
-    win.content.binary = e.binary ?? false;
-    // pdf: re-point the live doc to the cached one (no destroy, no re-fetch).
+/** Point a window's content at a cached payload WITHOUT any fetch. Restores the
+ * window-specific view/edit/derived-render overlay through the injected hook. */
+export function mountFromCache(win: DockWindow, entry: CacheEntry): boolean {
+    const scoped = windowCacheEntry(win, entry);
+    win.content.name = scoped.name;
+    win.content.type = scoped.renderType ?? scoped.type;
+    win.content.url = scoped.renderUrl ?? scoped.url;
+    win.content.error = scoped.error ?? null;
+    win.content.loading = scoped.loading;
+    win.content.html = scoped.html ?? null;
+    win.content.frameHtml = scoped.frameHtml ?? null;
+    win.content.code = scoped.code ?? null;
+    win.content.codeLang = scoped.codeLang ?? "plaintext";
+    win.content.binary = scoped.binary ?? false;
     win.content.pdf = {
-        doc: e.pdfDoc ?? null,
-        pages: e.pdfPages ?? 0,
+        doc: scoped.pdfDoc ?? null,
+        pages: scoped.pdfPages ?? 0,
         renderToken: win.content.pdf.renderToken + 1
     };
-    // model3d: re-point the live object to the cached parsed root (no re-fetch,
-    // no re-parse). The body re-frames the camera from the saved view-state.
     win.content.model3d = {
-        object: e.model3dObject ?? null,
+        object: scoped.model3dObject ?? null,
         renderToken: win.content.model3d.renderToken + 1
     };
-    // pptx: re-point the live model to the cached parsed presentation (no re-fetch,
-    // no re-parse); the body re-renders the deck and jumps to the saved slide.
     win.content.pptx = {
-        presentation: e.pptxPresentation ?? null,
+        presentation: scoped.pptxPresentation ?? null,
         renderToken: win.content.pptx.renderToken + 1
     };
-    // xlsx: re-point the live workbook to the cached parsed sheets (no re-fetch, no
-    // re-parse); the body feeds the saved sheet's CSV into the grid.
     win.content.xlsx = {
-        names: e.xlsxWorkbook?.names ?? [],
-        csv: e.xlsxWorkbook?.csv ?? [],
-        formulas: e.xlsxWorkbook?.formulas ?? [],
-        charts: e.xlsxWorkbook?.charts ?? [],
+        names: scoped.xlsxWorkbook?.names ?? [],
+        csv: scoped.xlsxWorkbook?.csv ?? [],
+        formulas: scoped.xlsxWorkbook?.formulas ?? [],
+        charts: scoped.xlsxWorkbook?.charts ?? [],
         renderToken: win.content.xlsx.renderToken + 1
     };
-    // re-apply the saved view-state + any per-viewer re-derivation (csv delimiter,
-    // tree kind) via the viewer dispatch in engine/viewState.
-    viewRestore?.(win, e);
-    win.activeCacheKey = e.key;
-    cacheTouch(e);
+    activateCacheEntry(win, entry);
+    viewRestore?.(win, scoped);
+    const restored = windowCacheEntry(win, entry);
+    if (entry.renderType === "rasterimage") {
+        getWindowCacheState(win, entry.key)!.renderUrl = restored.renderUrl;
+    }
+    win.content.type = restored.renderType ?? restored.type;
+    win.content.url = restored.renderUrl ?? restored.url;
+    cacheTouch(entry);
     return true;
 }

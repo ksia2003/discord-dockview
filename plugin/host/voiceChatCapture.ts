@@ -19,10 +19,54 @@ import { dispatchVoiceChatOpen } from "./nativePanels";
 let voiceChatType: any = null;
 let voiceChatBaseProps: any = null;
 let voiceChatProviderStack: Array<{ type: any; value: any }> | null = null;
+let capturedChannelId: string | null = null;
 let primeInFlight: Promise<boolean> | null = null;
+
+export type VoiceChatReadinessListener = (channelId: string | null) => void;
+const readinessListeners = new Set<VoiceChatReadinessListener>();
+let removeChannelStoreListener: (() => void) | null = null;
 
 const CONTEXT_PROVIDER_TAG = 10;
 const PRIME_CLASS = "dockview-prime-voice-chat";
+
+function notifyReadiness(channelId: string | null): void {
+    for (const listener of [...readinessListeners]) {
+        try { listener(channelId); } catch { /* readiness must never affect Discord */ }
+    }
+}
+
+function stopChannelStoreReadiness(): void {
+    removeChannelStoreListener?.();
+    removeChannelStoreListener = null;
+}
+
+function ensureChannelStoreReadiness(): void {
+    if (!readinessListeners.size || removeChannelStoreListener) return;
+    let store: any = null;
+    try { store = (findByProps as any)?.("getChannel", "hasChannel"); } catch { /* not ready */ }
+    if (
+        !store
+        || typeof store.addChangeListener !== "function"
+        || typeof store.removeChangeListener !== "function"
+    ) return;
+    const onChange = () => notifyReadiness(null);
+    try {
+        store.addChangeListener(onChange);
+        removeChannelStoreListener = () => {
+            try { store.removeChangeListener(onChange); } catch { /* ignore teardown races */ }
+        };
+    } catch { /* a store that cannot subscribe is simply a capture-only seam */ }
+}
+
+/** Subscribe to explicit voice-capture/channel-store readiness signals. */
+export function subscribeVoiceChatReadiness(listener: VoiceChatReadinessListener): () => void {
+    readinessListeners.add(listener);
+    ensureChannelStoreReadiness();
+    return () => {
+        readinessListeners.delete(listener);
+        if (!readinessListeners.size) stopChannelStoreReadiness();
+    };
+}
 
 function fiberOf(el: Element | null): any {
     if (!el) return null;
@@ -69,6 +113,7 @@ function captureProviders(anchor: Element): void {
 /** Capture the exact inner voice-chat component for `channelId`, if it is mounted. */
 export function captureVoiceChat(channelId: string): boolean {
     if (!channelId) return false;
+    ensureChannelStoreReadiness();
     const anchor = voiceChatAnchor(channelId);
     const fiber = fiberOf(anchor);
     if (!anchor || !fiber) return voiceChatType != null;
@@ -87,7 +132,11 @@ export function captureVoiceChat(channelId: string): boolean {
         ) {
             voiceChatType = type;
             voiceChatBaseProps = props;
+            const channelChanged = capturedChannelId !== channelId;
+            const firstCapture = capturedChannelId == null;
+            capturedChannelId = channelId;
             captureProviders(anchor);
+            if (firstCapture || channelChanged) notifyReadiness(channelId);
             return true;
         }
         f = f.return;
@@ -145,6 +194,7 @@ export function getVoiceChatProviderStack(): Array<{ type: any; value: any }> | 
 /** Rebuild props with live stores so channel/guild changes aren't frozen at capture time. */
 export function buildVoiceChatProps(channelId: string): any {
     if (!voiceChatBaseProps || !channelId) return null;
+    ensureChannelStoreReadiness();
     try {
         const channels = (findByProps as any)?.("getChannel", "hasChannel");
         const channel = channels?.getChannel?.(channelId);
@@ -161,6 +211,7 @@ export function invalidateVoiceChatCapture(): void {
     voiceChatType = null;
     voiceChatBaseProps = null;
     voiceChatProviderStack = null;
+    capturedChannelId = null;
     primeInFlight = null;
     try { document.documentElement.classList.remove(PRIME_CLASS); } catch { /* ignore */ }
 }

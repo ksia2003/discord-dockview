@@ -12,12 +12,11 @@
  * user-facing tab verbs.
  */
 
-import { destroyThreadPortal } from "../viewers/thread/threadPortal";
-import { getCacheEntry } from "./cache";
+import { destroyThreadPortal, selectThreadPortal } from "../viewers/thread/threadPortal";
+import { getActiveCacheEntry, windowCacheEntry } from "./cache";
 import { setContextActive } from "./contextTab";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
-import { bump } from "./loadToken";
 import { setPendingScrollTop, snapshotActiveView } from "./viewState";
 import {
     focusEmptyShell, getActiveWindow, getActiveWindowId, getWindowChannelId, getWindows,
@@ -25,24 +24,37 @@ import {
 } from "./window";
 import type { DockWindow } from "./types";
 
+function selectPortalForWindow(win: DockWindow | null): void {
+    selectThreadPortal(win?.content.type === "thread" ? win.content.threadChannelId : null);
+}
+
 /** Switch the visible tab to `id`: snapshot the leaving window's live view-state,
  *  bind the active window, restore the new window's saved scroll, re-render. */
 export function switchToWindow(id: string): void {
-    if (id === getActiveWindowId()) return;
+    if (id === getActiveWindowId()) {
+        // The binding may still point at this thread while Channel info/Search masks it.
+        // Re-selecting the same tab must reveal its retained portal synchronously.
+        selectPortalForWindow(getActiveWindow());
+        return;
+    }
     const target = getWindows().find(w => w.id === id);
     if (!target) return;
     snapshotActiveView(getActiveWindow());
     setLightboxClosed(getActiveWindow()); // never strand the lightbox over a hidden tab
     setActiveWindow(target);
-    bump(); // any in-flight loader from the old window must not write here
     // if this window's loader was superseded but its cache resolved, hydrate now.
     reconcileActiveFromCache();
     getActiveWindow().content.seq += 1; // force a fresh body identity for the new tab
+    selectPortalForWindow(getActiveWindow());
     hostActions().applyOpenState();
     requestRender();
     // re-apply the target window's saved scroll once its body re-commits.
-    const key = getActiveWindow().activeCacheKey;
-    setPendingScrollTop(key != null ? (getCacheEntry(key)?.view.scrollTop ?? null) : null);
+    const active = getActiveWindow();
+    const entry = getActiveCacheEntry(active);
+    setPendingScrollTop(
+        entry ? (windowCacheEntry(active, entry).view.scrollTop ?? null) : null,
+        active
+    );
 }
 
 /** Close a tab (the ✕ on a tab acts on THAT window). The window is removed from its
@@ -76,9 +88,9 @@ export function closeTab(id: string): void {
         // a channel with no file tabs — member list / profile, not the empty-state card).
         // Focus a fresh content-less window so nothing stale backs the (now hidden) file
         // body, and flag the context tab active for this channel.
-        bump(); // any in-flight loader from the closed window must not write back
         focusEmptyShell(getWindowChannelId());
         setContextActive(getWindowChannelId(), true);
+        selectThreadPortal(null);
         hostActions().applyOpenState();
         requestRender();
         return;
@@ -90,9 +102,9 @@ export function closeTab(id: string): void {
         // rightmost), fall to idx-1.
         const next = rest[idx] ?? rest[Math.max(0, idx - 1)];
         setActiveWindow(next);
-        bump();
         reconcileActiveFromCache();
         getActiveWindow().content.seq += 1;
+        selectPortalForWindow(getActiveWindow());
     }
     hostActions().applyOpenState();
     requestRender();

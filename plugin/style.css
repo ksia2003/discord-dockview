@@ -41,10 +41,12 @@
     display: block !important;
 }
 /* Thread and voice-chat bodies live in body-level React portals. Each DockView-owned
-   portal carries this local attribute when F9 temporarily hides the dock; its mounted
-   root and position loop survive and resume at the preserved rect when it is removed. */
+   portal carries this local attribute when F9 temporarily hides the dock. Keep its last
+   layout box alive but make it non-painting/non-interactive: display:none collapses the
+   native managed scroller to 0x0 and Discord then forgets the message anchor on reveal. */
 [data-dockview-temporarily-hidden="true"] {
-    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
 }
 
 /* TWO-MODE width (mirrors Discord's native thread panel). DOCKED (default, no
@@ -72,16 +74,6 @@ html.dockview-open .dockview-page-inner {
     z-index: 200;
     box-shadow: var(--shadow-high, -8px 0 24px rgba(0, 0, 0, 0.36));
 }
-/* No resize handle while floating (native shows none in overlay mode) OR while
-   compact. Compact is a fixed native-member-width mode: keeping the 8px handle
-   inside a 264px host left only 256px for the actual member rail and clipped the
-   rounded right edge of Discord's native hover row. Expanded docked mode alone is
-   freely resizable. The card fills the width whenever the handle is absent. */
-#dockview-root.dockview-host--floating .dockview-resize,
-#dockview-root.dockview-host--compact .dockview-resize {
-    display: none;
-}
-
 /* Exclusive right-slot mutual exclusion. panel.tsx marks the competing native
    occupant (DM profile sidebar, native thread card, and its transition
    placeholder) while the dock is open. This avoids persistent `:has()` selectors:
@@ -124,8 +116,8 @@ html.dockview-open .dockview-page-inner {
     /* Discord's native thread card currently carries a fixed 400px flex width.
        DockView's outer host is user-sized, so that native width must not spill left
        over chat when compact or leave unused space when expanded. Keep the native
-       visual classes, but make their card fill only the host remainder beside the
-       8px resize handle. !important is required because Discord may inject its
+       visual classes, but make their card fill only the host. !important is
+       required because Discord may inject its
        CSS-module rule after the independent DockView stylesheet. */
     flex: 1 1 0 !important;
     width: auto !important;
@@ -142,73 +134,6 @@ html.dockview-open .dockview-page-inner {
     border-radius: 0;
 }
 
-/* Resize handle: Discord's 8px ew-resize bar on the panel's left edge.
-   Native `resizeHandle__*` gives the 8px footprint + ew-resize cursor + base
-   tint, but its hit zone is only the visible 8px and its hover bg token
-   (--background-modifier-accent) resolves to TRANSPARENT in this theme, so it
-   read as "hard to grab, no hover feedback". We fix BOTH:
-     - WIDEN the grab zone with an invisible ::before that extends ~6px past
-       each edge (visible bar 8px -> ~20px easy-grab hit area), so you don't
-       have to land the cursor on a thin line.
-     - Show a VISIBLE hover/drag tint (--background-base-low, one step brighter
-       than the near-black card) + a centred 2px x 24px "grabber pill" via
-       ::after (Discord's own resizeHandle_f37d97 affordance), tinted with
-       --text-muted, fading in only on hover/drag.
-   The whole thing is position:relative so the pseudo-elements anchor to it. */
-.dockview-resize {
-    position: relative;
-    cursor: ew-resize;
-    flex: 0 0 auto;
-    z-index: 20;
-    transition: background-color 0.15s ease;
-}
-/* Invisible WIDE hit zone: extends the grabbable area well past the 8px bar so
-   the handle is easy to catch (matches the "easy to grab" native feel). */
-.dockview-resize::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: -6px;
-    right: -6px;
-    z-index: 1;
-    /* purely a hit target; no paint */
-}
-/* Centred grabber pill — hidden until hover/drag, then fades in (native look). */
-.dockview-resize::after {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 2px;
-    height: 24px;
-    border-radius: 1px;
-    background: var(--text-muted, #949ba4);
-    opacity: 0;
-    transition: opacity 0.15s ease;
-    pointer-events: none;
-}
-.dockview-resize:hover,
-.dockview-resize.dockview-resizing {
-    background: var(--background-base-low, var(--background-modifier-accent, rgba(255, 255, 255, 0.08)));
-}
-.dockview-resize:hover::after,
-.dockview-resize.dockview-resizing::after {
-    opacity: 1;
-}
-
-/* While dragging, a full-page transparent overlay (added from JS) sits above
-   everything (esp. the artifact iframe) so the iframe can't swallow the
-   mousemove events — the classic "resize stalls when the cursor crosses the
-   iframe" bug. It also forces the ew-resize cursor everywhere during the drag. */
-.dockview-drag-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 100000;
-    cursor: ew-resize;
-}
-
 /* TABS (pin-driven multi-window, "header = tab" model). The tabs are NOT a
    separate row: they live INSIDE the header top row, occupying its icon/name slot.
    The strip is ALWAYS shown — one window or many — so the dock has a single unified
@@ -216,8 +141,9 @@ html.dockview-open .dockview-page-inner {
 
    FLAT UNDERLINE TABS (Discord user-profile-popout TabBar pattern): a tab is
    just [glyph][name][controls] with a transparent background, occupying the
-   FULL header-row height — NO box, NO border, NO pill, NO rounded background
-   fill on any tab. The ACTIVE tab is marked by brighter text + a lit icon + a
+   FULL header-row height — NO box, pill, or rounded background fill. Short inset
+   separators clarify the handles without enclosing them. The ACTIVE tab is marked
+   by brighter text + a lit icon + a
    thin underline bar pinned to the BOTTOM edge of the header row (the exact
    Discord profile-tab indicator). Inactive tabs = muted text, no underline,
    transparent bg; hover = a faint brighten only (no bg fill).
@@ -230,21 +156,20 @@ html.dockview-open .dockview-page-inner {
    is NO inline ⋯ — a tab's secondary actions are reached by right-click. The only
    shared header control is the far-right dock X.
 
-   OVERFLOW (N-tab model): the strip FITS the header slot — no horizontal scroll. As
-   more tabs open the INACTIVE tabs shrink FIRST (a high flex-shrink) and their label
-   ellipsises, down to a min width that always keeps the icon visible; the ACTIVE tab
-   has a far lower flex-shrink so it keeps its full length until the inactive tabs have
-   all bottomed out. Pinned chips are icon-only (narrowest). This is pure width/flex
-   behaviour — the resting colours/underline/fills of the active and inactive tabs are
-   untouched. No invented chrome. */
+   OVERFLOW (N-tab model): every handle stays 10rem regardless of selection or Dock
+   width. The strip scrolls horizontally when those stable handles no longer fit. */
 .dockview-tabs {
     flex: 1 1 auto;
     min-width: 0;
     display: flex;
     align-items: stretch; /* tabs fill the full row height (underline at bottom) */
     gap: 0;
-    overflow: hidden; /* the strip fits the slot: inactive tabs shrink, no scroll */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
 }
+.dockview-tabs::-webkit-scrollbar { display: none; }
 /* When the slot carries tabs (not the plain icon+title), it must NOT impose the
    centred icon/title layout — let the scrollable tab row own the full slot, and
    stretch the slot to the full header-row height so each full-height tab reaches
@@ -258,26 +183,17 @@ html.dockview-open .dockview-page-inner {
     overflow: hidden;
 }
 .dockview-tab {
-    /* WIDTH MODEL (browser-style, UNIFORM inactive): inactive tabs are all the SAME width,
-       NOT content-sized. Every inactive tab takes a FIXED flex-basis (150px) with flex-grow
-       0 and flex-shrink shared — so regardless of filename length they render EQUAL to each
-       other, the label ellipsising to fit; they never grow to fill the strip, so a few tabs
-       sit left-aligned with empty strip after (never a full-width bar). They only SHRINK
-       when the tabs' total width EXCEEDS the strip: with identical basis + identical shrink
-       factor the inactive tabs shrink UNIFORMLY (staying equal to each other), their labels
-       ellipsising earlier, down to a min width that always keeps the icon visible (the ✕ is
-       hover-only + absolutely positioned so it never takes layout width). The ACTIVE tab
-       overrides this to be WIDER (content-sized up to a larger cap) and to shrink LAST (a far
-       lower flex-shrink + a floor equal to the inactive width), so it keeps its full length
-       until the inactive tabs have all bottomed out (below). */
-    flex: 0 8 150px;
-    min-width: 30px;
+    /* Stable post-it geometry: neither selection nor Dock width changes an individual
+       handle. The strip scrolls when the fixed-width handles no longer fit. */
+    flex: 0 0 10rem;
+    width: 10rem;
+    min-width: 10rem;
     display: flex;
     align-items: center;
     gap: 6px;
-    max-width: 150px;
+    max-width: 10rem;
     height: 100%; /* full header-row height — content not inset into a sub-row box */
-    padding: 0 6px 0 10px;
+    padding: 0 38px 0 10px;
     position: relative; /* anchors the active underline bar */
     /* NO border-radius / NO background: tabs are flat text, never a boxed pill. */
     color: var(--interactive-normal, #b5bac1);
@@ -294,22 +210,11 @@ html.dockview-open .dockview-page-inner {
 @media (prefers-reduced-motion: reduce) {
     .dockview-tab { transition: color 0.12s ease !important; }
 }
-/* The ACTIVE tab is WIDER than the uniform inactive tabs and keeps its full length while
-   they shrink around it. Unlike the inactive tabs (fixed 150px basis), the active tab is
-   CONTENT-SIZED (flex-basis:auto) so it fits its OWN filename up to a larger cap (240px),
-   and its min-width equals the inactive width (150px) so it is ALWAYS ≥ an inactive tab —
-   a short active name sits near the inactive width but never narrower, standing out by
-   being wider. Since NO tab grows to fill (flex-grow:0 everywhere), a lone/active tab is
-   capped at its content up to 240px with empty strip after, NOT a full-width bar. "Active
-   shrinks last" is pure shrink RESISTANCE: its flex-shrink is far lower than an inactive
-   tab's (1 vs 8), so on overflow the inactive tabs shrink to their icon-only floor FIRST
-   and the active tab only gives ground once they have all bottomed out — it stays the
-   widest tab yet the strip never scrolls. Pure width behaviour: the active highlight
-   (brighter text + lit icon + the --interactive-active underline bar) is unchanged. */
+/* Selection changes only color/underline. Its geometry is identical to every sibling. */
 .dockview-tab-active {
-    flex: 0 1 auto;
-    min-width: 150px;
-    max-width: 240px;
+    flex-basis: 10rem;
+    min-width: 10rem;
+    max-width: 10rem;
 }
 /* PINNED tab = treated IDENTICALLY to a regular tab (leftmost, global). It carries the
    SAME icon + name + ✕ and the SAME flex/width/min-width/shrink rules (it inherits the
@@ -359,8 +264,8 @@ html.dockview-open .dockview-page-inner {
 .dockview-tab-active::after {
     content: "";
     position: absolute;
-    left: 10px;
-    right: 6px;
+    left: 8px;
+    right: 8px;
     bottom: 0;
     height: 2px;
     border-radius: 2px 2px 0 0;
@@ -377,9 +282,10 @@ html.dockview-open .dockview-page-inner {
 .dockview-tab-name {
     flex: 1 1 auto;
     min-width: 0;
+    display: flex;
+    align-items: center;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
     /* Font PARITY with the single-window header title (.dockview-title, which
        inherits Discord's `text-md/medium` = 16px / weight 500): a tab's filename
        must read at the SAME size+weight as the pre-tab header — the active tab is
@@ -389,6 +295,16 @@ html.dockview-open .dockview-page-inner {
     font-size: 16px;
     font-weight: 500;
 }
+.dockview-tab-name-start,
+.dockview-tab-name-full {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.dockview-tab-name-start { flex: 1 1 auto; }
+.dockview-tab-name-end { flex: 0 0 auto; }
+.dockview-tab-name-full { flex: 1 1 auto; }
 /* Per-tab control (the ✕): a flat ghost icon button (rule 5/10 — no border, no
    bg at rest, faint hover bg) living at the tab's right edge. Its own button so
    a click on it never bubbles up into a tab switch. */
@@ -419,18 +335,18 @@ html.dockview-open .dockview-page-inner {
 .dockview-tab-ctrl svg { display: block; }
 /* CONTROLS VISIBILITY (browser-tab grammar).
 
-   ACTIVE tab: its ✕ is a normal in-flow child (always visible at rest), slightly
-   brighter to match the active tab's brighter text. It takes layout width, which is
-   fine — the active tab keeps its full length anyway.
+   ACTIVE tab: its ✕ is always visible at rest and absolutely positioned at the
+   right edge, so selection never changes the tab's geometry.
 
    INACTIVE tab: its ✕ is HIDDEN at rest and takes NO layout width (absolutely
    positioned, removed from flow). On HOVER it appears pinned to the tab's right edge,
-   over a small left-to-right gradient of the header tint so it stays legible where it
-   overlaps the ellipsised label. Because it is absolutely positioned it never reflows
-   the strip — hovering an inactive tab only fades the ✕ in, no layout shift. A shrunk
-   inactive tab at rest is thus just [icon][…name], clean. */
+   over the ellipsised label. Because it is absolutely positioned it never reflows
+   the strip — hovering an inactive tab only fades the ✕ in, with no layout shift. */
 .dockview-tab-active .dockview-tab-ctrl {
-    position: static;
+    position: absolute;
+    top: 50%;
+    right: 4px;
+    transform: translateY(-50%);
     opacity: 0.8;
     background: transparent;
 }
@@ -462,6 +378,228 @@ html.dockview-open .dockview-page-inner {
 }
 .dockview-tab:not(.dockview-tab-active) .dockview-tab-close:hover {
     opacity: 1;
+}
+
+/* The permanent primary channel tab keeps exactly the same geometry as every Dock tab.
+   Stronger resting text and a divider mark the non-closeable main surface without
+   borrowing the selected Dock tab's underline or changing its hit target. */
+.dockview-tab-primary {
+    flex: 0 0 10rem;
+    color: var(--text-strong, #f2f3f5);
+    padding-right: 10px;
+}
+.dockview-tab-primary .dockview-tab-icon { opacity: 1; }
+.dockview-tab-native-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+}
+.dockview-tab-native-title > * { min-width: 0; }
+
+/* A short inset rule finishes every handle without turning the strip into boxed
+   buttons. The primary boundary is slightly stronger; all rules stop clear of both
+   the native header border and the active underline. */
+.dockview-unified-tabs .dockview-tab::before {
+    content: "";
+    position: absolute;
+    top: 10px;
+    right: 0;
+    bottom: 10px;
+    width: 1px;
+    background: var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+    pointer-events: none;
+}
+.dockview-unified-tabs .dockview-tab-primary::before {
+    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.1));
+}
+
+/* Ordinary guild text channels are a real two-row page: Discord's exact native
+   header occupies row 1, while the original chat column and Dock occupy row 2.
+   Nothing is overlaid, hidden underneath, or held open by a fake spacer. */
+.dockview-page-inner.dockview-unified-layout {
+    /* Discord writes display:flex inline on this exact container. The unified mode
+       intentionally replaces that one inline declaration with the page grid. */
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 48px minmax(0, 1fr);
+    align-items: stretch;
+    min-width: 0;
+    min-height: 0;
+}
+.dockview-unified-layout > [class*="chat_"] {
+    grid-column: 1;
+    grid-row: 2;
+    min-width: 0;
+    min-height: 0;
+    height: auto;
+}
+.dockview-unified-header {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    width: 100%;
+    height: 48px;
+    min-width: 0;
+}
+.dockview-unified-header > [class*="subtitleContainer"] {
+    width: 100%;
+    height: 48px;
+}
+.dockview-unified-layout > #dockview-root {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: stretch;
+    height: auto;
+    min-height: 0;
+}
+.dockview-unified-layout > #dockview-root .dockview-header {
+    display: flex;
+    height: auto;
+    min-height: 0;
+    padding: 0;
+}
+.dockview-unified-layout > #dockview-root .dockview-header:not(.dockview-header--tworow),
+.dockview-unified-layout > #dockview-root .dockview-header-upper {
+    display: none;
+}
+.dockview-unified-layout > #dockview-root .dockview-card {
+    border-radius: 0 !important;
+    border-left: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+}
+.dockview-unified-layout > #dockview-root.dockview-host--floating {
+    top: 48px;
+}
+.dockview-unified-tabs {
+    display: flex;
+    align-self: stretch;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+}
+.dockview-unified-tabs > .dockview-tabs {
+    align-self: stretch;
+    /* The content-strip owns only the width left after the three fixed surfaces and
+       overflow button. Give it a real flex basis so it participates in a narrow header
+       instead of collapsing to 0px and painting a scrolled child over Channel info. */
+    flex: 1 1 10rem;
+    min-width: 0;
+}
+.dockview-unified-tabs > .dockview-tab-context,
+.dockview-unified-tabs > .dockview-tab-search {
+    align-self: stretch;
+}
+/* Primary, Channel info and Search remain outside the scrolling content strip, but their
+   labels may contract on a laptop header. Three unshrinkable 160px handles plus Discord's
+   native 244px search box cannot fit in a 1024px app; the old rule clipped Search entirely
+   and left the content strip at width 0. Keep the normal 10rem prototype width when space
+   exists and a usable icon/ellipsis target (5rem) when it does not. */
+.dockview-unified-tabs > .dockview-tab-primary,
+.dockview-unified-tabs > .dockview-tab-context,
+.dockview-unified-tabs > .dockview-tab-search {
+    flex: 1 1 10rem;
+    width: 10rem;
+    min-width: 5rem;
+    max-width: 10rem;
+}
+
+/* Discord constructs Search only when HeaderBar receives a non-null toolbar. The seed is
+   intentionally inert/hidden; the adjacent native Search component remains the one fixed
+   right-edge action outside the horizontally scrolling tab strip. Its size and open state
+   are left entirely to Discord's own HeaderBar/Search CSS. */
+.dockview-native-search-seed {
+    display: none !important;
+}
+
+/* SearchResults is Discord's own component moved out of the native sidebar slot. Every
+   opened guild scope remains mounted in an absolute keyed layer; inactive layers retain
+   their React/scroll state but cannot paint, receive pointer input, or enter the a11y tree. */
+.dockview-search-results-body {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex: 1 1 auto;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+.dockview-search-results-body--inactive {
+    visibility: hidden;
+    pointer-events: none;
+}
+.dockview-search-results-body--active {
+    visibility: visible;
+    pointer-events: auto;
+}
+.dockview-search-results-body > *,
+.dockview-search-results-body [class*="searchResultsWrap"] {
+    flex: 1 1 auto;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+}
+.dockview-tab-list-button {
+    flex: 0 0 40px;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    padding: 0;
+    border: 0;
+    border-left: 1px solid var(--background-modifier-accent, rgba(255, 255, 255, 0.06));
+    background: var(--background-primary, transparent);
+    color: var(--interactive-normal, #b5bac1);
+    cursor: pointer;
+}
+.dockview-tab-list-button:hover {
+    color: var(--interactive-hover, #dbdee1);
+    background: var(--background-modifier-hover, rgba(255, 255, 255, 0.06));
+}
+.dockview-all-tabs-menu {
+    width: min(420px, calc(100vw - 16px));
+}
+.dockview-tab-list-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-width: 0;
+}
+.dockview-tab-list-label-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.dockview-tab-list-trailing {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--interactive-normal, #b5bac1);
+}
+.dockview-tab-list-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin: -4px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+.dockview-tab-list-close:hover {
+    color: var(--interactive-active, #f2f3f5);
+    background: var(--background-modifier-active, rgba(255, 255, 255, 0.12));
 }
 
 /* Header: native classes give the 48px bar, padding, tint and border-bottom.
@@ -542,6 +680,11 @@ html.dockview-open .dockview-page-inner {
 .dockview-viewer-toolbar {
     flex: 0 0 auto;
     display: flex;
+    /* The compact preset can be narrower than the combined viewer controls on a
+       laptop. Keep every viewer action reachable by wrapping whole control groups
+       onto a second line; horizontal overflow would otherwise place the required
+       file-action menu outside the window. Groups themselves never split. */
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
     padding: 6px 12px;
@@ -553,6 +696,10 @@ html.dockview-open .dockview-page-inner {
 .dockview-viewer-toolbar .dockview-tool-btn {
     height: 28px;
     min-width: 28px;
+}
+.dockview-viewer-toolbar .dockview-file-more {
+    margin-left: auto;
+    flex: 0 0 auto;
 }
 /* Leading file-type glyph: a real thread header is [glyph] + title; we mirror it
    with one muted, document-framed icon ahead of the filename. Tinted with the
@@ -670,7 +817,27 @@ html.dockview-open .dockview-page-inner {
     display: flex;
     align-items: center;
     min-width: 0;
-    height: 24px;
+    min-height: 32px;
+}
+.dockview-channel-native-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+}
+.dockview-channel-native-title > * { min-width: 0; }
+.dockview-channel-native-toolbar {
+    flex: 0 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+    overflow: hidden;
+}
+.dockview-channel-native-toolbar > * {
+    min-width: 0;
+    margin-left: 0;
 }
 .dockview-channel-hash {
     flex: 0 0 auto;
@@ -2139,6 +2306,7 @@ html.dockview-prime-voice-chat div[class*="chatLayerWrapper"]:not(.dockview-wrap
    with the native header tone; a single quiet emphasis does that. */
 .dockview-tool-group {
     display: flex;
+    flex: 0 0 auto;
     align-items: center;
     gap: 2px;
 }
