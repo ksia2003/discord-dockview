@@ -89,7 +89,7 @@ test("trusted click with matching evidence arms exactly one explicit open", () =
 
 test("unrelated click evidence never matches a thread payload and expires", () => {
     const timers = timerQueue();
-    const intent = createInputIntentTracker(timers.schedule, timers.clear, 0);
+    const intent = createInputIntentTracker(timers.schedule, timers.clear);
     intent.arm(["999"]); // e.g. a parent-channel row click
     assert.equal(intent.consumeFor("456"), false); // internal SIDEBAR for a thread: no match
     timers.runAll(); // the turn ends without a matching SIDEBAR
@@ -114,7 +114,7 @@ test("untrusted/internal render without any trusted input is never explicit", ()
 
 test("unconsumed intent expires after the event turn", () => {
     const timers = timerQueue();
-    const intent = createInputIntentTracker(timers.schedule, timers.clear, 0);
+    const intent = createInputIntentTracker(timers.schedule, timers.clear);
     intent.arm(["456"]);
     timers.runAll(); // the zero-timeout clears the pending intent
     assert.equal(intent.consumeFor("456"), false);
@@ -122,7 +122,7 @@ test("unconsumed intent expires after the event turn", () => {
 
 test("re-arm restarts the one-shot window; only one consume is granted", () => {
     const timers = timerQueue();
-    const intent = createInputIntentTracker(timers.schedule, timers.clear, 0);
+    const intent = createInputIntentTracker(timers.schedule, timers.clear);
     intent.arm(["456"]);
     intent.arm(["456"]); // second trusted input in the same turn restarts the timer
     assert.equal(intent.consumeFor("456"), true);
@@ -131,7 +131,7 @@ test("re-arm restarts the one-shot window; only one consume is granted", () => {
 
 test("stop cleanup cancels the timer and clears any pending intent", () => {
     const timers = timerQueue();
-    const intent = createInputIntentTracker(timers.schedule, timers.clear, 0);
+    const intent = createInputIntentTracker(timers.schedule, timers.clear);
     intent.arm(["456"]);
     intent.cancel();
     assert.ok(timers.cancelledCount >= 1);
@@ -155,6 +155,19 @@ test("activation-id evidence: anchors, stable attributes, and own-fiber channel 
         __reactFiber$hash: { memoizedProps: { channel: { id: "222" }, channelId: "333", thread: { id: "444" } } }
     };
     assert.deepEqual(extractActivationIds([fiberNode]), ["333", "222", "444"]);
+});
+
+test("activation-id evidence: prefixed data-list-item-id snowflakes", () => {
+    const listItem = value => ({ getAttribute: name => (name === "data-list-item-id" ? value : null) });
+    assert.deepEqual(extractActivationIds([listItem("channels___456")]), ["456"]);
+    assert.deepEqual(extractActivationIds([listItem("thread-row___789")]), ["789"]);
+    assert.deepEqual(extractActivationIds([listItem("456")]), ["456"]); // plain digits still work
+    assert.deepEqual(extractActivationIds([listItem("abc123def")]), []); // no buried digits
+    // data-channel-id stays strict digits — a prefixed value contributes nothing.
+    assert.deepEqual(
+        extractActivationIds([{ getAttribute: name => (name === "data-channel-id" ? "channels___456" : null) }]),
+        []
+    );
 });
 
 test("activation-id evidence: non-thread targets contribute nothing", () => {

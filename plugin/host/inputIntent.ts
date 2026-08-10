@@ -48,11 +48,11 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 /** Create a one-shot intent tracker. `schedule`/`clear` are injected so tests run
- *  deterministically; `holdMillis` bounds how long an unconsumed intent stays armed. */
+ *  deterministically. The scheduler's own delay bounds how long an unconsumed intent
+ *  stays armed (the app uses a zero-timeout — one event turn). */
 export function createInputIntentTracker(
     schedule: (callback: () => void) => number,
-    clear: (handle: number) => void,
-    holdMillis = 0
+    clear: (handle: number) => void
 ): InputIntentTracker {
     let armed = false;
     let ids = new Set<string>();
@@ -62,7 +62,7 @@ export function createInputIntentTracker(
             if (handle) { clear(handle); handle = 0; }
             armed = true;
             ids = new Set(candidates);
-            handle = schedule(() => { handle = 0; armed = false; });
+            handle = schedule(() => { handle = 0; armed = false; ids = new Set(); });
         },
         consumeFor(channelId: string) {
             if (!armed || !ids.has(channelId)) return false;
@@ -81,10 +81,11 @@ export function createInputIntentTracker(
 
 /** Conservative channel/thread-id evidence from an activation path (a click/keydown
  *  composedPath). Supported evidence: an anchor whose href is /channels/<guild>/<id>,
- *  stable data-channel-id / data-list-item-id attributes, and the node's OWN React
- *  fiber memoizedProps (channel.id / thread.id / channelId) — digit ids only. Anything
- *  else (plain divs, non-channel hrefs, ancestor fibers, generic `id` props)
- *  contributes nothing, so an unrelated click never arms intent. */
+ *  a STRICT-digit data-channel-id, a prefixed/trailing data-list-item-id snowflake
+ *  (channels___456, thread-row___456), and the node's OWN React fiber memoizedProps
+ *  (channel.id / thread.id / channelId) — digit ids only. Anything else (plain divs,
+ *  non-channel hrefs, ancestor fibers, generic `id` props) contributes nothing, so an
+ *  unrelated click never arms intent. */
 export function extractActivationIds(path: readonly unknown[]): string[] {
     const ids: string[] = [];
     const push = (raw: unknown) => {
@@ -103,8 +104,12 @@ export function extractActivationIds(path: readonly unknown[]): string[] {
                 const m = /\/channels\/[^/]+\/(\d+)(?:\/|$)/.exec(href);
                 if (m) push(m[1]);
             }
-            push(el.getAttribute("data-channel-id"));
-            push(el.getAttribute("data-list-item-id"));
+            push(el.getAttribute("data-channel-id")); // strict digits
+            const listItemId = el.getAttribute("data-list-item-id");
+            if (listItemId) {
+                const token = trailingSnowflake(listItemId);
+                if (token) push(token);
+            }
         }
         for (const key of Object.keys(el)) {
             if (!key.startsWith("__reactFiber$") && !key.startsWith("__reactInternalInstance$")) continue;
@@ -119,4 +124,13 @@ export function extractActivationIds(path: readonly unknown[]): string[] {
         }
     }
     return ids;
+}
+
+/** The trailing, delimiter-bound snowflake token of a prefixed list-item id — Discord's
+ *  data-list-item-id is usually "channels___<snowflake>" or "thread-row___<snowflake>".
+ *  Accepts only a TRAILING digit run (preceded by the start or a non-digit delimiter),
+ *  never digits buried in arbitrary text. */
+function trailingSnowflake(value: string): string | null {
+    const m = /(?:^|\D)(\d+)$/.exec(value);
+    return m ? m[1] : null;
 }
