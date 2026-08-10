@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "sourceCommit": "4cfede9f17a91d6ad2c6d6b40122d733079be628",
+  "sourceCommit": "b213f50f00b5e1c24ebb423d528c0051db7add7b",
   "vencordRef": "v1.14.16",
   "vencordCommit": "fc5466ebf854a82c8385c41742162c4b66f8a119",
-  "buildIdentity": "e9ac5f21c52fd8532e05b386d9da8eb3c16ae5ea-07f5aa9dbc9d4a6e25ad9a1a2c1e0beb32beedace7bcda2c4f6dace4cc1d702a",
+  "buildIdentity": "7520f38b73f646595eaa8db8da62cf3d51328889-693a13f9f7d569194a8ff3a3f4af0978444926827074635f85060f5df64422e3",
   "files": {
     "vencordDist/vencordDesktopMain.js": "fce3aceefad6dc57c85e96cf3523a92b5bf99bd9a164d109fe2d4cc64a217f89",
     "vencordDist/vencordDesktopPreload.js": "dbad6b49669148beeaf6336ece97a6cfd5eed043eff689118c0a492156065d06",
-    "vencordDist/vencordDesktopRenderer.js": "1c1efb63be421591bb4e0e81ab3934dfeb1764bb8b2db3b6b9486c6a354e8a9a",
+    "vencordDist/vencordDesktopRenderer.js": "c79530fc64c7432bcf548409cff4b6ed3b585696b43ae8f118d7585b4258a273",
     "vencordDist/vencordDesktopRenderer.css": "6fc7c316dd24b8fbd612ae79e3c2da036e0b36983ac6a1293735e6be1b90bb9c",
     "dockviewDist/dockviewMain.js": "72a7782b4abb1da747792a56c38954d1f131a3c54648755546f3856923b1d109",
-    "dockviewDist/dockviewRenderer.js": "379dde207109bf7b29f4f12d1b5c1e861ce0190e72c4f5981c4e196d60e7e691",
-    "dockviewDist/chunk-mermaid.js": "5ceae3ced3b0766bf6442f3811b34679377ea706cdd1413ccfcccc89a073ae8b",
+    "dockviewDist/dockviewRenderer.js": "e350f6e97a287ab7001d2e7803b96c891e6f86aabdec39839c6f6c650320e4f3",
+    "dockviewDist/chunk-mermaid.js": "6afde06cc5e5920fd4ff2a9b23329981640d1f00055f1fc1a8a3260c17f1d48f",
     "dockviewDist/chunk-agpsd.js": "f0c10c583d179b182748c35cec6ec5fc65077873a9fb62e3f4bb6930694dd687",
     "dockviewDist/chunk-jxl.js": "bd6db2bac11394d2e9b70a8a93fe429a43f5d1931e48cc7301510bea6b1f2c3e",
     "dockviewDist/chunk-pptx.js": "e2d84842bd42d407130a399c902823d9e7e777250ae53ac30519d8cf1a43fa87",
@@ -19,8 +19,8 @@
     "dockviewDist/chunk-three.js": "33558a2d836e555f27bdedf1bc227abce2139f17e7ea78e4ab255bd784c8b0f5",
     "dockviewDist/chunk-ghostscript.js": "86363df9b840c22e4111a7fc8b1aeb57c482b5185ddd0bec91821dde0bd5acd5",
     "dockviewDist/chunk-pdfjs.js": "afc9a61963bb4f3899b55836f5d7050cd172fe4f0fd1b7db27403a47bebdd3f6",
-    "dockviewDist/chunk-codemirror.js": "20f36684cf5a9154886afa258c02938a5e08b78264e5dec000b4614cdb9ff75f",
+    "dockviewDist/chunk-codemirror.js": "84fd9a6cda8915814c5dce4f33d1c07552d184cc57eda7df8f147150dc6c6230",
     "dockviewDist/chunk-samples.js": "12ab4081a39a15597df08ee1f9cff5a85dc672923d39414bfbaa03f388fc6280",
-    "dockviewDist/version.txt": "ccff7618ba03d597c32264c12dd89940d21049b61492416c128a203198b27b78"
+    "dockviewDist/version.txt": "f9e576588c6c9c32d57c005d8243e21bc8172a362cdca6449bff32c644ed83d9"
   }
 }
