@@ -43,26 +43,36 @@ import { isSealBypassed, setContextView } from "../engine/contextTab";
 import { requestRender } from "../engine/forceRender";
 import { hostActions } from "../engine/hostBridge";
 import { markExplicitThreadOpen, openThreadTab } from "../engine/threadTab";
-import { createInputIntentTracker, isEditableTarget } from "./inputIntent";
+import { createInputIntentTracker, extractActivationIds, isEditableTarget } from "./inputIntent";
 import { isSelfMemberToggle, isSelfProfileToggle, isSelfVoiceChatToggle } from "./nativePanels";
 
 /** The captured original FluxDispatcher.dispatch, restored EXACTLY on stop. Null when the
  *  wrap isn't installed. */
 let originalDispatch: ((payload: any) => any) | null = null;
 
-// One-shot trusted-user-input intent. A capture-phase click or Enter/Space keydown on a
-// real user gesture arms it; the FIRST intercepted SIDEBAR_VIEW_CHANNEL in that event
-// turn consumes it and marks the open explicit — so an already-active thread clicked
-// while the dock is F9-hidden refocuses (reveals). Internal portal render/retry/Flux
-// rerenders carry no trusted input event, so they never arm and stay non-explicit —
-// the loop-breaker no-op holds even while the dock is hidden. Keyboard arming is gated
-// off editable targets (composer text entry must never arm intent).
+// One-shot trusted-user-input intent, gated on target evidence. A capture-phase click
+// or Enter/Space keydown arms it ONLY when the activated target evidences a
+// channel/thread id (a /channels/ anchor, data-channel-id / data-list-item-id, or the
+// node's own fiber channel props); the intercepted SIDEBAR_VIEW_CHANNEL grants the
+// explicit mark only when its payload.channelId matches that evidence. So an unrelated
+// click (parent channel, Search close, message action, composer/send) can never pair
+// with a same-turn internal portal rerender to false-reveal. Internal render/retry/Flux
+// rerenders carry no trusted input event and stay non-explicit — the loop-breaker no-op
+// holds even while the dock is hidden. Keyboard arming is gated off editable targets.
 const inputIntent = createInputIntentTracker(
     (cb) => setTimeout(cb, 0),
     (handle) => clearTimeout(handle)
 );
 let trustedClickListener: ((e: MouseEvent) => void) | null = null;
 let trustedKeydownListener: ((e: KeyboardEvent) => void) | null = null;
+
+/** Arm the one-shot intent from a trusted activation event, only when the activated
+ *  target evidences channel/thread ids. Events with no evidence never arm. */
+function armIntentFromTrustedEvent(e: MouseEvent | KeyboardEvent): void {
+    const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+    const ids = extractActivationIds(path);
+    if (ids.length > 0) inputIntent.arm(ids);
+}
 
 /** Re-entrancy guard: handling an intercepted action opens/focuses a dock tab and requests
  *  a render; that render (the captured thread chat) can synchronously dispatch again, which
@@ -106,9 +116,10 @@ function handleDispatch(payload: any): boolean {
             if (!target) return false;
             handling = true;
             try {
-                // The first sidebar open in a trusted-input event turn is the user's
-                // click/key activation; anything else (recursion, retry) is internal.
-                if (inputIntent.consume()) markExplicitThreadOpen();
+                // The one-shot intent grants explicit ONLY when the activated target's
+                // evidenced ids include this payload's channel — an unrelated click or
+                // internal render never matches and never reveals.
+                if (inputIntent.consumeFor(String(target))) markExplicitThreadOpen();
                 openThreadTab(String(target), payload.baseChannelId ? String(payload.baseChannelId) : null);
             }
             finally { handling = false; }
@@ -153,13 +164,13 @@ export function startInterception(): void {
     if (!flux || typeof flux.dispatch !== "function") return;
     trustedClickListener = (e: MouseEvent) => {
         if (e.isTrusted === false) return;
-        inputIntent.arm();
+        armIntentFromTrustedEvent(e);
     };
     trustedKeydownListener = (e: KeyboardEvent) => {
         if (e.isTrusted === false || e.repeat) return;
         if (e.key !== "Enter" && e.key !== " ") return;
         if (isEditableTarget(e.target)) return;
-        inputIntent.arm();
+        armIntentFromTrustedEvent(e);
     };
     document.addEventListener("click", trustedClickListener, true);
     document.addEventListener("keydown", trustedKeydownListener, true);

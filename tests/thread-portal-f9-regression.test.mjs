@@ -6,7 +6,7 @@ import portalSyncModule from "../plugin/viewers/thread/portalSync.ts";
 import inputIntentModule from "../plugin/host/inputIntent.ts";
 
 const { createBoundedSettle, decideThreadOpen } = portalSyncModule;
-const { createInputIntentTracker, isEditableTarget } = inputIntentModule;
+const { createInputIntentTracker, extractActivationIds, isEditableTarget } = inputIntentModule;
 
 function frameQueue() {
     const queue = [];
@@ -79,47 +79,100 @@ function timerQueue() {
     };
 }
 
-test("trusted click arms exactly one explicit open; a second dispatch same turn is non-explicit", () => {
+test("trusted click with matching evidence arms exactly one explicit open", () => {
     const timers = timerQueue();
     const intent = createInputIntentTracker(timers.schedule, timers.clear);
-    intent.arm(); // trusted click/keydown capture
-    assert.equal(intent.consume(), true); // the FIRST intercepted SIDEBAR is explicit
-    assert.equal(intent.consume(), false); // recursive/second dispatch: non-explicit
+    intent.arm(["456"]); // trusted click/keydown on a thread-row target
+    assert.equal(intent.consumeFor("456"), true); // the matching SIDEBAR is explicit
+    assert.equal(intent.consumeFor("456"), false); // recursive/second dispatch: non-explicit
+});
+
+test("unrelated click evidence never matches a thread payload and expires", () => {
+    const timers = timerQueue();
+    const intent = createInputIntentTracker(timers.schedule, timers.clear, 0);
+    intent.arm(["999"]); // e.g. a parent-channel row click
+    assert.equal(intent.consumeFor("456"), false); // internal SIDEBAR for a thread: no match
+    timers.runAll(); // the turn ends without a matching SIDEBAR
+    assert.equal(intent.consumeFor("999"), false); // never explicit
+});
+
+test("a non-matching SIDEBAR leaves the intent armed for a matching one this turn", () => {
+    const timers = timerQueue();
+    const intent = createInputIntentTracker(timers.schedule, timers.clear);
+    intent.arm(["456"]);
+    assert.equal(intent.consumeFor("999"), false); // unrelated dispatch first
+    assert.equal(intent.consumeFor("456"), true); // then the thread's own SIDEBAR matches
+    assert.equal(intent.consumeFor("456"), false); // one-shot consumed
 });
 
 test("untrusted/internal render without any trusted input is never explicit", () => {
     const timers = timerQueue();
     const intent = createInputIntentTracker(timers.schedule, timers.clear);
-    assert.equal(intent.consume(), false);
-    assert.equal(intent.consume(), false);
+    assert.equal(intent.consumeFor("456"), false);
+    assert.equal(intent.consumeFor("456"), false);
 });
 
 test("unconsumed intent expires after the event turn", () => {
     const timers = timerQueue();
     const intent = createInputIntentTracker(timers.schedule, timers.clear, 0);
-    intent.arm();
+    intent.arm(["456"]);
     timers.runAll(); // the zero-timeout clears the pending intent
-    assert.equal(intent.consume(), false);
+    assert.equal(intent.consumeFor("456"), false);
 });
 
 test("re-arm restarts the one-shot window; only one consume is granted", () => {
     const timers = timerQueue();
     const intent = createInputIntentTracker(timers.schedule, timers.clear, 0);
-    intent.arm();
-    intent.arm(); // second trusted input in the same turn restarts the timer
-    assert.equal(intent.consume(), true);
-    assert.equal(intent.consume(), false);
+    intent.arm(["456"]);
+    intent.arm(["456"]); // second trusted input in the same turn restarts the timer
+    assert.equal(intent.consumeFor("456"), true);
+    assert.equal(intent.consumeFor("456"), false);
 });
 
 test("stop cleanup cancels the timer and clears any pending intent", () => {
     const timers = timerQueue();
     const intent = createInputIntentTracker(timers.schedule, timers.clear, 0);
-    intent.arm();
+    intent.arm(["456"]);
     intent.cancel();
     assert.ok(timers.cancelledCount >= 1);
-    assert.equal(intent.consume(), false);
+    assert.equal(intent.consumeFor("456"), false);
     timers.runAll();
-    assert.equal(intent.consume(), false); // nothing leaks after cleanup
+    assert.equal(intent.consumeFor("456"), false); // nothing leaks after cleanup
+});
+
+test("activation-id evidence: anchors, stable attributes, and own-fiber channel props", () => {
+    const anchor = { getAttribute: name => (name === "href" ? "/channels/123/456" : null) };
+    assert.deepEqual(extractActivationIds([anchor]), ["456"]);
+    assert.deepEqual(
+        extractActivationIds([
+            { getAttribute: name => (name === "data-channel-id" ? "789" : null) },
+            { getAttribute: name => (name === "data-list-item-id" ? "111" : null) }
+        ]),
+        ["789", "111"]
+    );
+    const fiberNode = {
+        getAttribute: () => null,
+        __reactFiber$hash: { memoizedProps: { channel: { id: "222" }, channelId: "333", thread: { id: "444" } } }
+    };
+    assert.deepEqual(extractActivationIds([fiberNode]), ["333", "222", "444"]);
+});
+
+test("activation-id evidence: non-thread targets contribute nothing", () => {
+    assert.deepEqual(extractActivationIds([]), []);
+    assert.deepEqual(extractActivationIds([null, 42, "text"]), []);
+    assert.deepEqual(extractActivationIds([{ getAttribute: () => null }]), []);
+    assert.deepEqual(
+        extractActivationIds([
+            { getAttribute: name => (name === "href" ? "https://example.com/foo" : null) },
+            { getAttribute: name => (name === "data-channel-id" ? "not-an-id" : null) }
+        ]),
+        []
+    );
+    // A generic `id` prop on the fiber must NOT be treated as channel evidence.
+    assert.deepEqual(
+        extractActivationIds([{ __reactFiber$h: { memoizedProps: { id: "555", guildId: "666" } } }]),
+        []
+    );
 });
 
 test("editable-target gate blocks composer text entry from arming intent", () => {
@@ -255,7 +308,9 @@ test("interception arms one-shot intent on trusted click/key activation only", (
     assert.match(interception, /e\.isTrusted === false/);
     assert.match(interception, /e\.key !== "Enter" && e\.key !== " "/);
     assert.match(interception, /isEditableTarget\(e\.target\)/);
-    assert.match(interception, /if \(inputIntent\.consume\(\)\) markExplicitThreadOpen\(\);[\s\S]{0,80}openThreadTab\(String\(target\)/);
+    assert.match(interception, /extractActivationIds\(path\)/);
+    assert.match(interception, /if \(ids\.length > 0\) inputIntent\.arm\(ids\);/);
+    assert.match(interception, /if \(inputIntent\.consumeFor\(String\(target\)\)\) markExplicitThreadOpen\(\);[\s\S]{0,80}openThreadTab\(String\(target\)/);
     assert.match(interception, /removeEventListener\("click", trustedClickListener, true\)/);
     assert.match(interception, /removeEventListener\("keydown", trustedKeydownListener, true\)/);
     assert.match(interception, /inputIntent\.cancel\(\)/);
@@ -273,7 +328,7 @@ test("browser seam arms explicit intent; interception only marks via a consumed 
     const interception = source("../plugin/host/interception.ts");
     assert.match(plugin, /markExplicitThreadOpen\(\)/);
     assert.match(plugin, /openThreadTab\(threadId, parentId\)/);
-    assert.match(interception, /if \(inputIntent\.consume\(\)\) markExplicitThreadOpen\(\);/);
+    assert.match(interception, /if \(inputIntent\.consumeFor\(String\(target\)\)\) markExplicitThreadOpen\(\);/);
     assert.doesNotMatch(interception, /markExplicitThreadOpen\(\);[\s\S]{0,120}markExplicitThreadOpen/);
 });
 

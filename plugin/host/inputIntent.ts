@@ -1,20 +1,24 @@
 /*
- * One-shot trusted-user-input intent tracker.
+ * One-shot trusted-user-input intent + conservative activation-id evidence.
  *
  * A capture-phase click / Enter-Space keydown on a real user gesture arms a one-shot
  * intent that lives only through the current event turn (cleared by a bounded
- * zero-timeout). The FIRST intercepted SIDEBAR_VIEW_CHANNEL in that turn consumes it,
- * marking the thread open explicit — so an already-active thread clicked while the dock
- * is F9-hidden refocuses (reveals). Internal portal render/retry dispatches never pass
- * through a trusted input event, so they never arm and stay non-explicit. Pure and
- * scheduler-injected so the F9 regression suite can drive it deterministically.
+ * zero-timeout) — but ONLY when the activated target carries evidence of a
+ * channel/thread id, and the intercepted SIDEBAR_VIEW_CHANNEL is granted explicit
+ * only when its payload.channelId matches that evidence. So an unrelated click (no
+ * thread evidence) or a click whose evidence doesn't match the payload can never
+ * misclassify a same-turn internal portal rerender as explicit. Internal portal
+ * render/retry dispatches never pass through a trusted input event, so they never arm
+ * and stay non-explicit. Pure and scheduler-injected so the regression suite can drive
+ * it deterministically.
  */
 
 export interface InputIntentTracker {
-    /** A trusted user input just happened — arm one explicit open for this turn. */
-    arm(): void;
-    /** True exactly once per arm: the first open in the turn is the user's. */
-    consume(): boolean;
+    /** A trusted user input activated a target evidencing these channel/thread ids. */
+    arm(ids: Iterable<string>): void;
+    /** True once, only when the armed evidence includes `channelId` (one-shot; a
+     *  non-matching SIDEBAR leaves the intent armed for a matching one this turn). */
+    consumeFor(channelId: string): boolean;
     /** Stop cleanup: cancel the expiry timer and clear any pending intent. */
     cancel(): void;
 }
@@ -51,22 +55,68 @@ export function createInputIntentTracker(
     holdMillis = 0
 ): InputIntentTracker {
     let armed = false;
+    let ids = new Set<string>();
     let handle = 0;
     return {
-        arm() {
+        arm(candidates: Iterable<string>) {
             if (handle) { clear(handle); handle = 0; }
             armed = true;
+            ids = new Set(candidates);
             handle = schedule(() => { handle = 0; armed = false; });
         },
-        consume() {
-            if (!armed) return false;
+        consumeFor(channelId: string) {
+            if (!armed || !ids.has(channelId)) return false;
             armed = false;
+            ids = new Set();
             if (handle) { clear(handle); handle = 0; }
             return true;
         },
         cancel() {
             if (handle) { clear(handle); handle = 0; }
             armed = false;
+            ids = new Set();
         }
     };
+}
+
+/** Conservative channel/thread-id evidence from an activation path (a click/keydown
+ *  composedPath). Supported evidence: an anchor whose href is /channels/<guild>/<id>,
+ *  stable data-channel-id / data-list-item-id attributes, and the node's OWN React
+ *  fiber memoizedProps (channel.id / thread.id / channelId) — digit ids only. Anything
+ *  else (plain divs, non-channel hrefs, ancestor fibers, generic `id` props)
+ *  contributes nothing, so an unrelated click never arms intent. */
+export function extractActivationIds(path: readonly unknown[]): string[] {
+    const ids: string[] = [];
+    const push = (raw: unknown) => {
+        const id = typeof raw === "string" ? raw.trim() : "";
+        if (/^\d+$/.test(id) && !ids.includes(id)) ids.push(id);
+    };
+    for (const node of path) {
+        if (!node || typeof node !== "object") continue;
+        const el = node as {
+            getAttribute?: (name: string) => string | null;
+            [key: string]: unknown;
+        };
+        if (typeof el.getAttribute === "function") {
+            const href = el.getAttribute("href");
+            if (href) {
+                const m = /\/channels\/[^/]+\/(\d+)(?:\/|$)/.exec(href);
+                if (m) push(m[1]);
+            }
+            push(el.getAttribute("data-channel-id"));
+            push(el.getAttribute("data-list-item-id"));
+        }
+        for (const key of Object.keys(el)) {
+            if (!key.startsWith("__reactFiber$") && !key.startsWith("__reactInternalInstance$")) continue;
+            const fiber = el[key] as { memoizedProps?: unknown } | null | undefined;
+            const props = fiber?.memoizedProps as Record<string, unknown> | undefined;
+            if (!props || typeof props !== "object") continue;
+            push(props.channelId);
+            const channel = props.channel as { id?: unknown } | undefined;
+            if (channel && typeof channel === "object") push(channel.id);
+            const thread = props.thread as { id?: unknown } | undefined;
+            if (thread && typeof thread === "object") push(thread.id);
+        }
+    }
+    return ids;
 }
