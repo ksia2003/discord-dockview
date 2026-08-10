@@ -16,10 +16,9 @@
  * per window — so each thread keeps its composer draft + scroll while hidden. Only the ACTIVE
  * thread tab's portal is shown (positioned over the dock body); the rest are display:none.
  *
- * Positioning: while a portal is visible a rAF loop syncs its fixed rect to the live
- * `.dockview-body` bounding box (cheap; only runs while a thread tab is the active view), so
- * a dock resize / window resize / layout shift keeps the chat aligned with no per-event
- * wiring. The loop stops when no portal is visible.
+ * Positioning is event-driven. Explicit F9/window geometry changes synchronise in the
+ * same turn, and a ResizeObserver coalesces ambient Dock body size changes into one frame.
+ * A steady thread therefore performs no per-frame layout reads or style writes.
  *
  * NO module-top React.createElement / webpack access — createRoot + React are touched only
  * inside the functions below.
@@ -50,8 +49,11 @@ interface Portal {
 const portals = new Map<string, Portal>();
 // The thread whose portal is currently shown (positioned over the dock body), or null.
 let visibleThread: string | null = null;
-// The rAF handle for the position-sync loop (runs only while a portal is visible).
+// Resize work is frame-coalesced; unlike the old loop this handle is normally zero while
+// the portal is steady.
 let syncRaf = 0;
+let syncObserver: ResizeObserver | null = null;
+let observedBody: HTMLElement | null = null;
 
 const OVERLAY_CLASS = "dockview-thread-portal";
 
@@ -102,30 +104,43 @@ function positionOver(node: HTMLElement, body: HTMLElement | null): void {
     else restoreRetainedChatScrollAnchor(node);
 }
 
-/** The rAF loop: keep the visible portal aligned to the live dock body rect. Self-stops
- *  when no portal is visible. */
-function syncLoop(): void {
-    syncRaf = 0;
-    if (!visibleThread) return;
-    syncVisibleThreadPortalNow();
-    syncRaf = (window.requestAnimationFrame || ((cb: any) => setTimeout(cb, 16)))(syncLoop);
+function scheduleObservedSync(): void {
+    if (syncRaf || !visibleThread) return;
+    const raf = window.requestAnimationFrame || ((cb: FrameRequestCallback) => window.setTimeout(cb, 16));
+    syncRaf = raf(() => {
+        syncRaf = 0;
+        syncVisibleThreadPortalNow();
+    });
 }
 
-/** Synchronise in the caller's current layout turn. The rAF loop is the ordinary
- * backstop, but explicit geometry changes (F9 presets and window resize) must call this
- * after updating the host so the browser can never paint one frame with the old portal
- * rect over the new Dock body. */
+function observeBody(body: HTMLElement | null): void {
+    if (body === observedBody && syncObserver) return;
+    syncObserver?.disconnect();
+    syncObserver = null;
+    observedBody = body;
+    if (!body || typeof ResizeObserver !== "function") return;
+    syncObserver = new ResizeObserver(scheduleObservedSync);
+    syncObserver.observe(body);
+}
+
+/** Synchronise in the caller's current layout turn. ResizeObserver is the ambient
+ * backstop; explicit F9 and window geometry changes call this before the browser paints. */
 export function syncVisibleThreadPortalNow(): void {
     if (!visibleThread) return;
     const p = portals.get(visibleThread);
-    if (p) positionOver(p.node, dockBodyEl());
+    const body = dockBodyEl();
+    observeBody(body);
+    if (p) positionOver(p.node, body);
 }
 
 function startSync(): void {
-    if (!syncRaf) syncRaf = (window.requestAnimationFrame || ((cb: any) => setTimeout(cb, 16)))(syncLoop);
+    syncVisibleThreadPortalNow();
 }
 function stopSync(): void {
     if (syncRaf) { (window.cancelAnimationFrame || clearTimeout)(syncRaf); syncRaf = 0; }
+    syncObserver?.disconnect();
+    syncObserver = null;
+    observedBody = null;
 }
 
 // A lazy error-boundary class (created on first use — React must not be touched at module
@@ -260,8 +275,7 @@ export function showThreadPortal(threadId: string): number {
     ensureThreadPortal(threadId);
     visibleThread = threadId;
     for (const [id, p] of portals) {
-        if (id === threadId) positionOver(p.node, dockBodyEl());
-        else {
+        if (id !== threadId) {
             retainChatScrollAnchor(p.node);
             p.node.style.display = "none";
         }

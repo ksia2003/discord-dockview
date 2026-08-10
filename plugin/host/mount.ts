@@ -20,10 +20,9 @@
  *
  * FALLBACK PATH (injection): if the patch never applies (Discord shifted the anchor),
  * the host would never appear. startHost arms a one-shot check; when the host is still
- * absent after the grace window it engages the OLD DOM-injection host — an 800ms
- * heartbeat re-running ensureHost + a MutationObserver that re-injects on detach —
- * so the dock keeps working (with the historical flicker) instead of dying silently.
- * The heartbeat/observer live ONLY in this fallback path.
+ * absent after the grace window it engages the DOM-injection host. A scoped observer
+ * reacts only to page topology changes and a slow heartbeat remains as a recovery
+ * backstop. Both are stopped as soon as the legitimate patched host appears.
  */
 
 import { createRoot, React } from "@vencord/types/webpack/common";
@@ -41,15 +40,23 @@ import { setOwnedPortalsTemporarilyHidden } from "./ownedPortalVisibility";
 import { getUnifiedChannelHeader, markUnifiedRailSeen, setUnifiedHeaderActive } from "./unifiedHeader";
 
 const HOST_ID = "dockview-root";
+const FALLBACK_HOST_ATTR = "data-dockview-fallback-host";
 
 // How long to wait for the patch to render the host before falling back to injection.
 const PATCH_GRACE_MS = 4000;
+// The observer handles ordinary parent-row changes. This slow heartbeat is only a
+// recovery backstop for a page-inner replacement outside the observed subtree.
+const FALLBACK_HEARTBEAT_MS = 2500;
 
 type Mode = "pending" | "patched" | "fallback";
 let mode: Mode = "pending";
 
 let root: Root | null = null; // React root
 let rootHost: HTMLElement | null = null; // the node `root` is bound to
+// Exact DOM node created by the fallback path. Never rediscover it by duplicate id: a
+// late patched placeholder can coexist briefly, and moving that React-owned node would
+// fight Discord's reconciler.
+let injectedHost: HTMLElement | null = null;
 // F9 temporary-hide is session-only. The React root and every tab stay mounted; only
 // the host's layout class is removed, so showing it restores the exact previous view.
 let temporarilyHidden = false;
@@ -62,10 +69,20 @@ let active = false;
 // is the "blank dock / ghost tab" fingerprint. refIgnored counts hidden-duplicate
 // placeholder attaches we deliberately did NOT bind (see the steal guard). Read via
 // __dockView.mountStats.
-const stats = { rootCreates: 0, rootAdopts: 0, rootUnmounts: 0, refAttach: 0, refDetach: 0, refIgnored: 0 };
-export function mountStats(): { rootCreates: number; rootAdopts: number; rootUnmounts: number; refAttach: number; refDetach: number; refIgnored: number } {
-    return { ...stats };
+const stats = {
+    rootCreates: 0, rootAdopts: 0, rootUnmounts: 0,
+    refAttach: 0, refDetach: 0, refIgnored: 0,
+    fallbackEngages: 0, fallbackPromotions: 0,
+    fallbackEnsures: 0, fallbackObserverBatches: 0, fallbackTopologyRepairs: 0
+};
+export function mountStats() {
+    return {
+        ...stats,
+        fallbackHeartbeatActive: heartbeat != null,
+        fallbackObserverActive: observer != null
+    };
 }
+export function mountMode(): Mode { return mode; }
 
 // A small op ring-buffer (__dockView.mountDebug) — the E3 family of races was only
 // diagnosable with exact op ordering, and a createRoot throw must be VISIBLE (it used to
@@ -253,7 +270,6 @@ export function renderDockRail(channelView?: any): any {
             if (!active) return;
             bound = el;
             stats.refAttach++;
-            mode = "patched";
             // STEAL GUARD (E3): a hidden duplicate instance's placeholder must not take
             // the root away from a healthy active tree — binding it would empty the dock
             // the user is looking at and render into the cached tree. The host itself is
@@ -268,7 +284,20 @@ export function renderDockRail(channelView?: any): any {
                 stats.refIgnored++;
                 return;
             }
+            // A slow Discord bootstrap can cross PATCH_GRACE_MS before this legitimate
+            // placeholder appears. Promote to the primary path and stop every fallback
+            // timer/observer immediately; leaving them alive made ordinary chat churn
+            // repeatedly scan and rewrite DockView layout for the rest of the session.
+            const staleInjectedHost = injectedHost;
+            const promotedFromFallback = mode === "fallback";
+            stopFallbackInfrastructure();
+            mode = "patched";
+            if (promotedFromFallback) stats.fallbackPromotions++;
             bindRoot(el);
+            if (staleInjectedHost && staleInjectedHost !== el) {
+                if (injectedHost === staleInjectedHost) injectedHost = null;
+                staleInjectedHost.remove();
+            }
             applyOpenState();
         }
     });
@@ -396,20 +425,32 @@ let observedParent: HTMLElement | null = null;
 let debounce: any = null;
 let heartbeat: any = null;
 
+function stopFallbackInfrastructure(): void {
+    if (heartbeat != null) { clearInterval(heartbeat); heartbeat = null; }
+    observer?.disconnect();
+    observer = null;
+    observedParent = null;
+    clearTimeout(debounce);
+    debounce = null;
+}
+
 /** Inject the host as the page-inner's last flex child and bind the root. Cheap +
- *  idempotent; the heartbeat calls it forever. Used only in the fallback path. */
+ *  idempotent; used only in the temporary fallback path. */
 function ensureHostInjected(): boolean {
+    stats.fallbackEnsures++;
     const inner = findPageInner(null);
     if (!inner) return false;
     const chat = findChat(inner);
     if (!chat) return false;
 
-    let host = document.getElementById(HOST_ID);
-    const inPlace = host && host.parentElement === inner && host === inner.lastElementChild;
+    let host = injectedHost?.isConnected ? injectedHost : null;
+    const inPlace = host?.parentElement === inner && host === inner.lastElementChild;
     if (!inPlace) {
         if (!host) {
             host = document.createElement("div");
             host.id = HOST_ID;
+            host.setAttribute(FALLBACK_HOST_ATTR, "true");
+            injectedHost = host;
         }
         inner.appendChild(host);
     }
@@ -426,12 +467,24 @@ function attachObserver(): void {
     observer?.disconnect();
     observedParent = inner;
     observer = new MutationObserver(records => {
-        if (records.some(r =>
+        stats.fallbackObserverBatches++;
+        const exclusiveSlotChanged = records.some(r =>
             r.target === observedParent
             || Array.from(r.addedNodes).some(nodeMayContainExclusiveRightSlot)
-        )) {
-            hideExclusiveRightSlot();
-        }
+        );
+        if (exclusiveSlotChanged) hideExclusiveRightSlot();
+
+        // Nested message/composer mutations are normal Discord work and cannot detach
+        // our direct page-inner child. Do not debounce a full host/layout pass for them.
+        const topologyChanged = !injectedHost?.isConnected || records.some(r =>
+            r.target === observedParent
+            || Array.from(r.removedNodes).some(node =>
+                node === injectedHost
+                || (node instanceof Element && !!injectedHost && node.contains(injectedHost))
+            )
+        );
+        if (!topologyChanged) return;
+        stats.fallbackTopologyRepairs++;
         clearTimeout(debounce);
         debounce = setTimeout(() => {
             ensureHostInjected();
@@ -439,7 +492,10 @@ function attachObserver(): void {
             if (cur && cur !== observedParent) attachObserver();
         }, 150);
     });
-    observer.observe(inner, { childList: true, subtree: true });
+    // The fallback host and Discord's exclusive side rail are direct page-inner
+    // children. Watching that row only avoids waking DockView for message, reaction,
+    // typing-indicator and composer mutations deep inside the chat subtree.
+    observer.observe(inner, { childList: true });
 }
 
 /** Engage the fallback: switch mode, start the heartbeat + observer, inject now. Called
@@ -447,10 +503,16 @@ function attachObserver(): void {
 function engageFallback(): void {
     if (!active || mode === "fallback") return;
     mode = "fallback";
+    stats.fallbackEngages++;
     console.warn("[DockView] layout patch did not apply — falling back to DOM injection host.");
     heartbeat = setInterval(() => {
+        // A healthy fallback is already protected by the direct-row observer. Poll only
+        // for the exceptional case where Discord replaces the entire page-inner outside
+        // that observer; do no geometry writes during an otherwise steady session.
+        const currentInner = findPageInner(null);
+        if (injectedHost?.isConnected && (!currentInner || currentInner === observedParent)) return;
         if (ensureHostInjected()) attachObserver();
-    }, 800);
+    }, FALLBACK_HEARTBEAT_MS);
     if (ensureHostInjected()) attachObserver();
 }
 
@@ -473,7 +535,7 @@ export function startHost(): void {
     patchCheck = setTimeout(() => {
         patchCheck = null;
         if (!active) return;
-        if (!document.getElementById(HOST_ID)) engageFallback();
+        if (!selectDockHost()) engageFallback();
     }, PATCH_GRACE_MS);
 }
 
@@ -481,9 +543,9 @@ export function startHost(): void {
  *  can't re-inject), kills the patch-check timer + fallback heartbeat/observer, restores
  *  the native sidebars, then unmounts our React root.
  *
- *  Node ownership decides the sweep: in the FALLBACK path the host div is ours (we
- *  document.createElement + appendChild it), so we TRIPLE-SWEEP it by id (immediate +
- *  microtask + setTimeout — React 18's root.unmount() may defer detaching its container).
+ *  Node ownership decides cleanup: in the FALLBACK path the exact host div tracked in
+ *  injectedHost is ours (we document.createElement + appendChild it), so only that node
+ *  is removed after root teardown.
  *  In the PATCHED path the placeholder belongs to Discord's React tree; sweeping it would
  *  fight the reconciler and — because Discord won't re-render the channel-view just
  *  because our plugin restarted — it would NOT come back, dropping a stop→start cycle onto
@@ -491,18 +553,12 @@ export function startHost(): void {
  *  re-start's ensureHost rebinds the still-present node instantly, and a genuine disable
  *  leaves an inert display:none div that Discord drops on its next channel-view render. */
 export function stopHost(): void {
-    const wasFallback = mode === "fallback";
     active = false;
     setUnifiedHeaderActive(false);
     temporarilyHidden = false;
     mode = "pending";
     if (patchCheck != null) { clearTimeout(patchCheck); patchCheck = null; }
-    if (heartbeat != null) { clearInterval(heartbeat); heartbeat = null; }
-    observer?.disconnect();
-    observer = null;
-    observedParent = null;
-    clearTimeout(debounce);
-    debounce = null;
+    stopFallbackInfrastructure();
     restoreHiddenMembers();
     const r = root;
     root = null;
@@ -517,11 +573,13 @@ export function stopHost(): void {
     // pending retirement lands via its own microtask) — a restart must CREATE fresh roots,
     // never adopt an unmounted one (render into it throws).
     containerRoots.clear();
-    if (!wasFallback) return; // patched: leave Discord's placeholder node for a fast rebind.
-    const removeHosts = () => {
-        document.querySelectorAll(`#${HOST_ID}`).forEach(el => el.remove());
-    };
-    removeHosts();
-    Promise.resolve().then(removeHosts);
-    setTimeout(removeHosts, 0);
+    // Only the exact node we created is ours to remove. Patched placeholders belong to
+    // Discord and stay in place for a fast plugin restart.
+    const fallbackHost = injectedHost;
+    injectedHost = null;
+    if (!fallbackHost) return;
+    const removeFallbackHost = () => fallbackHost.remove();
+    removeFallbackHost();
+    Promise.resolve().then(removeFallbackHost);
+    setTimeout(removeFallbackHost, 0);
 }

@@ -36,7 +36,10 @@ interface Portal {
 
 const portals = new Map<string, Portal>();
 let visibleChannel: string | null = null;
+// Resize work is frame-coalesced; steady portals do not run an animation-frame loop.
 let syncRaf = 0;
+let syncObserver: ResizeObserver | null = null;
+let observedTarget: HTMLElement | null = null;
 let showSeq = 0;
 let BoundaryClass: any = null;
 
@@ -78,29 +81,45 @@ function positionOver(node: HTMLElement, target: HTMLElement | null): void {
     else restoreRetainedChatScrollAnchor(node);
 }
 
-function syncLoop(): void {
-    syncRaf = 0;
-    if (!visibleChannel) return;
-    syncVisibleVoiceChatPortalNow();
-    syncRaf = (window.requestAnimationFrame || ((cb: FrameRequestCallback) => window.setTimeout(cb, 16)))(syncLoop);
+function scheduleObservedSync(): void {
+    if (syncRaf || !visibleChannel) return;
+    const raf = window.requestAnimationFrame || ((cb: FrameRequestCallback) => window.setTimeout(cb, 16));
+    syncRaf = raf(() => {
+        syncRaf = 0;
+        syncVisibleVoiceChatPortalNow();
+    });
+}
+
+function observeTarget(target: HTMLElement | null): void {
+    if (target === observedTarget && syncObserver) return;
+    syncObserver?.disconnect();
+    syncObserver = null;
+    observedTarget = target;
+    if (!target || typeof ResizeObserver !== "function") return;
+    syncObserver = new ResizeObserver(scheduleObservedSync);
+    syncObserver.observe(target);
 }
 
 /** Same-turn geometry seam used by F9 and real window resizes. The animation-frame
- * loop remains the backstop for ambient Discord layout shifts. */
+ * observer remains the backstop for ambient Discord layout shifts. */
 export function syncVisibleVoiceChatPortalNow(): void {
     if (!visibleChannel) return;
     const portal = portals.get(visibleChannel);
-    if (portal) positionOver(portal.node, targetEl());
+    const target = targetEl();
+    observeTarget(target);
+    if (portal) positionOver(portal.node, target);
 }
 
 function startSync(): void {
-    if (!syncRaf) syncRaf = (window.requestAnimationFrame || ((cb: FrameRequestCallback) => window.setTimeout(cb, 16)))(syncLoop);
+    syncVisibleVoiceChatPortalNow();
 }
 
 function stopSync(): void {
-    if (!syncRaf) return;
-    (window.cancelAnimationFrame || window.clearTimeout)(syncRaf);
+    if (syncRaf) (window.cancelAnimationFrame || window.clearTimeout)(syncRaf);
     syncRaf = 0;
+    syncObserver?.disconnect();
+    syncObserver = null;
+    observedTarget = null;
 }
 
 function portalBoundary(): any {
@@ -237,8 +256,7 @@ export function showVoiceChatPortal(channelId: string): number {
     ensureVoiceChatPortal(channelId);
     visibleChannel = channelId;
     for (const [id, portal] of portals) {
-        if (id === channelId) positionOver(portal.node, targetEl());
-        else {
+        if (id !== channelId) {
             retainChatScrollAnchor(portal.node);
             portal.node.style.display = "none";
         }

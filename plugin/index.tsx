@@ -65,7 +65,7 @@ import {
 } from "./host/layout";
 import {
     applyOpenState, ensureHost, isDockTemporarilyHidden, liveHost, mountDebugLog,
-    mountStats, renderDockRail, revealDock, toggleDockTemporaryVisibility
+    mountMode, mountStats, renderDockRail, revealDock, toggleDockTemporaryVisibility
 } from "./host/mount";
 import { registerHost, startHost, stopHost } from "./host/open";
 import {
@@ -143,7 +143,7 @@ function commitF9MemberColumnsBeforePaint(): void {
 }
 
 /** Body-level native chat portals sit outside DockView's layout tree. Move them in the
- * same turn as an explicit Dock geometry change; their own rAF loops remain backstops. */
+ * same turn as an explicit Dock geometry change; ResizeObserver handles ambient changes. */
 function syncVisibleChatPortalsNow(): void {
     syncVisibleThreadPortalNow();
     syncVisibleVoiceChatPortalNow();
@@ -175,6 +175,7 @@ function exposeDebug(): void {
         // rendererLive=false or rootBound=false while a dock is on screen == the "frozen
         // stale strip" fingerprint (requestRender is a dead write into a torn-down root).
         get mountStats() { return mountStats(); },
+        get mountMode() { return mountMode(); },
         get mountDebug() { return mountDebugLog(); },
         get rendererLive() { return isRendererLive(); },
         get rootBound() { const h = liveHost(); return !!(h && h.isConnected); },

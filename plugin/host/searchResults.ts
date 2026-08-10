@@ -16,6 +16,7 @@ import { getActiveWindow } from "../engine/window";
 import { selectThreadPortal } from "../viewers/thread/threadPortal";
 import { captureProviderStack, getProviderStack } from "./slotComponents";
 import { getChannelById, getCurrentChannelId } from "./channel";
+import { findPageInnerForHost, selectDockHost } from "./hostSelection";
 import {
     isSearchSurfaceActive as isScopeSearchSurfaceActive,
     SearchSurfaceRegistry,
@@ -29,7 +30,8 @@ export type SearchEntry = SearchSurfaceEntry;
 export type DockContextView = ContextView | "search";
 
 const searchRegistry = new SearchSurfaceRegistry();
-const searchReopenListeners = new Map<string, { editor: HTMLElement; listener: EventListener; entry: SearchEntry; }>();
+const searchReopenEntries = new Map<string, SearchEntry>();
+let searchReopenListenerInstalled = false;
 const queuedScopes = new Set<string>();
 const queuedRefreshScopes = new Set<string>();
 
@@ -61,7 +63,13 @@ function currentChannelId(): string | null {
 }
 
 function nativeSearchEditor(): HTMLElement | null {
-    return document.querySelector<HTMLElement>(".dockview-unified-header [role='combobox']");
+    const selector = ".dockview-unified-header [role='combobox'][data-slate-editor='true']";
+    // Channel transitions can briefly keep two connected header trees. Resolve the
+    // editor from the same active page tree as DockView's live host so Enter never binds
+    // to or reads a cached channel instance that merely appears first in document order.
+    const pageInner = findPageInnerForHost(selectDockHost());
+    return pageInner?.querySelector<HTMLElement>(selector)
+        ?? document.querySelector<HTMLElement>(selector);
 }
 
 function nativeSearchQueryText(): string | null {
@@ -156,12 +164,13 @@ export function captureNativeSearchResults(sidebar: any, channelView: any): any 
     if (isSearch) {
         if (sidebar == null) return null;
         const searchQuery = nativeSearchQueryText();
-        const { firstOpen } = searchRegistry.capture(
+        const { firstOpen, evictedScopeIds } = searchRegistry.capture(
             scopeId,
             channelId,
             sidebar,
             providerStackSnapshot()
         );
+        for (const evictedScopeId of evictedScopeIds) clearSearchReopenListener(evictedScopeId);
         if (firstOpen || (!searchRegistry.isVisible(scopeId) && searchQuery != null)) queueOpen(scopeId);
         else queueRefresh(scopeId);
         return null;
@@ -254,31 +263,41 @@ function nativeSearchControlButton(): HTMLElement | null {
 }
 
 function clearSearchReopenListener(scopeId: string, entry?: SearchEntry): void {
-    const armed = searchReopenListeners.get(scopeId);
-    if (!armed || (entry != null && armed.entry !== entry)) return;
-    armed.editor.removeEventListener("keydown", armed.listener, true);
-    searchReopenListeners.delete(scopeId);
+    const armed = searchReopenEntries.get(scopeId);
+    if (!armed || (entry != null && armed !== entry)) return;
+    searchReopenEntries.delete(scopeId);
+    if (searchReopenEntries.size === 0 && searchReopenListenerInstalled) {
+        document.removeEventListener("keydown", onSearchEditorKeyDown, true);
+        searchReopenListenerInstalled = false;
+    }
+}
+
+function onSearchEditorKeyDown(event: Event): void {
+    if (!(event instanceof KeyboardEvent) || event.key !== "Enter") return;
+    const editor = nativeSearchEditor();
+    if (!editor || !(event.target instanceof Node) || !editor.contains(event.target)) return;
+    const scopeId = scopeForChannel(currentChannelId());
+    const entry = scopeId ? searchReopenEntries.get(scopeId) : null;
+    if (!scopeId || !entry) return;
+    queueMicrotask(() => {
+        if (searchRegistry.get(scopeId) !== entry || nativeSearchQueryText() == null) return;
+        searchRegistry.activate(scopeId);
+        selectThreadPortal(null);
+        hostActions().revealDock();
+        requestRender();
+        clearSearchReopenListener(scopeId, entry);
+    });
 }
 
 function armSearchReopenOnEnter(scopeId: string, entry: SearchEntry): void {
     clearSearchReopenListener(scopeId);
-    const editor = nativeSearchEditor();
-    if (!editor) return;
-    const listener: EventListener = event => {
-        if (!(event instanceof KeyboardEvent) || event.key !== "Enter") return;
-        queueMicrotask(() => {
-            if (searchRegistry.get(scopeId) !== entry || nativeSearchQueryText() == null) return;
-            searchRegistry.activate(scopeId);
-            selectThreadPortal(null);
-            hostActions().revealDock();
-            requestRender();
-            clearSearchReopenListener(scopeId, entry);
-        });
-    };
-    searchReopenListeners.set(scopeId, { editor, listener, entry });
-    editor.addEventListener("keydown", listener, true);
-    while (searchReopenListeners.size > 3) {
-        const oldest = searchReopenListeners.keys().next().value as string | undefined;
+    searchReopenEntries.set(scopeId, entry);
+    if (!searchReopenListenerInstalled) {
+        document.addEventListener("keydown", onSearchEditorKeyDown, true);
+        searchReopenListenerInstalled = true;
+    }
+    while (searchReopenEntries.size > 1) {
+        const oldest = searchReopenEntries.keys().next().value as string | undefined;
         if (oldest == null) break;
         clearSearchReopenListener(oldest);
     }
@@ -318,7 +337,7 @@ export function getNativeSearchQuery(channelId: string | null): string | null {
 export function clearNativeSearchResults(): void {
     const hadEntries = searchRegistry.all().length > 0;
     searchRegistry.clear();
-    for (const scopeId of [...searchReopenListeners.keys()]) clearSearchReopenListener(scopeId);
+    for (const scopeId of [...searchReopenEntries.keys()]) clearSearchReopenListener(scopeId);
     queuedScopes.clear();
     queuedRefreshScopes.clear();
     if (hadEntries) requestRender();

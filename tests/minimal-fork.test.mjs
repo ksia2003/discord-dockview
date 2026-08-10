@@ -207,11 +207,13 @@ test("an active thread portal is bound before its tab can paint blank", () => {
     assert.match(load, /selectThreadPortal\(null\);\s*showContent/);
     assert.match(search, /searchRegistry\.activate\(scopeId\);\s*selectThreadPortal\(null\)/);
     assert.match(portal, /export function syncVisibleThreadPortalNow\(\): void/);
-    assert.match(portal, /function syncLoop\(\): void \{[\s\S]*syncVisibleThreadPortalNow\(\)/);
+    assert.match(portal, /new ResizeObserver\(scheduleObservedSync\)/);
+    assert.doesNotMatch(portal, /function syncLoop\(/);
     assert.match(portal, /if \(!p\.rendered\) \{\s*p\.rendered = renderPortal\(p\)/);
     assert.match(portal, /function scheduleInitialRender\(p: Portal\): void/);
     assert.match(voicePortal, /export function syncVisibleVoiceChatPortalNow\(\): void/);
-    assert.match(voicePortal, /function syncLoop\(\): void \{[\s\S]*syncVisibleVoiceChatPortalNow\(\)/);
+    assert.match(voicePortal, /new ResizeObserver\(scheduleObservedSync\)/);
+    assert.doesNotMatch(voicePortal, /function syncLoop\(/);
     assert.match(voicePortal, /if \(!portal\.rendered\) \{\s*portal\.rendered = renderPortal\(portal\)/);
     assert.match(voicePortal, /createInitialRenderRetry/);
     assert.match(voicePortal, /renderRetry: InitialRenderRetryController \| null/);
@@ -332,6 +334,9 @@ test("guild Channel and voice Chat are permanent dock surfaces", () => {
     assert.doesNotMatch(searchResults, /toggleDockWidthMode|applyHostWidth/);
     assert.match(searchBody, /getNativeSearchEntries/);
     assert.match(tabs, /searchTabElement/);
+    assert.match(searchResults, /channel\.type !== 0/);
+    assert.match(searchResults, /\[role='combobox'\]\[data-slate-editor='true'\]/);
+    assert.doesNotMatch(tabs, /!unified && hasNativeSearchResults\(channelId\)/);
     assert.match(css, /dockview-search-results-body/);
     assert.match(
         source("plugin/host/channelView.ts"),
@@ -407,7 +412,12 @@ test("Search close keeps the native tree resident and Enter reactivates it", () 
     assert.match(searchResults, /searchRegistry\.hideIfSource\(scopeId, sourceChannelId\)/);
     assert.match(searchResults, /!searchRegistry\.isVisible\(scopeId\) && searchQuery != null/);
     assert.match(searchResults, /armSearchReopenOnEnter\(scopeId, entryAtClose\)/);
-    assert.match(searchResults, /editor\.addEventListener\("keydown", listener, true\)/);
+    assert.match(searchResults, /document\.addEventListener\("keydown", onSearchEditorKeyDown, true\)/);
+    assert.match(searchResults, /document\.removeEventListener\("keydown", onSearchEditorKeyDown, true\)/);
+    assert.match(searchResults, /const editor = nativeSearchEditor\(\)/);
+    assert.match(searchResults, /findPageInnerForHost\(selectDockHost\(\)\)/);
+    assert.match(searchResults, /editor\.contains\(event\.target\)/);
+    assert.doesNotMatch(searchResults, /searchReopenListeners/);
     assert.match(searchResults, /event\.key !== "Enter"/);
     assert.match(searchResults, /searchRegistry\.activate\(scopeId\)/);
     // The editor query is judged by Slate semantic content only: a placeholder
@@ -416,6 +426,18 @@ test("Search close keeps the native tree resident and Enter reactivates it", () 
     assert.match(searchResults, /data-slate-placeholder/);
     assert.match(searchResults, /slateSearchEditorQuery\(/);
     assert.doesNotMatch(searchResults, /editor\.textContent|aria-label/);
+});
+
+test("fallback host promotion stops polling and never adopts Discord's patched node", () => {
+    const mount = source("plugin/host/mount.ts");
+
+    assert.match(mount, /const FALLBACK_HEARTBEAT_MS = 2500/);
+    assert.match(mount, /const FALLBACK_HOST_ATTR = "data-dockview-fallback-host"/);
+    assert.match(mount, /const staleInjectedHost = injectedHost;[\s\S]*stopFallbackInfrastructure\(\);[\s\S]*mode = "patched";[\s\S]*bindRoot\(el\)/);
+    assert.match(mount, /let host = injectedHost\?\.isConnected \? injectedHost : null/);
+    assert.doesNotMatch(mount, /let host = document\.getElementById\(HOST_ID\)/);
+    assert.match(mount, /if \(!topologyChanged\) return;/);
+    assert.match(mount, /observer\?\.disconnect\(\);[\s\S]*clearTimeout\(debounce\)/);
 });
 
 test("tab headers reclaim the outer left inset without crowding tab contents", () => {
