@@ -369,6 +369,7 @@ test("package, test, release, and maintenance paths preserve split runtime owner
     assert.match(releaseWorkflow, /gh release create "\$TAG" --verify-tag --prerelease/);
     assert.match(releaseWorkflow, /needs:\s*\[prepare-release, test\]/);
     assert.match(releaseWorkflow, /name: Run tests\s+run: pnpm test/);
+    assert.equal((releaseWorkflow.match(/fetch-depth:\s*0/g) ?? []).length, 4);
     assert.match(releaseWorkflow, /fail-fast:\s*false/);
     assert.match(releaseWorkflow, /CSC_IDENTITY_AUTO_DISCOVERY=false/);
     assert.match(releaseWorkflow, /--config\.mac\.notarize=false/);
