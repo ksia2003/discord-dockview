@@ -1669,11 +1669,18 @@ html.dockview-prime-voice-chat div[class*="chatLayerWrapper"]:not(.dockview-wrap
 /* IMAGE renderer (content type "image"): a centered, fit(contain) image with
    zoom + pan, like Discord's lightbox / a browser image viewer (replaces the
    old fit-width + vertical-scroll model). The wrap fills the body and centers
-   the <img>; the <img> is fit via max-width/height:100% + object-fit:contain at
-   scale 1, then a JS transform applies zoom (scale) + pan (translate). A low-
-   contrast CSS checkerboard painted BEHIND the <img> (see .dockview-img) shows
-   through transparent PNGs. The body must NOT scroll here —
-   panning is done with the transform — so the wrap clips overflow. */
+   the <img>; the JS body sizes the <img> to its FINAL rendered dimensions (fit
+   × zoom) and the transform applies only pan (translate) + rotation — never
+   scale — so 100% (one source pixel per CSS pixel) rasters crisp instead of
+   upscaling a fit-sized layer. No max-width/height constraints live in CSS —
+   the JS owns the sizing (explicit width/height + max-width/height:none once
+   loaded; a matching inline max-width/height is the PRE-LOAD fallback until
+   naturalWidth/Height are known), so nothing can fight the explicit size.
+   object-fit:contain is a no-op on the exact-aspect sized box and only matters
+   for that pre-load fallback. A low-contrast CSS checkerboard painted BEHIND
+   the <img> (see .dockview-img) shows through transparent PNGs. The body must
+   NOT scroll here — panning is done with the transform — so the wrap clips
+   overflow. */
 .dockview-img-wrap {
     position: absolute;
     inset: 0;
@@ -1693,8 +1700,6 @@ html.dockview-prime-voice-chat div[class*="chatLayerWrapper"]:not(.dockview-wrap
 .dockview-img-wrap.dockview-img-zoomed:active { cursor: grabbing; }
 .dockview-img {
     display: block;
-    max-width: 100%;
-    max-height: 100%;
     width: auto;
     height: auto;
     object-fit: contain;
@@ -1703,7 +1708,6 @@ html.dockview-prime-voice-chat div[class*="chatLayerWrapper"]:not(.dockview-wrap
     box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
     -webkit-user-select: none;
     user-select: none;
-    will-change: transform;
     /* A very-low-contrast checkerboard painted BEHIND the <img>: it only shows
        through transparent pixels (opaque images fully cover it, so there's no
        visual change there). Two near-identical dark greys keep it subtle on the
@@ -1757,10 +1761,6 @@ html.dockview-prime-voice-chat div[class*="chatLayerWrapper"]:not(.dockview-wrap
 .dockview-lightbox-stage.dockview-img-zoomed:active { cursor: grabbing; }
 .dockview-lightbox-img {
     display: block;
-    /* Leave a margin so the fitted image never bleeds to the screen edge under
-       the close button (matches Discord's lightbox padding). */
-    max-width: calc(100% - 96px);
-    max-height: calc(100% - 96px);
     width: auto;
     height: auto;
     object-fit: contain;
@@ -1768,7 +1768,6 @@ html.dockview-prime-voice-chat div[class*="chatLayerWrapper"]:not(.dockview-wrap
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
     -webkit-user-select: none;
     user-select: none;
-    will-change: transform;
 }
 /* Close affordance: a round button in the top-right, above the stage. */
 .dockview-lightbox-close {

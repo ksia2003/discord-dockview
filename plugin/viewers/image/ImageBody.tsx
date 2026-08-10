@@ -2,7 +2,10 @@
  * The INLINE IMAGE body — a centered, fit(contain) <img> with zoom + pan.
  *
  * Modelled on Discord's lightbox / a browser image viewer:
- *   - scale 1 = fit (CSS object-fit:contain keeps the whole image visible).
+ *   - scale 1 = fit. The <img> is sized to its FINAL rendered dimensions (fit ×
+ *     zoom) and the transform carries only pan + rotation — never scale — so
+ *     100% (one source pixel per CSS pixel) is crisp, not an upscaled
+ *     fit-sized layer.
  *   - wheel = zoom toward the cursor; double-click = toggle fit <-> 100% (real
  *     pixels); drag = pan when zoomed past fit. The header toolbar +/-/reset/
  *     fullscreen and the keyboard (+/-/0, f, ←/→) drive the same state via the
@@ -33,6 +36,7 @@ import type { DockWindow, ImgViewState } from "../../engine/types";
 import { galleryCanStep, galleryStep } from "./gallery";
 import { ImageLightbox } from "./ImageLightbox";
 import { ImageContextMenu } from "./ImageContextMenu";
+import { imgBox as sizeImgBox, panClamp, zoomCap, zoomForHundred } from "./size";
 
 // The live-controller slot name (the old `imgControls` module singleton).
 export const IMAGE_CONTROLLER = "image";
@@ -44,6 +48,9 @@ export const IMAGE_CONTROLLER = "image";
 // inline body and the overlay drive one shared view-state, so the picture stays
 // exactly where the user left it across the transition.
 const IMG_MIN_SCALE = 1; // never below fit
+// A fixed 8× floor, raised per-surface to the 100% zoom when a narrow dock
+// would need more (zoomCap in size.ts) so double-click always lands at one
+// source pixel per CSS pixel.
 const IMG_MAX_SCALE = 8;
 
 /** The window's image view-state slice, created on demand. The VERY FIRST window
@@ -104,41 +111,55 @@ export function useImageInteraction(
     // controller its unmount-cleanup would null the slot the still-mounted inline
     // body needs — leaving the toolbar/keyboard dead after the first fullscreen
     // round-trip.
-    registerControls = true
+    registerControls = true,
+    // The margin subtracted from the wrap when fitting (the lightbox keeps a
+    // 96px edge margin; the inline body fits the whole wrap → 0).
+    fitPad = 0
 ) {
     const { useRef, useEffect } = React;
     const iv = imgState(getActiveWindow());
 
-    // The image's display footprint AFTER rotation: at 90/270 the natural width and
-    // height swap, so the fit-to-contain math (and the pan limits) must measure the
-    // ROTATED bounding box, not the raw natW/natH. Returns [w, h] = the effective
-    // un-scaled dimensions for the current rotation.
-    const rotatedNat = (): [number, number] =>
-        iv.rotation % 180 === 0 ? [iv.natW, iv.natH] : [iv.natH, iv.natW];
+    // The box the image fits into: the wrap minus the lightbox edge margin
+    // (inline pad = 0). Mirrors the CSS max-width/max-height fallback.
+    const fitBox = (): { w: number; h: number } => {
+        const wrap = wrapRef.current;
+        return {
+            w: Math.max(0, (wrap?.clientWidth ?? 0) - fitPad),
+            h: Math.max(0, (wrap?.clientHeight ?? 0) - fitPad)
+        };
+    };
 
-    // Clamp pan so the (scaled) image can't be dragged entirely out of view.
+    // The <img>'s explicit layout box for THIS render — null until the image and
+    // the wrap are measured, when the component falls back to the CSS fit sizing.
+    const imgBoxForRender = (() => {
+        if (!iv.natW || !iv.natH) return null;
+        const { w: fw, h: fh } = fitBox();
+        if (!fw || !fh) return null;
+        return sizeImgBox(iv.natW, iv.natH, iv.rotation, iv.scale, fw, fh);
+    })();
+
+    // Clamp pan so the (zoomed) image can't be dragged entirely out of view.
+    // The clamp measures the ROTATED footprint of the explicit box, so a 90/270
+    // image pans correctly.
     const clampPan = () => {
         const wrap = wrapRef.current;
         if (!wrap || !iv.natW || !iv.natH) return;
         const cw = wrap.clientWidth;
         const ch = wrap.clientHeight;
         if (!cw || !ch) return;
-        // fitted (scale 1) display size with object-fit: contain — measured on the
-        // rotated bounding box so a 90/270 image fits + pans correctly.
-        const [rw, rh] = rotatedNat();
-        const fitScale = Math.min(cw / rw, ch / rh, 1);
-        const dispW = rw * fitScale * iv.scale;
-        const dispH = rh * fitScale * iv.scale;
-        const maxX = Math.max(0, (dispW - cw) / 2);
-        const maxY = Math.max(0, (dispH - ch) / 2);
-        iv.tx = Math.max(-maxX, Math.min(maxX, iv.tx));
-        iv.ty = Math.max(-maxY, Math.min(maxY, iv.ty));
+        const { w: fw, h: fh } = fitBox();
+        const box = sizeImgBox(iv.natW, iv.natH, iv.rotation, iv.scale, fw, fh);
+        const clamped = panClamp(iv.tx, iv.ty, box.w, box.h, iv.rotation, cw, ch);
+        iv.tx = clamped.tx;
+        iv.ty = clamped.ty;
     };
 
     const applyScale = (next: number, originX?: number, originY?: number) => {
         const wrap = wrapRef.current;
         const prev = iv.scale;
-        next = Math.max(IMG_MIN_SCALE, Math.min(IMG_MAX_SCALE, next));
+        const { w: fw, h: fh } = fitBox();
+        const maxScale = zoomCap(fw, fh, iv.natW, iv.natH, iv.rotation, IMG_MAX_SCALE);
+        next = Math.max(IMG_MIN_SCALE, Math.min(maxScale, next));
         if (next === prev) return;
         // Zoom toward a focal point (cursor) so the pixel under the cursor stays
         // put. Origin is relative to the wrap centre.
@@ -210,6 +231,18 @@ export function useImageInteraction(
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // Re-measure + repaint when the surface resizes (dock drag, fullscreen
+    // toggle): the explicit <img> size depends on the wrap, so a resize must
+    // recompute it. Event-driven — no polling loop.
+    useEffect(() => {
+        const wrap = wrapRef.current;
+        if (!wrap || typeof ResizeObserver === "undefined") return;
+        const ro = new ResizeObserver(() => reflow());
+        ro.observe(wrap);
+        return () => ro.disconnect();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     // Drag to pan (only meaningful when zoomed past fit).
     const drag = useRef({ on: false, x: 0, y: 0, tx: 0, ty: 0 });
     const onPointerDown = (e: any) => {
@@ -235,13 +268,11 @@ export function useImageInteraction(
     const onDoubleClick = (e: any) => {
         const wrap = wrapRef.current;
         if (iv.scale === 1) {
-            // go to 100% real pixels: scale relative to the current fit scale.
+            // go to 100% real pixels: one source pixel per CSS pixel.
             if (wrap && iv.natW && iv.natH) {
                 const cw = wrap.clientWidth;
                 const ch = wrap.clientHeight;
-                const [rw, rh] = rotatedNat();
-                const fitScale = Math.min(cw / rw, ch / rh, 1);
-                const target = fitScale > 0 ? 1 / fitScale : 1;
+                const target = zoomForHundred(cw - fitPad, ch - fitPad, iv.natW, iv.natH, iv.rotation);
                 const rect = wrap.getBoundingClientRect();
                 applyScale(target, e.clientX - rect.left, e.clientY - rect.top);
             } else {
@@ -266,6 +297,7 @@ export function useImageInteraction(
     return {
         applyScale,
         reflow,
+        imgBox: imgBoxForRender,
         wrapProps: {
             onPointerDown,
             onPointerMove,
@@ -292,7 +324,7 @@ export function ImageBody() {
     // ImageBody by type (key=content.seq unchanged) so our refs + view-state survive.
     const rerender = () => { requestRender(); bump((n: number) => n + 1); };
 
-    const { wrapProps, onImgLoad } = useImageInteraction(wrapRef, imgRef, rerender);
+    const { wrapProps, onImgLoad, imgBox } = useImageInteraction(wrapRef, imgRef, rerender);
 
     const win = getActiveWindow();
     const iv = imgState(win);
@@ -368,9 +400,22 @@ export function ImageBody() {
                 draggable: false,
                 onLoad: onImgLoad,
                 style: {
-                    // rotation is INNERMOST so pan (screen-space translate) and zoom
-                    // compose on top of the rotated image, exactly like a browser viewer.
-                    transform: `translate(${iv.tx}px, ${iv.ty}px) scale(${iv.scale}) rotate(${iv.rotation}deg)`
+                    // The <img> is sized to its FINAL rendered dimensions (fit ×
+                    // zoom) and the transform carries only pan + rotation — no
+                    // scale — so the compositor rasters the decode at the size it
+                    // is displayed (100% = one source px per CSS px, crisp).
+                    ...(imgBox ? {
+                        width: imgBox.w + "px",
+                        height: imgBox.h + "px",
+                        maxWidth: "none",
+                        maxHeight: "none"
+                    } : {
+                        // PRE-LOAD fallback (naturalWidth/Height not known yet):
+                        // keep the whole image visible until the JS sizes it.
+                        maxWidth: "100%",
+                        maxHeight: "100%"
+                    }),
+                    transform: `translate(${iv.tx}px, ${iv.ty}px) rotate(${iv.rotation}deg)`
                 }
             })
         ),

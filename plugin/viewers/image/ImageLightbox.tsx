@@ -27,6 +27,7 @@ import { getActiveWindow } from "../../engine/window";
 import { STRINGS } from "../../strings";
 import { galleryCanStep, galleryStep } from "./gallery";
 import { imgState, useImageInteraction } from "./ImageBody";
+import { LIGHTBOX_FIT_PAD } from "./size";
 
 // Chevron glyphs for the prev/next image stepper (Discord-style ghost icons).
 const IMG_PREV_PATH = "M15.3 18.7a1 1 0 0 1-1.4 0l-6-6a1 1 0 0 1 0-1.4l6-6a1 1 0 1 1 1.4 1.4L10 12l5.3 5.3a1 1 0 0 1 0 1.4Z";
@@ -74,7 +75,9 @@ export function ImageLightbox() {
 
     // registerControls=false: the inline body owns the "image" controller slot; the
     // lightbox must not touch that slot (see the param note in useImageInteraction).
-    const { reflow, wrapProps, onImgLoad } = useImageInteraction(wrapRef, imgRef, rerender, false);
+    const { reflow, wrapProps, onImgLoad, imgBox } = useImageInteraction(
+        wrapRef, imgRef, rerender, false, LIGHTBOX_FIT_PAD
+    );
 
     const close = () => { iv.fullscreen = false; rerender(); };
 
@@ -148,9 +151,21 @@ export function ImageLightbox() {
                 draggable: false,
                 onLoad: onImgLoad,
                 style: {
-                    // rotation innermost (shares iv.rotation with the inline body, so the
-                    // picture keeps its angle across the inline ↔ fullscreen transition).
-                    transform: `translate(${iv.tx}px, ${iv.ty}px) scale(${iv.scale}) rotate(${iv.rotation}deg)`
+                    // Same explicit-final-size model as the inline body: the <img>
+                    // is sized to its rendered dimensions (fit within the 96px edge
+                    // margin × zoom) and the transform carries only pan + rotation.
+                    ...(imgBox ? {
+                        width: imgBox.w + "px",
+                        height: imgBox.h + "px",
+                        maxWidth: "none",
+                        maxHeight: "none"
+                    } : {
+                        // PRE-LOAD fallback inside the 96px edge margin
+                        // (LIGHTBOX_FIT_PAD) until the JS sizes the image.
+                        maxWidth: "calc(100% - 96px)",
+                        maxHeight: "calc(100% - 96px)"
+                    }),
+                    transform: `translate(${iv.tx}px, ${iv.ty}px) rotate(${iv.rotation}deg)`
                 }
             })
         )
