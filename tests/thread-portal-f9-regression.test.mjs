@@ -48,60 +48,64 @@ test("hidden->different thread: any open of a not-active thread proceeds to open
 
 // --- bounded live-body reacquire (no permanent rAF loop) -------------------------
 
-test("settle runs exactly maxFrames ticks after arm and then stops", () => {
+test("settle runs the action exactly maxFrames times after arm and then stops", () => {
     const frames = frameQueue();
-    let ticks = 0;
+    let runs = 0;
     const settle = createBoundedSettle(
-        (cb) => frames.schedule(() => { ticks++; cb(); }),
+        frames.schedule,
         frames.cancel,
+        () => { runs++; },
         3
     );
     settle.arm();
     assert.equal(frames.pending(), 1);
     frames.runAll();
-    assert.equal(ticks, 3);
+    assert.equal(runs, 3);
     assert.equal(frames.pending(), 0);
     frames.runAll();
-    assert.equal(ticks, 3); // steady state: zero further work
+    assert.equal(runs, 3); // steady state: zero further work
 });
 
 test("settle never schedules a permanent loop", () => {
     const frames = frameQueue();
-    let ticks = 0;
+    let runs = 0;
     const settle = createBoundedSettle(
-        (cb) => frames.schedule(() => { ticks++; cb(); }),
+        frames.schedule,
         frames.cancel,
+        () => { runs++; },
         5
     );
     settle.arm();
     frames.runAll();
-    assert.equal(ticks, 5);
+    assert.equal(runs, 5);
     assert.equal(frames.pending(), 0);
     frames.runAll();
-    assert.equal(ticks, 5); // steady state: zero further work
+    assert.equal(runs, 5); // steady state: zero further work
 });
 
-test("settle cancel stops immediately and neutralises the scheduled tick", () => {
+test("settle cancel stops immediately and the action never runs", () => {
     const frames = frameQueue();
-    let ticks = 0;
+    let runs = 0;
     const settle = createBoundedSettle(
-        (cb) => frames.schedule(() => { ticks++; cb(); }),
+        frames.schedule,
         frames.cancel,
+        () => { runs++; },
         5
     );
     settle.arm();
     settle.cancel();
     assert.ok(frames.cancelledCount >= 1);
     frames.runAll();
-    assert.equal(ticks, 0);
+    assert.equal(runs, 0);
 });
 
 test("re-arm mid-settle extends the window (bounded, not compounding)", () => {
     const frames = frameQueue();
-    let ticks = 0;
+    let runs = 0;
     const settle = createBoundedSettle(
-        (cb) => frames.schedule(() => { ticks++; cb(); }),
+        frames.schedule,
         frames.cancel,
+        () => { runs++; },
         3
     );
     settle.arm();
@@ -110,10 +114,32 @@ test("re-arm mid-settle extends the window (bounded, not compounding)", () => {
     frames.runNext(); // tick 2
     frames.runNext(); // tick 3
     frames.runNext(); // tick 4
-    assert.equal(ticks, 4);
+    assert.equal(runs, 4);
     assert.equal(frames.pending(), 0);
     frames.runAll();
-    assert.equal(ticks, 4);
+    assert.equal(runs, 4); // one extra frame from the re-arm, then it stops
+});
+
+test("each settle frame runs the sync action and can observe a changed body identity", () => {
+    const frames = frameQueue();
+    let liveBody = "body1";
+    let lastSyncedBody = null;
+    let runs = 0;
+    const settle = createBoundedSettle(
+        frames.schedule,
+        frames.cancel,
+        () => {
+            runs++;
+            lastSyncedBody = liveBody; // the action re-resolves the live body each frame
+        },
+        12
+    );
+    settle.arm();
+    liveBody = "body2"; // the dock body was replaced while the settle was armed
+    frames.runAll();
+    assert.equal(runs, 12);
+    assert.equal(lastSyncedBody, "body2"); // reacquisition observed the NEW body
+    assert.equal(frames.pending(), 0);
 });
 
 // --- wiring (the seams stay narrow and non-revealing for internal re-entry) -------
@@ -142,9 +168,16 @@ test("browser seam arms explicit intent; background/interception never do", () =
 test("threadPortal: reacquires a replaced body via bounded settle, one portal visible", () => {
     const portal = source("../plugin/viewers/thread/threadPortal.ts");
     assert.match(portal, /createBoundedSettle\(/);
+    assert.match(portal, /syncVisibleThreadPortalNow\s*\)/); // each settle frame syncs
     assert.match(portal, /if \(body !== observedBody\) \{[\s\S]{0,400}settleSync\.arm\(\);/);
     assert.match(portal, /function startSync\(\): void \{[\s\S]{0,400}settleSync\.arm\(\);/);
     assert.match(portal, /settleSync\.cancel\(\);/);
     // showThreadPortal hides every non-selected portal (one visible portal invariant).
     assert.match(portal, /if \(id !== threadId\) \{[\s\S]{0,120}p\.node\.style\.display = "none";/);
+});
+
+test("settle default window is a small bounded frame budget, not a loop", () => {
+    const portalSync = source("../plugin/viewers/thread/portalSync.ts");
+    assert.match(portalSync, /maxFrames = 12/);
+    assert.match(portalSync, /if \(remaining > 0 && !handle\) handle = schedule\(tick\);/);
 });

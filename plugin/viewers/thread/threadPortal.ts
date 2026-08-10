@@ -57,10 +57,14 @@ let syncObserver: ResizeObserver | null = null;
 let observedBody: HTMLElement | null = null;
 // After a show or a live-body identity change, re-sync a bounded number of frames so an
 // E3 root retire/rebind (or a reveal that re-creates the dock tree) settles and the NEW
-// .dockview-body is reacquired. Bounded — steady state stays zero-per-frame.
+// .dockview-body is reacquired. Each settle frame runs the sync pass itself (the
+// ResizeObserver alone is bound to the retired body and can never fire for the new
+// one). ~12 frames covers the retire/rebind settling; then it stops — steady state
+// stays zero-per-frame.
 const settleSync = createBoundedSettle(
     (cb) => (window.requestAnimationFrame || ((c: FrameRequestCallback) => window.setTimeout(c, 16)))(cb),
-    (h) => (window.cancelAnimationFrame || clearTimeout)(h)
+    (h) => (window.cancelAnimationFrame || clearTimeout)(h),
+    syncVisibleThreadPortalNow
 );
 
 const OVERLAY_CLASS = "dockview-thread-portal";

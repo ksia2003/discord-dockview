@@ -34,20 +34,27 @@ export interface BoundedSettle {
 }
 
 /** Create a bounded settle: `arm()` schedules `maxFrames` consecutive ticks and then
- *  stops. Each tick is a callback the owner uses to perform one sync pass. */
+ *  stops. Each tick RUNS `action` (the owner's sync pass) before scheduling the next,
+ *  so a replaced body is actually re-synced for the whole budget. The default window
+ *  (~12 frames ≈ 200ms) is sized to cover a Discord channel-view retire/rebind: the
+ *  E3 root un-/remount, the placeholder ref re-binding the root, and the reveal layout
+ *  settling can each take a frame or two. Bounded — steady state stays zero-per-frame. */
 export function createBoundedSettle(
     schedule: (callback: () => void) => number,
     cancel: (handle: number) => void,
-    maxFrames = 3
+    action: () => void,
+    maxFrames = 12
 ): BoundedSettle {
     let remaining = 0;
     let handle = 0;
     const tick = () => {
         handle = 0;
-        if (remaining > 0) {
-            remaining -= 1;
-            if (remaining > 0) handle = schedule(tick);
-        }
+        if (remaining <= 0) return;
+        remaining -= 1;
+        // Run the actual sync work this frame; it may re-arm (a still-changing body
+        // identity), which the !handle guard keeps from double-scheduling.
+        action();
+        if (remaining > 0 && !handle) handle = schedule(tick);
     };
     return {
         arm() {
