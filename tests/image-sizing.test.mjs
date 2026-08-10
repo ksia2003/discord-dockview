@@ -9,6 +9,7 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 // Imported as a whole module then destructured: the tsx loader here compiles
@@ -30,8 +31,26 @@ const {
 const NAT_W = 2560;
 const NAT_H = 1440;
 
+// The style contract that makes the pure math hold in the real DOM: the wrap
+// surfaces are display:flex, so the image must never flex-shrink the explicit
+// final-size box back toward the container (that would defeat the 1:1
+// contract), and the sharpness rules must stay free of transform scale, max
+// constraints and permanent will-change.
+const css = readFileSync(new URL("../plugin/style.css", import.meta.url), "utf-8");
+
 test("LIGHTBOX_FIT_PAD matches the CSS 96px edge margin", () => {
     assert.equal(LIGHTBOX_FIT_PAD, 96);
+});
+
+test("image elements never flex-shrink the explicit final-size box (source contract)", () => {
+    const inlineRule = css.match(/\.dockview-img\s*\{[^}]*\}/s)?.[0] ?? "";
+    const lightboxRule = css.match(/\.dockview-lightbox-img\s*\{[^}]*\}/s)?.[0] ?? "";
+    assert.ok(inlineRule.length > 0, "inline .dockview-img rule found");
+    assert.ok(lightboxRule.length > 0, "lightbox .dockview-lightbox-img rule found");
+    assert.match(inlineRule, /flex:\s*none/);
+    assert.match(lightboxRule, /flex:\s*none/);
+    assert.doesNotMatch(inlineRule, /will-change|max-width|max-height/);
+    assert.doesNotMatch(lightboxRule, /will-change|max-width|max-height/);
 });
 
 test("rotatedDims swaps natural dims only at 90/270", () => {

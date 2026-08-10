@@ -1700,6 +1700,10 @@ html.dockview-prime-voice-chat div[class*="chatLayerWrapper"]:not(.dockview-wrap
 .dockview-img-wrap.dockview-img-zoomed:active { cursor: grabbing; }
 .dockview-img {
     display: block;
+    /* The only flex item of .dockview-img-wrap: never flex-shrink the explicit
+       final-size box back toward the narrow dock (that would defeat the 1:1
+       contract); overflow is clipped by the wrap instead. */
+    flex: none;
     width: auto;
     height: auto;
     object-fit: contain;
@@ -1761,6 +1765,9 @@ html.dockview-prime-voice-chat div[class*="chatLayerWrapper"]:not(.dockview-wrap
 .dockview-lightbox-stage.dockview-img-zoomed:active { cursor: grabbing; }
 .dockview-lightbox-img {
     display: block;
+    /* Same rule as .dockview-img: the lightbox stage is flex too, so the
+       explicit final-size box must never be flex-shrunk. */
+    flex: none;
     width: auto;
     height: auto;
     object-fit: contain;
