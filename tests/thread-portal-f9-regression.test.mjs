@@ -33,17 +33,23 @@ const source = relative => readFileSync(new URL(relative, import.meta.url), "utf
 
 // --- thread open decision (loop-breaker vs explicit refocus vs fresh open) -------
 
-test("loop-breaker: a same-thread open through a non-explicit seam is a pure no-op", () => {
-    assert.equal(decideThreadOpen(true, false), "noop");
+test("visible same-thread non-explicit recursion is a pure no-op (loop-breaker)", () => {
+    assert.equal(decideThreadOpen(true, false, false), "noop");
 });
 
-test("hidden->same thread: a same-thread open through the explicit browser seam refocuses", () => {
-    assert.equal(decideThreadOpen(true, true), "refocus");
+test("hidden->same thread: a non-explicit SIDEBAR open refocuses while the dock is F9-hidden", () => {
+    assert.equal(decideThreadOpen(true, false, true), "refocus");
+});
+
+test("same-thread open through the explicit browser seam refocuses even when visible", () => {
+    assert.equal(decideThreadOpen(true, true, false), "refocus");
+    assert.equal(decideThreadOpen(true, true, true), "refocus");
 });
 
 test("hidden->different thread: any open of a not-active thread proceeds to open", () => {
-    assert.equal(decideThreadOpen(false, false), "open");
-    assert.equal(decideThreadOpen(false, true), "open");
+    assert.equal(decideThreadOpen(false, false, false), "open");
+    assert.equal(decideThreadOpen(false, false, true), "open");
+    assert.equal(decideThreadOpen(false, true, false), "open");
 });
 
 // --- bounded live-body reacquire (no permanent rAF loop) -------------------------
@@ -146,15 +152,29 @@ test("each settle frame runs the sync action and can observe a changed body iden
 
 test("threadTab: recursion no-op returns before any reveal; explicit refocus reveals", () => {
     const threadTab = source("../plugin/engine/threadTab.ts");
-    assert.match(threadTab, /decideThreadOpen\(alreadyActive, explicit\)/);
+    assert.match(threadTab, /decideThreadOpen\(alreadyActive, explicit, hostActions\(\)\.isDockTemporarilyHidden\(\)\)/);
     assert.match(threadTab, /if \(decision === "noop"\) \{/);
     // The no-op branch precedes the reveal calls: internal re-entry can never reveal.
     assert.match(threadTab, /if \(decision === "noop"\) \{[\s\S]{0,80}return;[\s\S]{0,60}\}/);
-    assert.match(threadTab, /if \(decision === "refocus"\) \{[\s\S]{0,140}host\.revealDock\(\);[\s\S]{0,80}selectThreadPortal\(threadId\);/);
+    assert.match(
+        threadTab,
+        /if \(decision === "refocus"\) \{[\s\S]{0,600}host\.deactivateSearchView\(\);[\s\S]{0,80}setContextActive\(getWindowChannelId\(\), false\);[\s\S]{0,80}host\.hideContextBody\(\);[\s\S]{0,80}host\.ensureHost\(\);[\s\S]{0,80}host\.revealDock\(\);[\s\S]{0,80}selectThreadPortal\(threadId\);[\s\S]{0,80}requestRender\(\);/
+    );
     assert.match(threadTab, /if \(takesOverView\) host\.revealDock\(\)/);
+    // Refocus repaints but never seq-bumps/remounts the chat (that would re-arm recursion).
+    assert.doesNotMatch(threadTab, /"refocus"[\s\S]{0,600}seq \+= 1/);
     // The intent flag is consumed on the next open and never leaks.
     assert.match(threadTab, /const explicit = explicitThreadOpenPending;/);
     assert.match(threadTab, /explicitThreadOpenPending = false;/);
+});
+
+test("host action: Dock temporary-hidden state is exposed and wired from mount", () => {
+    const hostBridge = source("../plugin/engine/hostBridge.ts");
+    const open = source("../plugin/host/open.ts");
+    assert.match(hostBridge, /isDockTemporarilyHidden\(\): boolean;/);
+    assert.match(hostBridge, /isDockTemporarilyHidden: \(\) => false/);
+    assert.match(open, /isDockTemporarilyHidden,/);
+    assert.match(open, /registerHostActions\(\{[\s\S]{0,200}isDockTemporarilyHidden,/);
 });
 
 test("browser seam arms explicit intent; background/interception never do", () => {
