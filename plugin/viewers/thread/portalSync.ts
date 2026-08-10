@@ -2,14 +2,14 @@
  * Portal sync state machines (thread chat portals) — extracted pure so the F9
  * regression suite can drive them without a browser.
  *
- * 1. The thread-open decision: a same-thread open is a REFOCUS when it carries the
- *    explicit user-intent seam (the Threads browser card) OR the dock is temporarily
- *    F9-hidden — a same-thread SIDEBAR_VIEW_CHANNEL can only arrive while the dock is
- *    hidden as a user pill/link click, never as the portal-chat recursion (which only
- *    follows a portal render, and a render is what reveals). A same-thread open in the
- *    visible dock through a non-explicit seam is the captured chat's recursive
- *    SIDEBAR_VIEW_CHANNEL (or background reconciliation) and stays a pure NOOP (the
- *    loop-breaker). A different-thread open always proceeds OPEN.
+ * 1. The thread-open decision: a same-thread open is a REFOCUS only when it carries
+ *    the explicit user-intent marker — the Threads browser-card seam (always a user
+ *    click) or the one-shot trusted-input seam (a capture-phase click / Enter-Space
+ *    keydown consumed by the first intercepted SIDEBAR_VIEW_CHANNEL in that event
+ *    turn). Every other same-thread open — the captured chat's recursive
+ *    SIDEBAR_VIEW_CHANNEL, internal render/retry rerenders, background reconciliation
+ *    — is a pure NOOP (the loop-breaker), even while the dock is F9-hidden, because
+ *    those paths carry no trusted input. A different-thread open always proceeds OPEN.
  *
  * 2. The bounded body-settle: after a show or a live .dockview-body identity change
  *    (an E3 root retire/rebind, or a reveal that re-creates the dock tree) the portal
@@ -19,17 +19,13 @@
  */
 
 /** What a thread open should do. `alreadyActive`: the active dock view IS this thread
- *  (context tab not active). `explicit`: the open arrived through the user-intent seam
- *  (Threads browser card). `dockTemporarilyHidden`: F9 temporary-hide is active. */
+ *  (context tab not active). `explicit`: the open carries a trusted user-intent marker
+ *  (Threads browser card, or a consumed click/key activation). */
 export type ThreadOpenDecision = "noop" | "refocus" | "open";
 
-export function decideThreadOpen(
-    alreadyActive: boolean,
-    explicit: boolean,
-    dockTemporarilyHidden: boolean
-): ThreadOpenDecision {
+export function decideThreadOpen(alreadyActive: boolean, explicit: boolean): ThreadOpenDecision {
     if (!alreadyActive) return "open";
-    return explicit || dockTemporarilyHidden ? "refocus" : "noop";
+    return explicit ? "refocus" : "noop";
 }
 
 export interface BoundedSettle {

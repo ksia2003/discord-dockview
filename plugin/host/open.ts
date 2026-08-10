@@ -15,7 +15,7 @@ import {
     activateCurrentNativeSearchView, deactivateNativeSearchView, isCurrentNativeSearchActive
 } from "./searchResults";
 import {
-    applyOpenState, ensureHost, hideContextBody, isDockTemporarilyHidden, revealDock, startHost, stopHost
+    applyOpenState, ensureHost, hideContextBody, revealDock, startHost, stopHost
 } from "./mount";
 
 /** Register the host with the engine bridge + seed the channel-memory id. Called once
@@ -27,7 +27,6 @@ export function registerHost(): void {
         applyOpenState,
         applyHostWidth,
         revealDock,
-        isDockTemporarilyHidden,
         hideContextBody,
         deactivateSearchView: deactivateNativeSearchView,
         isSearchViewActive: isCurrentNativeSearchActive,

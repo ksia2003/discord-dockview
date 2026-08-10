@@ -25,8 +25,6 @@ export interface HostActions {
     /** Reveal a dock hidden by the optional F9 temporary-hide mode. Explicit new-tab
      *  actions call this; passive channel/layout updates deliberately do not. */
     revealDock(): void;
-    /** True while the optional F9 temporary-hide mode keeps the dock out of layout. */
-    isDockTemporarilyHidden(): boolean;
     /** Synchronously hide the mounted context body (member list / profile). The DockPanel
      *  swaps the body via a React re-render, which lands on a later commit; when the active
      *  view flips from the context tab to a heavier view (a thread portal), that commit can
@@ -50,7 +48,6 @@ let host: HostActions = {
     applyOpenState: noop,
     applyHostWidth: noop,
     revealDock: noop,
-    isDockTemporarilyHidden: () => false,
     hideContextBody: noop,
     deactivateSearchView: noop,
     isSearchViewActive: () => false,

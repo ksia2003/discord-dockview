@@ -50,22 +50,20 @@ export function openThreadTab(threadId: string, parentId?: string | null): void 
     if (!threadId) return;
     // LOOP-BREAKER + REFOCUS SPLIT: the captured thread chat, rendered in our portal, can
     // itself dispatch SIDEBAR_VIEW_CHANNEL for its own channel — interception routes that
-    // back here. A same-thread open in the VISIBLE dock through a non-explicit seam is
-    // that internal recursion (or background reconciliation) and stays a pure no-op — no
-    // seq bump, no render, no reveal — so re-entrancy can't spin a render loop. A
-    // same-thread open refocuses when it carries the explicit user seam (Threads browser
-    // card) or the dock is F9-hidden (the only same-thread SIDEBAR_VIEW_CHANNEL that can
-    // arrive while hidden is a user pill/link click — the recursion only follows a portal
-    // render, and a render is what reveals). The refocus retires any Search surface,
-    // restores the thread as the shown view, reveals the dock, re-shows the mounted chat,
-    // and repaints WITHOUT a seq bump — remounting the chat is what would re-arm the
-    // recursion.
+    // back here. A same-thread open through a NON-explicit seam (internal recursion,
+    // render/retry rerenders, background reconciliation) stays a pure no-op — no seq
+    // bump, no render, no reveal — so re-entrancy can't spin a render loop even while the
+    // dock is F9-hidden. A same-thread open refocuses only when it carries a trusted
+    // user-intent marker (Threads browser card, or a consumed click/key activation in
+    // host/interception). The refocus retires any Search surface, restores the thread as
+    // the shown view, reveals the dock, re-shows the mounted chat, and repaints WITHOUT a
+    // seq bump — remounting the chat is what would re-arm the recursion.
     const active = getActiveWindow();
     const alreadyActive = !!(active
         && active.content.type === "thread"
         && active.content.threadChannelId === threadId
         && !isContextActive(getWindowChannelId()));
-    const decision = decideThreadOpen(alreadyActive, explicit, hostActions().isDockTemporarilyHidden());
+    const decision = decideThreadOpen(alreadyActive, explicit);
     if (decision === "noop") {
         return;
     }

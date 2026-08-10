@@ -42,12 +42,27 @@ import { getCurrentChannelMemId } from "../engine/channelMemory";
 import { isSealBypassed, setContextView } from "../engine/contextTab";
 import { requestRender } from "../engine/forceRender";
 import { hostActions } from "../engine/hostBridge";
-import { openThreadTab } from "../engine/threadTab";
+import { markExplicitThreadOpen, openThreadTab } from "../engine/threadTab";
+import { createInputIntentTracker, isEditableTarget } from "./inputIntent";
 import { isSelfMemberToggle, isSelfProfileToggle, isSelfVoiceChatToggle } from "./nativePanels";
 
 /** The captured original FluxDispatcher.dispatch, restored EXACTLY on stop. Null when the
  *  wrap isn't installed. */
 let originalDispatch: ((payload: any) => any) | null = null;
+
+// One-shot trusted-user-input intent. A capture-phase click or Enter/Space keydown on a
+// real user gesture arms it; the FIRST intercepted SIDEBAR_VIEW_CHANNEL in that event
+// turn consumes it and marks the open explicit — so an already-active thread clicked
+// while the dock is F9-hidden refocuses (reveals). Internal portal render/retry/Flux
+// rerenders carry no trusted input event, so they never arm and stay non-explicit —
+// the loop-breaker no-op holds even while the dock is hidden. Keyboard arming is gated
+// off editable targets (composer text entry must never arm intent).
+const inputIntent = createInputIntentTracker(
+    (cb) => setTimeout(cb, 0),
+    (handle) => clearTimeout(handle)
+);
+let trustedClickListener: ((e: MouseEvent) => void) | null = null;
+let trustedKeydownListener: ((e: KeyboardEvent) => void) | null = null;
 
 /** Re-entrancy guard: handling an intercepted action opens/focuses a dock tab and requests
  *  a render; that render (the captured thread chat) can synchronously dispatch again, which
@@ -90,7 +105,12 @@ function handleDispatch(payload: any): boolean {
             const target = payload.channelId;
             if (!target) return false;
             handling = true;
-            try { openThreadTab(String(target), payload.baseChannelId ? String(payload.baseChannelId) : null); }
+            try {
+                // The first sidebar open in a trusted-input event turn is the user's
+                // click/key activation; anything else (recursion, retry) is internal.
+                if (inputIntent.consume()) markExplicitThreadOpen();
+                openThreadTab(String(target), payload.baseChannelId ? String(payload.baseChannelId) : null);
+            }
             finally { handling = false; }
             return true; // swallow — the native sidebar never opens
         }
@@ -131,6 +151,18 @@ export function startInterception(): void {
     if (originalDispatch) return;
     const flux: any = FluxDispatcher;
     if (!flux || typeof flux.dispatch !== "function") return;
+    trustedClickListener = (e: MouseEvent) => {
+        if (e.isTrusted === false) return;
+        inputIntent.arm();
+    };
+    trustedKeydownListener = (e: KeyboardEvent) => {
+        if (e.isTrusted === false || e.repeat) return;
+        if (e.key !== "Enter" && e.key !== " ") return;
+        if (isEditableTarget(e.target)) return;
+        inputIntent.arm();
+    };
+    document.addEventListener("click", trustedClickListener, true);
+    document.addEventListener("keydown", trustedKeydownListener, true);
     const orig: (payload: any) => any = flux.dispatch.bind(flux);
     originalDispatch = orig;
     flux.dispatch = function (payload: any) {
@@ -145,6 +177,15 @@ export function startInterception(): void {
 
 /** Restore FluxDispatcher.dispatch to the exact original and drop the reference. */
 export function stopInterception(): void {
+    if (trustedClickListener) {
+        document.removeEventListener("click", trustedClickListener, true);
+        trustedClickListener = null;
+    }
+    if (trustedKeydownListener) {
+        document.removeEventListener("keydown", trustedKeydownListener, true);
+        trustedKeydownListener = null;
+    }
+    inputIntent.cancel();
     if (!originalDispatch) return;
     try {
         (FluxDispatcher as any).dispatch = originalDispatch;
