@@ -87,7 +87,7 @@ import {
     captureVoiceChat, getVoiceChatProviderStack, getVoiceChatType,
     invalidateVoiceChatCapture, primeVoiceChat
 } from "./host/voiceChatCapture";
-import { closeThreadTabEverywhere, openThreadTab } from "./engine/threadTab";
+import { closeThreadTabEverywhere, markExplicitThreadOpen, openThreadTab } from "./engine/threadTab";
 import { onChannelDelete, onThreadDelete, onThreadUpdate } from "./engine/threadEvents";
 import { openExternalLink } from "./external/openExternal";
 import { markdownHasToc, mdState } from "./viewers/doc/MarkdownViewer";
@@ -581,6 +581,10 @@ const dockViewPlugin = {
         const threadId = typeof channel?.id === "string" ? channel.id : null;
         if (!threadId) return;
         const parentId = typeof channel?.parent_id === "string" ? channel.parent_id : null;
+        // A browser row selection is always a user click — the explicit-intent seam for
+        // a same-thread refocus (reveals an F9-hidden dock; internal re-entry never
+        // travels through this path).
+        markExplicitThreadOpen();
         openThreadTab(threadId, parentId);
     },
 

@@ -36,6 +36,7 @@ import {
     captureChatScrollAnchor, restoreChatScrollAnchorAcrossFrames,
     restoreRetainedChatScrollAnchor, retainChatScrollAnchor
 } from "../chatScrollAnchor";
+import { createBoundedSettle } from "./portalSync";
 
 interface Portal {
     node: HTMLElement;
@@ -54,6 +55,13 @@ let visibleThread: string | null = null;
 let syncRaf = 0;
 let syncObserver: ResizeObserver | null = null;
 let observedBody: HTMLElement | null = null;
+// After a show or a live-body identity change, re-sync a bounded number of frames so an
+// E3 root retire/rebind (or a reveal that re-creates the dock tree) settles and the NEW
+// .dockview-body is reacquired. Bounded — steady state stays zero-per-frame.
+const settleSync = createBoundedSettle(
+    (cb) => (window.requestAnimationFrame || ((c: FrameRequestCallback) => window.setTimeout(c, 16)))(cb),
+    (h) => (window.cancelAnimationFrame || clearTimeout)(h)
+);
 
 const OVERLAY_CLASS = "dockview-thread-portal";
 
@@ -129,15 +137,25 @@ export function syncVisibleThreadPortalNow(): void {
     if (!visibleThread) return;
     const p = portals.get(visibleThread);
     const body = dockBodyEl();
+    if (body !== observedBody) {
+        // The live body was replaced/rebound under us (E3 retire/rebind): the previous
+        // ResizeObserver is bound to the retired node and can never fire for the new
+        // one, so arm a bounded settle to reacquire the live node over the next frames.
+        settleSync.arm();
+    }
     observeBody(body);
     if (p) positionOver(p.node, body);
 }
 
 function startSync(): void {
     syncVisibleThreadPortalNow();
+    // An explicit show (engine tab switch, F9 reveal) can race a body swap; a bounded
+    // settle re-syncs the live rect for a few frames and then stops.
+    settleSync.arm();
 }
 function stopSync(): void {
     if (syncRaf) { (window.cancelAnimationFrame || clearTimeout)(syncRaf); syncRaf = 0; }
+    settleSync.cancel();
     syncObserver?.disconnect();
     syncObserver = null;
     observedBody = null;

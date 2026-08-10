@@ -15,6 +15,7 @@
  * fetch/descriptor/cache), then reflects the layout + renders.
  */
 
+import { decideThreadOpen } from "../viewers/thread/portalSync";
 import { destroyThreadPortal, selectThreadPortal } from "../viewers/thread/threadPortal";
 import { requestRender } from "./forceRender";
 import { hostActions } from "./hostBridge";
@@ -26,22 +27,49 @@ import {
 import { getChannelObject } from "../host/slotComponents";
 import type { DockWindow } from "./types";
 
+// The explicit-user-intent seam. The Threads browser card is the one thread-open path
+// that is ALWAYS a user click (the patch only fires on a browser row selection); the
+// captured chat's recursive SIDEBAR_VIEW_CHANNEL and background-channel reconciliation
+// never travel through it. The flag arms the NEXT openThreadTab call and is consumed
+// there, so it can never leak into a later dispatch.
+let explicitThreadOpenPending = false;
+
+/** Arm the explicit-user-intent flag for the next openThreadTab (Threads browser card). */
+export function markExplicitThreadOpen(): void {
+    explicitThreadOpenPending = true;
+}
+
 /** Open (or focus) a dock tab for `threadId`. `parentId` is the thread's parent channel
  *  (from the SIDEBAR_VIEW_CHANNEL payload's baseChannelId); when absent we resolve it from
  *  the thread channel object. Dedup: reopening the same thread focuses its existing tab.
  *  The tab lives in the parent channel's strip and becomes the active view when the parent
  *  is the current channel. */
 export function openThreadTab(threadId: string, parentId?: string | null): void {
+    const explicit = explicitThreadOpenPending;
+    explicitThreadOpenPending = false;
     if (!threadId) return;
-    // IDEMPOTENT GUARD (loop-breaker): the captured thread chat, rendered in our tree, can
-    // itself dispatch SIDEBAR_VIEW_CHANNEL for its own channel — which interception routes
-    // back here. If this thread tab is ALREADY the active view, this is a pure no-op (no
-    // seq bump, no render), so re-entrancy can't spin a render loop.
+    // LOOP-BREAKER + REFOCUS SPLIT: the captured thread chat, rendered in our portal, can
+    // itself dispatch SIDEBAR_VIEW_CHANNEL for its own channel — interception routes that
+    // back here. A same-thread open through any NON-explicit seam is that internal
+    // recursion (or background reconciliation) and stays a pure no-op — no seq bump, no
+    // render, no reveal — so re-entrancy can't spin a render loop. Only the explicit
+    // user seam (Threads browser card) refocuses: reveal an F9-hidden dock (last non-zero
+    // preset) and re-show the mounted chat WITHOUT a seq bump — remounting the chat is
+    // what would re-arm the recursion.
     const active = getActiveWindow();
-    if (active
+    const alreadyActive = !!(active
         && active.content.type === "thread"
         && active.content.threadChannelId === threadId
-        && !isContextActive(getWindowChannelId())) {
+        && !isContextActive(getWindowChannelId()));
+    const decision = decideThreadOpen(alreadyActive, explicit);
+    if (decision === "noop") {
+        return;
+    }
+    if (decision === "refocus") {
+        const host = hostActions();
+        host.ensureHost();
+        host.revealDock();
+        selectThreadPortal(threadId);
         return;
     }
 
