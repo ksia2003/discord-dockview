@@ -98,18 +98,20 @@ export function extractActivationIds(path: readonly unknown[]): string[] {
             getAttribute?: (name: string) => string | null;
             [key: string]: unknown;
         };
-        if (typeof el.getAttribute === "function") {
-            const href = el.getAttribute("href");
-            if (href) {
-                const m = /\/channels\/[^/]+\/(\d+)(?:\/|$)/.exec(href);
-                if (m) push(m[1]);
-            }
-            push(el.getAttribute("data-channel-id")); // strict digits
-            const listItemId = el.getAttribute("data-list-item-id");
-            if (listItemId) {
-                const token = trailingSnowflake(listItemId);
-                if (token) push(token);
-            }
+        // Only real Element nodes (those carrying getAttribute) are inspected; window,
+        // document, and other objects are skipped immediately — enumerating their keys
+        // on every click would be slow and can only pull unrelated fiber evidence.
+        if (typeof el.getAttribute !== "function") continue;
+        const href = el.getAttribute("href");
+        if (href) {
+            const m = /\/channels\/[^/]+\/(\d+)(?:\/|$)/.exec(href);
+            if (m) push(m[1]);
+        }
+        push(el.getAttribute("data-channel-id")); // strict digits
+        const listItemId = el.getAttribute("data-list-item-id");
+        if (listItemId) {
+            const token = trailingSnowflake(listItemId);
+            if (token) push(token);
         }
         for (const key of Object.keys(el)) {
             if (!key.startsWith("__reactFiber$") && !key.startsWith("__reactInternalInstance$")) continue;

@@ -188,6 +188,23 @@ test("activation-id evidence: non-thread targets contribute nothing", () => {
     );
 });
 
+test("non-Element path nodes are skipped without enumerating their keys", () => {
+    const ownKeysCalls = [];
+    const sentinel = new Proxy({}, {
+        ownKeys() {
+            ownKeysCalls.push("ownKeys");
+            return [];
+        }
+    });
+    assert.deepEqual(extractActivationIds([sentinel]), []);
+    assert.deepEqual(ownKeysCalls, []); // Object.keys was never invoked on it
+    // A non-Element fiber-like object must not contribute evidence either.
+    assert.deepEqual(
+        extractActivationIds([{ __reactFiber$h: { memoizedProps: { channel: { id: "777" } } } }]),
+        []
+    );
+});
+
 test("editable-target gate blocks composer text entry from arming intent", () => {
     assert.equal(isEditableTarget({ tagName: "INPUT", isContentEditable: false, getAttribute: () => null }), true);
     assert.equal(isEditableTarget({ tagName: "TEXTAREA", isContentEditable: false, getAttribute: () => null }), true);
