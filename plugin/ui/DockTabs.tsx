@@ -276,11 +276,18 @@ export function DockTabs({ unified = false, onOverflowChange }: {
     unified?: boolean;
     onOverflowChange?: (overflowing: boolean) => void;
 } = {}) {
-    const { useEffect, useRef, useLayoutEffect } = React;
+    const { useCallback, useEffect, useRef, useLayoutEffect } = React;
     const stripRef = useRef(null as HTMLElement | null);
     const tabWindows = getWindows().filter(isRealTab);
     const tabIds = tabWindows.map(tab => tab.id).join("\u0000");
-    useLayoutEffect(() => {
+    const channelId = getCurrentChannelMemId();
+    const channel = getChannelObject(channelId);
+    const contextView = getDockContextView(channelId);
+    const ctxActive = contextView != null;
+    const activeId = getActiveWindowId();
+    // A file tab is "active" only when the context tab is NOT the active view.
+    const fileActiveId = ctxActive ? null : activeId;
+    const revealActive = useCallback(() => {
         const strip = stripRef.current;
         if (!strip) return;
         const active = strip.querySelector<HTMLElement>(".dockview-tab-active");
@@ -289,25 +296,23 @@ export function DockTabs({ unified = false, onOverflowChange }: {
         const right = left + active.offsetWidth;
         if (left < strip.scrollLeft) strip.scrollLeft = left;
         else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth;
-    });
+    }, []);
+    // offsetLeft/offsetWidth can force layout. Read them only when selection/list identity
+    // changes; the ResizeObserver below covers actual geometry changes.
+    useLayoutEffect(revealActive, [revealActive, fileActiveId, tabIds]);
     useEffect(() => {
         const strip = stripRef.current;
         if (!strip || !onOverflowChange) return;
-        const report = () => onOverflowChange(strip.scrollWidth > strip.clientWidth + 1);
+        const report = () => {
+            onOverflowChange(strip.scrollWidth > strip.clientWidth + 1);
+            revealActive();
+        };
         report();
         const observer = typeof ResizeObserver === "function" ? new ResizeObserver(report) : null;
         observer?.observe(strip);
         for (const tab of strip.querySelectorAll<HTMLElement>("[data-tab-id]")) observer?.observe(tab);
         return () => observer?.disconnect();
-    }, [onOverflowChange, tabIds]);
-
-    const channelId = getCurrentChannelMemId();
-    const channel = getChannelObject(channelId);
-    const contextView = getDockContextView(channelId);
-    const ctxActive = contextView != null;
-    const activeId = getActiveWindowId();
-    // A file tab is "active" only when the context tab is NOT the active view.
-    const fileActiveId = ctxActive ? null : activeId;
+    }, [onOverflowChange, revealActive, tabIds]);
     const fixedTabs = channelId != null && !unified
         ? [
             contextTabElement(channelId, contextView === "channel", unified),

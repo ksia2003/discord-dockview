@@ -46,7 +46,6 @@ export function switchToWindow(id: string): void {
     reconcileActiveFromCache();
     getActiveWindow().content.seq += 1; // force a fresh body identity for the new tab
     selectPortalForWindow(getActiveWindow());
-    hostActions().applyOpenState();
     requestRender();
     // re-apply the target window's saved scroll once its body re-commits.
     const active = getActiveWindow();
@@ -91,7 +90,6 @@ export function closeTab(id: string): void {
         focusEmptyShell(getWindowChannelId());
         setContextActive(getWindowChannelId(), true);
         selectThreadPortal(null);
-        hostActions().applyOpenState();
         requestRender();
         return;
     }
@@ -106,7 +104,6 @@ export function closeTab(id: string): void {
         getActiveWindow().content.seq += 1;
         selectPortalForWindow(getActiveWindow());
     }
-    hostActions().applyOpenState();
     requestRender();
 }
 

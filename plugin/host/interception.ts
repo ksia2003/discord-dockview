@@ -43,6 +43,7 @@ import { isSealBypassed, setContextView } from "../engine/contextTab";
 import { requestRender } from "../engine/forceRender";
 import { hostActions } from "../engine/hostBridge";
 import { markExplicitThreadOpen, openThreadTab } from "../engine/threadTab";
+import { getChannelById } from "./channel";
 import { createInputIntentTracker, extractActivationIds, isEditableTarget } from "./inputIntent";
 import { isSelfMemberToggle, isSelfProfileToggle, isSelfVoiceChatToggle } from "./nativePanels";
 
@@ -64,11 +65,12 @@ const inputIntent = createInputIntentTracker(
     (handle) => clearTimeout(handle)
 );
 let trustedClickListener: ((e: MouseEvent) => void) | null = null;
+let trustedPointerdownListener: ((e: PointerEvent) => void) | null = null;
 let trustedKeydownListener: ((e: KeyboardEvent) => void) | null = null;
 
 /** Arm the one-shot intent from a trusted activation event, only when the activated
  *  target evidences channel/thread ids. Events with no evidence never arm. */
-function armIntentFromTrustedEvent(e: MouseEvent | KeyboardEvent): void {
+function armIntentFromTrustedEvent(e: MouseEvent | PointerEvent | KeyboardEvent): void {
     const path = typeof e.composedPath === "function" ? e.composedPath() : [];
     const ids = extractActivationIds(path);
     if (ids.length > 0) inputIntent.arm(ids);
@@ -114,6 +116,18 @@ function handleDispatch(payload: any): boolean {
             // let it through (nothing native opened, so nothing to reconcile).
             const target = payload.channelId;
             if (!target) return false;
+            // Forum posts are thread channels too, but forum is an untouched Discord
+            // surface rather than a DockView-enabled text channel. Swallowing this action
+            // prevents Discord from opening the post while there is no supported Dock
+            // destination for it. Let every known non-text parent stay native.
+            const targetChannel = getChannelById(String(target));
+            const parentId = payload.baseChannelId != null
+                ? String(payload.baseChannelId)
+                : targetChannel?.parent_id != null
+                    ? String(targetChannel.parent_id)
+                    : null;
+            const parentChannel = getChannelById(parentId);
+            if (parentChannel && parentChannel.type !== 0) return false;
             handling = true;
             try {
                 // The one-shot intent grants explicit ONLY when the activated target's
@@ -166,12 +180,17 @@ export function startInterception(): void {
         if (e.isTrusted === false) return;
         armIntentFromTrustedEvent(e);
     };
+    trustedPointerdownListener = (e: PointerEvent) => {
+        if (e.isTrusted === false) return;
+        armIntentFromTrustedEvent(e);
+    };
     trustedKeydownListener = (e: KeyboardEvent) => {
         if (e.isTrusted === false || e.repeat) return;
         if (e.key !== "Enter" && e.key !== " ") return;
         if (isEditableTarget(e.target)) return;
         armIntentFromTrustedEvent(e);
     };
+    document.addEventListener("pointerdown", trustedPointerdownListener, true);
     document.addEventListener("click", trustedClickListener, true);
     document.addEventListener("keydown", trustedKeydownListener, true);
     const orig: (payload: any) => any = flux.dispatch.bind(flux);
@@ -188,6 +207,10 @@ export function startInterception(): void {
 
 /** Restore FluxDispatcher.dispatch to the exact original and drop the reference. */
 export function stopInterception(): void {
+    if (trustedPointerdownListener) {
+        document.removeEventListener("pointerdown", trustedPointerdownListener, true);
+        trustedPointerdownListener = null;
+    }
     if (trustedClickListener) {
         document.removeEventListener("click", trustedClickListener, true);
         trustedClickListener = null;

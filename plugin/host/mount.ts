@@ -381,6 +381,10 @@ export function applyOpenState(): void {
 /** Show a temporarily hidden dock without changing its compact/expanded width. This is
  *  the explicit-new-tab path: files, websites, new files, and visible thread opens. */
 export function revealDock(): void {
+    // Already visible means there is no visibility transition to reflect. In particular,
+    // ordinary tab selection must not re-read/rewrite the shared chat geometry: Discord's
+    // virtualized message list can re-anchor when its flex sibling is needlessly laid out.
+    if (!temporarilyHidden) return;
     temporarilyHidden = false;
     applyOpenState();
 }

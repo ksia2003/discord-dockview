@@ -28,10 +28,20 @@ let channelHeaderTitle: {
 let titleRenderQueued = false;
 let toolbarTarget: { channelId: string; element: HTMLElement; } | null = null;
 
-function eligible(instance: any): boolean {
-    const channel = instance?.props?.channel;
+export function usesUnifiedChannelHeader(channel: any): boolean {
     // First feedback slice: every non-standard channel surface remains untouched.
     return active && !!channel?.guild_id && channel.type === 0;
+}
+
+/** True only after the current channel's native header was actually transformed. The
+ * eligibility check alone is insufficient: if Discord changes the patch seam, the local
+ * Dock strip must remain available instead of disappearing with a header that never moved. */
+export function hasUnifiedChannelHeader(channelId: string | null): boolean {
+    return active && channelId != null && channelHeaderTitle?.channelId === channelId;
+}
+
+function eligible(instance: any): boolean {
+    return usesUnifiedChannelHeader(instance?.props?.channel);
 }
 
 function refresh(instance: any): void {

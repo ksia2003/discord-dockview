@@ -298,6 +298,10 @@ test("guild Channel and voice Chat are permanent dock surfaces", () => {
     assert.match(plugin, /\$self\.openThreadFromBrowser\(\$1\)/);
     assert.match(plugin, /openThreadTab\(threadId, parentId\)/);
     assert.match(source("plugin/host/unifiedHeader.tsx"), /channel\.type === 0/);
+    assert.match(source("plugin/host/unifiedHeader.tsx"), /export function usesUnifiedChannelHeader/);
+    assert.match(source("plugin/host/unifiedHeader.tsx"), /export function hasUnifiedChannelHeader/);
+    assert.match(source("plugin/ui/DockPanel.tsx"), /unifiedHeader\s*\? null\s*:\s*React\.createElement/s);
+    assert.match(source("plugin/ui/DockTabs.tsx"), /useLayoutEffect\(revealActive, \[revealActive, fileActiveId, tabIds\]\)/);
     assert.match(source("plugin/host/unifiedHeader.tsx"), /railSeen\.has\(instance\)/);
     assert.match(source("plugin/host/unifiedHeader.tsx"), /setUnifiedHeaderActive/);
     assert.match(source("plugin/host/unifiedHeader.tsx"), /nativeTitle/);

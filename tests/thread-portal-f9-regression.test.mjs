@@ -333,6 +333,7 @@ test("threadTab: recursion no-op returns before any reveal; explicit refocus rev
 
 test("interception arms one-shot intent on trusted click/key activation only", () => {
     const interception = source("../plugin/host/interception.ts");
+    assert.match(interception, /addEventListener\("pointerdown", trustedPointerdownListener, true\)/);
     assert.match(interception, /addEventListener\("click", trustedClickListener, true\)/);
     assert.match(interception, /addEventListener\("keydown", trustedKeydownListener, true\)/);
     assert.match(interception, /e\.isTrusted === false/);
@@ -341,9 +342,17 @@ test("interception arms one-shot intent on trusted click/key activation only", (
     assert.match(interception, /extractActivationIds\(path\)/);
     assert.match(interception, /if \(ids\.length > 0\) inputIntent\.arm\(ids\);/);
     assert.match(interception, /if \(inputIntent\.consumeFor\(String\(target\)\)\) markExplicitThreadOpen\(\);[\s\S]{0,80}openThreadTab\(String\(target\)/);
+    assert.match(interception, /removeEventListener\("pointerdown", trustedPointerdownListener, true\)/);
     assert.match(interception, /removeEventListener\("click", trustedClickListener, true\)/);
     assert.match(interception, /removeEventListener\("keydown", trustedKeydownListener, true\)/);
     assert.match(interception, /inputIntent\.cancel\(\)/);
+});
+
+test("forum and other known non-text parents keep Discord's native sidebar action", () => {
+    const interception = source("../plugin/host/interception.ts");
+    assert.match(interception, /const parentChannel = getChannelById\(parentId\)/);
+    assert.match(interception, /if \(parentChannel && parentChannel\.type !== 0\) return false;/);
+    assert.match(interception, /openThreadTab\(String\(target\)/);
 });
 
 test("the F9-hidden state proxy is gone from the host bridge and open wiring", () => {

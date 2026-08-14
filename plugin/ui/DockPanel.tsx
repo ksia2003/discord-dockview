@@ -40,6 +40,7 @@ import { settlePendingOpens } from "../engine/openRollback";
 import { ContextTabBody } from "./ContextTabBody";
 import { SearchResultsBody } from "./SearchResultsBody";
 import { getDockContextView } from "../host/searchResults";
+import { hasUnifiedChannelHeader } from "../host/unifiedHeader";
 import { VoiceChatBody } from "../viewers/voice/VoiceChatBody";
 import { getViewer } from "../viewers/registry";
 import type { ViewerContext } from "../engine/types";
@@ -156,6 +157,7 @@ export function DockPanel() {
 
     const win = getActiveWindow();
     const channelId = getCurrentChannelMemId();
+    const unifiedHeader = hasUnifiedChannelHeader(channelId);
     const contextView = getDockContextView(channelId);
     const ctxActive = contextView != null;
     const nativeRailContextActive = contextView === "channel" || contextView === "search";
@@ -184,23 +186,24 @@ export function DockPanel() {
                     className: `${CLS.headerSection} dockview-header`
                         + (twoRow ? " dockview-header--tworow" : "")
                 },
-                React.createElement(
-                    "div",
-                    {
-                        className: `${CLS.upper} dockview-header-upper dockview-header-upper--tabs`
-                    },
-                    React.createElement(
+                unifiedHeader
+                    ? null
+                    : React.createElement(
                         "div",
                         {
-                            className: `${CLS.headerChildren} dockview-header-children`
-                                + " dockview-header-children--tabs"
+                            className: `${CLS.upper} dockview-header-upper dockview-header-upper--tabs`
                         },
-                        // The tab strip is ALWAYS rendered (empty, one, or many). Each tab
-                        // carries its own icon/name/⋯/✕ in place. There is no dock-close
-                        // affordance — the dock is always visible.
-                        React.createElement(DockTabs, null)
-                    )
-                ),
+                        React.createElement(
+                            "div",
+                            {
+                                className: `${CLS.headerChildren} dockview-header-children`
+                                    + " dockview-header-children--tabs"
+                            },
+                            // The unified page header already owns the live tab strip.
+                            // Non-unified surfaces keep this local strip unchanged.
+                            React.createElement(DockTabs, null)
+                        )
+                    ),
                 // SECOND ROW: the attach filename bar (when open) OR the active
                 // viewer's controls strip. The attach bar overrides the controls.
                 showAttachBar
