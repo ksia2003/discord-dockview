@@ -526,10 +526,12 @@ html.dockview-open .dockview-page-inner {
     overflow: hidden;
 }
 .dockview-search-results-body--inactive {
+    content-visibility: hidden;
     visibility: hidden;
     pointer-events: none;
 }
 .dockview-search-results-body--active {
+    content-visibility: visible;
     visibility: visible;
     pointer-events: auto;
 }

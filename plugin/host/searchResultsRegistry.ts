@@ -62,8 +62,18 @@ export class SearchSurfaceRegistry {
     private readonly activeScopes = new Set<string>();
     private readonly visibleScopes = new Set<string>();
     private readonly closeTokens = new Map<string, symbol>();
+    private renderRevision = 0;
 
     constructor(private readonly maxEntries = MAX_RESIDENT_SEARCH_SURFACES) { }
+
+    /** Changes only when the resident Search DOM needs to be reconciled. */
+    getRenderRevision(): number {
+        return this.renderRevision;
+    }
+
+    private bumpRenderRevision(): void {
+        this.renderRevision += 1;
+    }
 
     private touch(scopeId: string, entry: SearchSurfaceEntry): void {
         this.entryMap.delete(scopeId);
@@ -102,6 +112,7 @@ export class SearchSurfaceRegistry {
             // refreshed without inserting/removing wrappers and remounting SearchResults.
             existing.providerStack = reconcileProviderStack(existing.providerStack, providerStack);
             this.touch(scopeId, existing);
+            this.bumpRenderRevision();
             return { entry: existing, firstOpen: false, evictedScopeIds: this.evictOverflow() };
         }
 
@@ -112,6 +123,7 @@ export class SearchSurfaceRegistry {
             providerStack
         };
         this.entryMap.set(scopeId, entry);
+        this.bumpRenderRevision();
         return { entry, firstOpen: true, evictedScopeIds: this.evictOverflow() };
     }
 
@@ -129,8 +141,10 @@ export class SearchSurfaceRegistry {
 
     activate(scopeId: string | null): boolean {
         if (!this.has(scopeId)) return false;
+        const changed = !this.visibleScopes.has(scopeId!) || !this.activeScopes.has(scopeId!);
         this.visibleScopes.add(scopeId!);
         this.activeScopes.add(scopeId!);
+        if (changed) this.bumpRenderRevision();
         return true;
     }
 
@@ -141,12 +155,16 @@ export class SearchSurfaceRegistry {
     /** Hide the tab/body without unmounting Discord's native SearchResults tree. */
     hide(scopeId: string | null): boolean {
         if (scopeId == null || !this.entryMap.has(scopeId)) return false;
-        this.activeScopes.delete(scopeId);
-        return this.visibleScopes.delete(scopeId);
+        const activeChanged = this.activeScopes.delete(scopeId);
+        const visibleChanged = this.visibleScopes.delete(scopeId);
+        if (activeChanged || visibleChanged) this.bumpRenderRevision();
+        return visibleChanged;
     }
 
     deactivate(scopeId: string | null): boolean {
-        return scopeId != null && this.activeScopes.delete(scopeId);
+        const changed = scopeId != null && this.activeScopes.delete(scopeId);
+        if (changed) this.bumpRenderRevision();
+        return changed;
     }
 
     isActive(scopeId: string | null): boolean {
@@ -158,7 +176,9 @@ export class SearchSurfaceRegistry {
         this.invalidateClose(scopeId);
         this.activeScopes.delete(scopeId);
         this.visibleScopes.delete(scopeId);
-        return this.entryMap.delete(scopeId);
+        const changed = this.entryMap.delete(scopeId);
+        if (changed) this.bumpRenderRevision();
+        return changed;
     }
 
     beginClose(scopeId: string): symbol | null {
@@ -194,9 +214,11 @@ export class SearchSurfaceRegistry {
     }
 
     clear(): void {
+        const changed = this.entryMap.size > 0 || this.activeScopes.size > 0 || this.visibleScopes.size > 0;
         this.entryMap.clear();
         this.activeScopes.clear();
         this.visibleScopes.clear();
         this.closeTokens.clear();
+        if (changed) this.bumpRenderRevision();
     }
 }

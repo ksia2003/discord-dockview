@@ -418,6 +418,10 @@ function resolveInlineMediaClick(target: EventTarget | null): { url: string; nam
 
 function onDocClickCapture(e: MouseEvent) {
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target instanceof Element ? e.target : null;
+    // This listener sees every click in Discord. All valid Dock attachment opens already
+    // require this marker, so ordinary chat/header/composer clicks can leave immediately.
+    if (!target?.closest(ATTACHMENT_SURFACE_SELECTOR)) return;
     if (isExplicitDownloadButton(e.target)) return;
     // Inline image / video -> dock panel (suppress Discord's native lightbox / player).
     const mediaHit = resolveInlineMediaClick(e.target);

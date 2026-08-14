@@ -201,6 +201,10 @@ export function getNativeSearchEntries(): readonly SearchEntry[] {
     return searchRegistry.all();
 }
 
+export function getNativeSearchRenderRevision(): number {
+    return searchRegistry.getRenderRevision();
+}
+
 export function hasNativeSearchResults(channelId: string | null): boolean {
     const scopeId = scopeForChannel(channelId);
     return searchRegistry.isVisible(scopeId);

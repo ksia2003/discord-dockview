@@ -248,6 +248,39 @@ test("Search close hides the resident tree and reopen preserves its identity", (
     assert.equal(registry.get("guild:A"), opened);
 });
 
+test("Search render revision changes only with resident DOM state", () => {
+    const registry = new SearchSurfaceRegistry();
+    const initial = registry.getRenderRevision();
+
+    registry.beginClose("guild:missing");
+    assert.equal(registry.getRenderRevision(), initial);
+
+    registry.capture("guild:A", "channel:A-1", { type: "SearchResults" }, null);
+    const captured = registry.getRenderRevision();
+    assert.ok(captured > initial);
+
+    registry.activate("guild:A");
+    const active = registry.getRenderRevision();
+    assert.ok(active > captured);
+    registry.activate("guild:A");
+    assert.equal(registry.getRenderRevision(), active);
+
+    registry.capture("guild:A", "channel:A-2", { type: "UpdatedResults" }, null);
+    const refreshed = registry.getRenderRevision();
+    assert.ok(refreshed > active);
+
+    registry.deactivate("guild:A");
+    const inactive = registry.getRenderRevision();
+    assert.ok(inactive > refreshed);
+
+    registry.hide("guild:A");
+    const hidden = registry.getRenderRevision();
+    assert.ok(hidden > inactive);
+
+    registry.clear();
+    assert.ok(registry.getRenderRevision() > hidden);
+});
+
 test("resident body repaints on the engine signal even when the panel renderer slot is stale", () => {
     // UnifiedHeaderTabs subscribes via subscribeRender; SearchResultsBody now subscribes
     // to the SAME signal. A stale or cleared DockPanel renderer slot must never leave

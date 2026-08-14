@@ -338,6 +338,8 @@ test("guild Channel and voice Chat are permanent dock surfaces", () => {
     assert.match(searchResults, /\[role='combobox'\]\[data-slate-editor='true'\]/);
     assert.doesNotMatch(tabs, /!unified && hasNativeSearchResults\(channelId\)/);
     assert.match(css, /dockview-search-results-body/);
+    assert.match(css, /\.dockview-search-results-body--inactive\s*\{[^}]*content-visibility:\s*hidden;/s);
+    assert.match(css, /\.dockview-search-results-body--active\s*\{[^}]*content-visibility:\s*visible;/s);
     assert.match(
         source("plugin/host/channelView.ts"),
         /channelHeaderSubtitle = \{ channelId, element: subtitle \}/
@@ -400,6 +402,9 @@ test("Search tab and resident body share one active-state source and repaint sig
     // queueMicrotask activation that follows the first-open capture render.
     assert.match(searchBody, /useLayoutEffect\(\(\) => subscribeRender\(rerender\), \[rerender\]\)/);
     assert.doesNotMatch(searchBody, /\buseEffect\b/);
+    assert.match(searchBody, /getNativeSearchRenderRevision/);
+    assert.match(searchBody, /next\.channelId === rendered\.current\.channelId && next\.revision === rendered\.current\.revision/);
+    assert.match(searchBody, /useMemo\([\s\S]*\[channelId, revision\]\)/);
 });
 
 test("Search close keeps the native tree resident and Enter reactivates it", () => {

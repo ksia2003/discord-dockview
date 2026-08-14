@@ -362,6 +362,10 @@ test("production seams keep portal, sender, media, and web/file capabilities exp
 
     assert.match(embed, /portalThreadIdFromSurface\(!!portal, message\.channelId\)/);
     assert.doesNotMatch(embed, /dataset\.dockviewThreadId/);
+    assert.match(
+        embed,
+        /function onDocClickCapture[\s\S]*?target\?\.closest\(ATTACHMENT_SURFACE_SELECTOR\)[\s\S]*?isExplicitDownloadButton/
+    );
     assert.match(plugin, /host\.id !== "dockview-root"/);
     assert.match(plugin, /iframe\.dockview-frame/);
     assert.match(plugin, /iframeForSource\(source, frames\)/);

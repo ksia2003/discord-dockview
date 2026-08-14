@@ -4,7 +4,12 @@ import { React } from "@vencord/types/webpack/common";
 
 import { getCurrentChannelMemId } from "../engine/channelMemory";
 import { subscribeRender } from "../engine/forceRender";
-import { getNativeSearchEntries, isSearchSurfaceActive, type SearchEntry } from "../host/searchResults";
+import {
+    getNativeSearchEntries,
+    getNativeSearchRenderRevision,
+    isSearchSurfaceActive,
+    type SearchEntry
+} from "../host/searchResults";
 
 let BoundaryClass: any = null;
 function searchProviderBoundary(): any {
@@ -32,37 +37,53 @@ function withCapturedProviders(bare: any, stack: SearchEntry["providerStack"]): 
 }
 
 export function SearchResultsBody() {
-    const { useCallback, useLayoutEffect, useState } = React;
+    const { useCallback, useLayoutEffect, useMemo, useRef, useState } = React;
     const [, bump] = useState(0);
-    const rerender = useCallback(() => bump((n: number) => n + 1), []);
+    const channelId = getCurrentChannelMemId();
+    const revision = getNativeSearchRenderRevision();
+    const rendered = useRef({ channelId, revision });
+    const rerender = useCallback(() => {
+        const next = { channelId: getCurrentChannelMemId(), revision: getNativeSearchRenderRevision() };
+        if (next.channelId === rendered.current.channelId && next.revision === rendered.current.revision) return;
+        rendered.current = next;
+        bump((n: number) => n + 1);
+    }, []);
     // The Search tab repaints itself on the engine repaint signal (UnifiedHeaderTabs
-    // subscribes). The resident body must repaint on that SAME signal instead of only
-    // through the panel's single renderer slot, or its active marker can stay stale
-    // while the tab already shows active. The subscription attaches in the commit-
+    // subscribes). The resident body listens to that SAME signal instead of only through
+    // the panel's single renderer slot, but skips state updates unless Search or the active
+    // channel actually changed. The subscription attaches in the commit-
     // synchronous layout phase on purpose: the first-open activation arrives in a
     // queueMicrotask right after the capture render, before any passive effect runs.
     useLayoutEffect(() => subscribeRender(rerender), [rerender]);
-    const channelId = getCurrentChannelMemId();
+    // Advance the acknowledged snapshot only after this render commits. An interrupted
+    // concurrent render must not make a later engine signal look already painted.
+    useLayoutEffect(() => {
+        rendered.current = { channelId, revision };
+    }, [channelId, revision]);
     const entries = getNativeSearchEntries();
-    if (!entries.length) return null;
-    return React.createElement(
-        React.Fragment,
-        null,
-        ...entries.map(entry => {
-            const active = isSearchSurfaceActive(channelId, entry.scopeId);
-            return React.createElement(
-                "div",
-                {
-                    key: entry.scopeId,
-                    className: "dockview-search-results-body"
-                        + (active ? " dockview-search-results-body--active" : " dockview-search-results-body--inactive"),
-                    "data-dockview-search-scope": entry.scopeId,
-                    "data-dockview-search-active": active ? "true" : "false",
-                    "aria-hidden": !active,
-                    inert: !active
-                },
-                withCapturedProviders(entry.element, entry.providerStack)
-            );
-        })
-    );
+    // Every entry/visibility/provider mutation advances revision, so returning this exact
+    // tree for unrelated Dock repaints lets React skip reconciling native SearchResults.
+    return useMemo(() => {
+        if (!entries.length) return null;
+        return React.createElement(
+            React.Fragment,
+            null,
+            ...entries.map(entry => {
+                const active = isSearchSurfaceActive(channelId, entry.scopeId);
+                return React.createElement(
+                    "div",
+                    {
+                        key: entry.scopeId,
+                        className: "dockview-search-results-body"
+                            + (active ? " dockview-search-results-body--active" : " dockview-search-results-body--inactive"),
+                        "data-dockview-search-scope": entry.scopeId,
+                        "data-dockview-search-active": active ? "true" : "false",
+                        "aria-hidden": !active,
+                        inert: !active
+                    },
+                    withCapturedProviders(entry.element, entry.providerStack)
+                );
+            })
+        );
+    }, [channelId, revision]);
 }
